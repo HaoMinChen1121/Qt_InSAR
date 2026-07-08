@@ -75,6 +75,10 @@ private:
     QDockWidget* mSarMetadataDock = nullptr;
     SarMetadataPanel* mSarMetadataPanel = nullptr;
 
+signals:
+    /// Emitted when the user selects a SAR product file to open.
+    void sarProductOpenRequested(const QString& path);
+
 private slots:
     void onActionHelpTriggered();
     void onUndoActionTriggered();

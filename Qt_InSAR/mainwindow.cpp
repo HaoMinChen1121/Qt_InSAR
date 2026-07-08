@@ -18,9 +18,6 @@
 #include "ui/Deformation/DeformationDialog.h"
 
 #include "controllers/ApplicationController.h"
-#include "dataaccess/SarProductFactory.h"
-
-#include <QScopedPointer>
 
 #include <QAction>
 #include <QApplication>
@@ -198,73 +195,18 @@ void MainWindow::createCategoryFile(SARibbonCategory* page)
                                        ":/icon/icon/folder-star.svg", "actOpenS1");
     pnlSensor->addLargeAction(actOpenS1);
     connect(actOpenS1, &QAction::triggered, this, [this]() {
-        // 选择 .SAFE 目录或 ZIP 文件
         QString path = QFileDialog::getOpenFileName(this,
             QStringLiteral("选择 Sentinel-1 产品"),
             QString(),
             QStringLiteral("Sentinel-1 产品 (*.zip *.SAFE);;"
                            "所有文件 (*.*)"));
         if (path.isEmpty()) {
-            // 也尝试选择目录
             path = QFileDialog::getExistingDirectory(this,
                 QStringLiteral("选择 Sentinel-1 产品目录"));
         }
         if (path.isEmpty()) return;
 
-        QScopedPointer<ISarProduct> product(createSarProduct(path));
-        if (!product || !product->open(path)) {
-            QMessageBox::warning(this,
-                QStringLiteral("打开失败"),
-                QStringLiteral("无法识别该 Sentinel-1 产品。\n"
-                               "请确认选择的是 .SAFE 目录或 .zip 文件。"));
-            return;
-        }
-
-        // 将波段添加到图层: 通过 layerAddRequested 信号走 AppController 处理
-        const auto& bands = product->bands();
-        if (mLayerPanel && !bands.isEmpty()) {
-            QStringList paths;
-            for (const auto& b : bands)
-                paths.append(b.rasterPath);
-            emit mLayerPanel->layerAddRequested(paths);
-        }
-
-        // 更新元数据面板
-        SarSensorInfo info = product->sensorInfo();
-        if (mSarMetadataPanel) {
-            mSarMetadataPanel->setMetadata(
-                info.sensorType,
-                info.acquisitionStart.toString("yyyy-MM-dd hh:mm"),
-                sarProductTypeToString(info.productType),
-                info.polarizations.join(","),
-                info.wavelength,
-                info.rangeSpacing,
-                info.azimuthSpacing,
-                info.nearRange,
-                info.farRange,
-                info.prf,
-                info.centerFreq,
-                info.orbitDirection,
-                info.relativeOrbit,
-                product->acquisitionMode()
-            );
-        }
-
-        QStringList bandInfo;
-        for (const auto& b : bands)
-            bandInfo.append(QStringLiteral("  %1 %2 %3×%4 %5")
-                .arg(b.polarization)
-                .arg(b.subSwath)
-                .arg(b.rasterSize.width())
-                .arg(b.rasterSize.height())
-                .arg(b.dataType));
-
-        mMonitorPanel->appendLog(
-            QStringLiteral("已加载 Sentinel-1 产品: %1 (%2)\n波段:\n%3")
-                .arg(product->productId())
-                .arg(sarProductTypeToString(product->productType()))
-                .arg(bandInfo.join("\n")),
-            "#4CAF50");
+        emit sarProductOpenRequested(path);
     });
 
     QAction* actOpenNisar = createAction(QStringLiteral("NISAR\n(L/S-band)"),

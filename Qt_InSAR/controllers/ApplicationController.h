@@ -48,6 +48,10 @@ private:
     void wireConnections();
     void rebuildCanvasLayers();
 
+private slots:
+    void onSarProductOpenRequested(const QString& path);
+
+private:
     MainWindow* mMainWindow;
     WorkerManager* mWorkerManager = nullptr;
 

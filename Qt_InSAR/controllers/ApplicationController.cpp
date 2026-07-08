@@ -23,59 +23,13 @@
 #include <QFile>
 #include <QDir>
 #include <QDebug>
-#include <QTextStream>
+#include <QMessageBox>
+#include <QScopedPointer>
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
-#include <cmath>
-#include <gdal_priv.h>
-
-// Custom GDAL pixel function: compute amplitude (sqrt(I²+Q²)) from
-// complex interleaved source.  Registered as "amplitude" at startup.
-static CPLErr amplitudePixelFunc(void **papoSources, int nSources,
-                                  void *pData, int nXSize, int nYSize,
-                                  GDALDataType eSrcType,
-                                  GDALDataType /* eBufType */,
-                                  int nPixelSpace, int nLineSpace)
-{
-    if (nSources != 1 || !papoSources[0] || !pData)
-        return CE_Failure;
-
-    if (eSrcType == GDT_CInt16) {
-        const auto* src = static_cast<const int16_t*>(papoSources[0]);
-        auto* dst = static_cast<GByte*>(pData);
-
-        for (int iy = 0; iy < nYSize; iy++) {
-            for (int ix = 0; ix < nXSize; ix++) {
-                int si = (iy * nXSize + ix) * 2;
-                float I = static_cast<float>(src[si]);
-                float Q = static_cast<float>(src[si + 1]);
-                float amp = std::sqrt(I * I + Q * Q);
-                *reinterpret_cast<float*>(dst + iy * nLineSpace
-                                          + ix * nPixelSpace) = amp;
-            }
-        }
-        return CE_None;
-    }
-
-    if (eSrcType == GDT_CFloat32) {
-        const auto* src = static_cast<const float*>(papoSources[0]);
-        auto* dst = static_cast<GByte*>(pData);
-
-        for (int iy = 0; iy < nYSize; iy++) {
-            for (int ix = 0; ix < nXSize; ix++) {
-                int si = (iy * nXSize + ix) * 2;
-                float I = src[si];
-                float Q = src[si + 1];
-                float amp = std::sqrt(I * I + Q * Q);
-                *reinterpret_cast<float*>(dst + iy * nLineSpace
-                                          + ix * nPixelSpace) = amp;
-            }
-        }
-        return CE_None;
-    }
-
-    return CE_Failure;
-}
+#include "dataaccess/impl/GdalVsiProcessor.h"
+#include "dataaccess/SarProductFactory.h"
+#include "ui/SarMetadataPanel.h"
 
 ApplicationController::ApplicationController(MainWindow* mainWindow, QObject* parent)
     : QObject(parent), mMainWindow(mainWindow)
@@ -90,7 +44,7 @@ ApplicationController::~ApplicationController() {
 
 void ApplicationController::initialize()
 {
-    GDALAddDerivedBandPixelFunc("amplitude", amplitudePixelFunc);
+    GdalVsiProcessor::registerPixelFunctions();
     wireConnections();
 }
 
@@ -105,117 +59,11 @@ void ApplicationController::createServices()
     mGeocodingSvc = std::make_unique<GeocodingServiceImpl>(this);
 }
 
-// Creates a VRT file that wraps a complex SLC source with an on-the-fly
-// amplitude pixel function.  The VRT is ~1 KB of XML, created instantly —
-// no pixel conversion happens until QGIS renders tiles.
-static bool createAmplitudeVRT(const QString& vsiPath, const QString& vrtPath)
-{
-    GDALDatasetH srcDS = GDALOpen(vsiPath.toUtf8().constData(), GA_ReadOnly);
-    if (!srcDS) return false;
-
-    int w = GDALGetRasterXSize(srcDS);
-    int h = GDALGetRasterYSize(srcDS);
-    GDALRasterBandH srcBand = GDALGetRasterBand(srcDS, 1);
-    QString srcTypeName = QString::fromUtf8(
-        GDALGetDataTypeName(GDALGetRasterDataType(srcBand)));
-
-    QFile f(vrtPath);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        GDALClose(srcDS);
-        return false;
-    }
-
-    QTextStream ts(&f);
-    ts << "<VRTDataset rasterXSize=\"" << w
-       << "\" rasterYSize=\"" << h << "\">\n";
-
-    const char* proj = GDALGetProjectionRef(srcDS);
-    if (proj && strlen(proj) > 0)
-        ts << "  <SRS><![CDATA[" << proj << "]]></SRS>\n";
-
-    int nGCPs = GDALGetGCPCount(srcDS);
-    if (nGCPs > 0) {
-        const char* gcpProj = GDALGetGCPProjection(srcDS);
-        QString escapedProj = QString::fromUtf8(gcpProj ? gcpProj : "");
-        escapedProj.replace("&", "&amp;")
-                   .replace("\"", "&quot;")
-                   .replace("<", "&lt;")
-                   .replace(">", "&gt;");
-        ts << "  <GCPList projection=\""
-           << escapedProj << "\">\n";
-        const GDAL_GCP* gcps = GDALGetGCPs(srcDS);
-        for (int i = 0; i < nGCPs; ++i) {
-            ts << "    <GCP Id=\"" << (i + 1)
-               << "\" Pixel=\"" << gcps[i].dfGCPPixel
-               << "\" Line=\"" << gcps[i].dfGCPLine
-               << "\" X=\"" << gcps[i].dfGCPX
-               << "\" Y=\"" << gcps[i].dfGCPY
-               << "\" Z=\"" << gcps[i].dfGCPZ << "\"/>\n";
-        }
-        ts << "  </GCPList>\n";
-    } else {
-        double gt[6];
-        if (GDALGetGeoTransform(srcDS, gt) == CE_None) {
-            ts << "  <GeoTransform>" << gt[0] << ", " << gt[1] << ", "
-               << gt[2] << ", " << gt[3] << ", " << gt[4] << ", "
-               << gt[5] << "</GeoTransform>\n";
-        }
-    }
-
-    ts << "  <VRTRasterBand dataType=\"Float32\" band=\"1\""
-          " subClass=\"VRTDerivedRasterBand\">\n";
-    ts << "    <PixelFunctionType>amplitude</PixelFunctionType>\n";
-    ts << "    <SimpleSource>\n";
-    ts << "      <SourceFilename>" << vsiPath << "</SourceFilename>\n";
-    ts << "      <SourceBand>1</SourceBand>\n";
-    ts << "      <SrcDataType>" << srcTypeName << "</SrcDataType>\n";
-    ts << "    </SimpleSource>\n";
-    ts << "  </VRTRasterBand>\n";
-    ts << "</VRTDataset>\n";
-
-    GDALClose(srcDS);
-    f.close();
-    return true;
-}
-
-// Runs in background thread: for complex data, creates a VRT that wraps the
-// source; for real data, extracts to a temp GeoTIFF as before.
-// basePath has no extension — the function appends .vrt or .tif.
-static QString processOneVsiFile(const QString& vsiPath, const QString& basePath)
-{
-    GDALDatasetH srcDS = GDALOpen(vsiPath.toUtf8().constData(), GA_ReadOnly);
-    if (!srcDS) return QString();
-
-    GDALRasterBandH hBand = GDALGetRasterBand(srcDS, 1);
-    GDALDataType srcType = GDALGetRasterDataType(hBand);
-    QString result;
-
-    if (GDALDataTypeIsComplex(srcType)) {
-        QString vrtPath = basePath + ".vrt";
-        if (createAmplitudeVRT(vsiPath, vrtPath))
-            result = vrtPath;
-    } else {
-        QString tifPath = basePath + ".tif";
-        GDALDriverH gtDrv = GDALGetDriverByName("GTiff");
-        if (gtDrv) {
-            GDALDatasetH dstDS = GDALCreateCopy(gtDrv,
-                tifPath.toUtf8().constData(), srcDS, FALSE,
-                nullptr, nullptr, nullptr);
-            if (dstDS) {
-                int levels[] = {2, 4, 8, 16, 32, 64};
-                GDALBuildOverviews(dstDS, "NEAREST", 6,
-                    levels, 0, nullptr, nullptr, nullptr);
-                GDALClose(dstDS);
-                result = tifPath;
-            }
-        }
-    }
-    GDALClose(srcDS);
-    return result;
-}
-
 void ApplicationController::wireConnections()
 {
+    connect(mMainWindow, &MainWindow::sarProductOpenRequested,
+            this, &ApplicationController::onSarProductOpenRequested);
+
     ProcessingMonitorPanel* monitor = mMainWindow->processingMonitorPanel();
     connect(mWorkerManager, &WorkerManager::taskProgressChanged,
         monitor, &ProcessingMonitorPanel::onProgress);
@@ -336,7 +184,7 @@ void ApplicationController::wireConnections()
                 QStringList results;
                 for (int i = 0; i < vsiPaths.size(); ++i)
                     results.append(
-                        processOneVsiFile(vsiPaths[i], tmpPaths[i]));
+                        GdalVsiProcessor::process(vsiPaths[i], tmpPaths[i]));
                 return results;
             }));
     });
@@ -404,6 +252,69 @@ void ApplicationController::rebuildCanvasLayers()
 
     canvas->setLayers(visible);
     canvas->refresh();
+}
+
+void ApplicationController::onSarProductOpenRequested(const QString& path)
+{
+    if (mShuttingDown) return;
+
+    QScopedPointer<ISarProduct> product(createSarProduct(path));
+    if (!product || !product->open(path)) {
+        QMessageBox::warning(mMainWindow,
+            QStringLiteral("打开失败"),
+            QStringLiteral("无法识别该 Sentinel-1 产品。\n"
+                           "请确认选择的是 .SAFE 目录或 .zip 文件。"));
+        return;
+    }
+
+    const auto& bands = product->bands();
+    LayerPanel* layerPanel = mMainWindow->layerPanel();
+    if (layerPanel && !bands.isEmpty()) {
+        QStringList paths;
+        for (const auto& b : bands)
+            paths.append(b.rasterPath);
+        emit layerPanel->layerAddRequested(paths);
+    }
+
+    SarSensorInfo info = product->sensorInfo();
+    SarMetadataPanel* metaPanel = mMainWindow->sarMetadataPanel();
+    if (metaPanel) {
+        metaPanel->setMetadata(
+            info.sensorType,
+            info.acquisitionStart.toString("yyyy-MM-dd hh:mm"),
+            sarProductTypeToString(info.productType),
+            info.polarizations.join(","),
+            info.wavelength,
+            info.rangeSpacing,
+            info.azimuthSpacing,
+            info.nearRange,
+            info.farRange,
+            info.prf,
+            info.centerFreq,
+            info.orbitDirection,
+            info.relativeOrbit,
+            product->acquisitionMode()
+        );
+    }
+
+    ProcessingMonitorPanel* monitor = mMainWindow->processingMonitorPanel();
+    if (monitor) {
+        QStringList bandInfo;
+        for (const auto& b : bands)
+            bandInfo.append(QStringLiteral("  %1 %2 %3×%4 %5")
+                .arg(b.polarization)
+                .arg(b.subSwath)
+                .arg(b.rasterSize.width())
+                .arg(b.rasterSize.height())
+                .arg(b.dataType));
+
+        monitor->appendLog(
+            QStringLiteral("已加载 Sentinel-1 产品: %1 (%2)\n波段:\n%3")
+                .arg(product->productId())
+                .arg(sarProductTypeToString(product->productType()))
+                .arg(bandInfo.join("\n")),
+            "#4CAF50");
+    }
 }
 
 void ApplicationController::shutdown()
