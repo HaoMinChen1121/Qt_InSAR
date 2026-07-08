@@ -1,0 +1,56 @@
+# Build outputs
+x64/
+Debug/
+Release/
+*.exe
+*.dll
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# Qt / MOC generated
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+*.moc
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sdf
+*.opendb
+*.VC.db
+*.VC.opendb
+*.tlog
+*.lastbuildstate
+*.idb
+*.pch
+*.obj
+*.res
+*.aps
+*.ipch
+
+# Qt Creator
+*.pro.user*
+
+# Temp files
+*.tmp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Build artifacts
+Makefile
+Makefile.Debug
+Makefile.Release
+
+# Claude settings
+.claude/
+
+# 3rd-party binaries (linked, not source)
+bin/

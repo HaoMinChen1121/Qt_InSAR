@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Application"><UniqueIdentifier>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</UniqueIdentifier></Filter>
+    <Filter Include="Domain"><UniqueIdentifier>{B2C3D4E5-F6A7-8901-BCDE-F12345678901}</UniqueIdentifier></Filter>
+    <Filter Include="Domain\Params"><UniqueIdentifier>{C3D4E5F6-A7B8-9012-CDEF-123456789012}</UniqueIdentifier></Filter>
+    <Filter Include="DataAccess"><UniqueIdentifier>{D4E5F6A7-B8C9-0123-DEFA-234567890123}</UniqueIdentifier></Filter>
+    <Filter Include="DataAccess\Impl"><UniqueIdentifier>{E5F6A7B8-C9D0-1234-EFAB-345678901234}</UniqueIdentifier></Filter>
+    <Filter Include="Services"><UniqueIdentifier>{F6A7B8C9-D0E1-2345-FABC-456789012345}</UniqueIdentifier></Filter>
+    <Filter Include="Services\Impl"><UniqueIdentifier>{A7B8C9D0-E1F2-3456-ABCD-567890123456}</UniqueIdentifier></Filter>
+    <Filter Include="Controllers"><UniqueIdentifier>{B8C9D0E1-F2A3-4567-BCDE-678901234567}</UniqueIdentifier></Filter>
+    <Filter Include="UI"><UniqueIdentifier>{C9D0E1F2-A3B4-5678-CDEF-789012345678}</UniqueIdentifier></Filter>
+    <Filter Include="UI\Registration"><UniqueIdentifier>{D0E1F2A3-B4C5-6789-DEFA-890123456789}</UniqueIdentifier></Filter>
+    <Filter Include="UI\Interferogram"><UniqueIdentifier>{E1F2A3B4-C5D6-7890-EFAB-901234567890}</UniqueIdentifier></Filter>
+    <Filter Include="UI\Filter"><UniqueIdentifier>{F2A3B4C5-D6E7-8901-FABC-012345678901}</UniqueIdentifier></Filter>
+    <Filter Include="UI\Geocoding"><UniqueIdentifier>{A3B4C5D6-E7F8-9012-ABCD-123456789012}</UniqueIdentifier></Filter>
+    <Filter Include="UI\Deformation"><UniqueIdentifier>{B4C5D6E7-F8A9-0123-BCDE-234567890123}</UniqueIdentifier></Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp"><Filter>Application</Filter></ClCompile>
+    <ClCompile Include="mainwindow.cpp"><Filter>Application</Filter></ClCompile>
+    <ClCompile Include="ApplicationWidget.cpp"><Filter>Application</Filter></ClCompile>
+    <QtMoc Include="mainwindow.h"><Filter>Application</Filter></QtMoc>
+    <QtMoc Include="ApplicationWidget.h"><Filter>Application</Filter></QtMoc>
+    <QtRcc Include="Qt_InSAR.qrc"><Filter>Application</Filter></QtRcc>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="dataaccess\impl\GdalSlcReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\GdalSlcWriter.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\GdalInterferogramReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\GdalInterferogramWriter.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\GdalDemReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\OrbitDataReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\Sentinel1Product.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClInclude Include="dataaccess\ISarProduct.h"><Filter>DataAccess</Filter></ClInclude>
+    <ClInclude Include="dataaccess\SarProductFactory.h"><Filter>DataAccess</Filter></ClInclude>
+    <ClInclude Include="dataaccess\impl\Sentinel1Product.h"><Filter>DataAccess\Impl</Filter></ClInclude>
+    <ClInclude Include="domain\SarProductType.h"><Filter>Domain</Filter></ClInclude>
+    <ClInclude Include="domain\SarSensorInfo.h"><Filter>Domain</Filter></ClInclude>
+    <ClInclude Include="domain\params\DeformationParams.h"><Filter>Domain\Params</Filter></ClInclude>
+    <ClInclude Include="domain\params\TimeSeriesParams.h"><Filter>Domain\Params</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <QtMoc Include="services\IProcessingService.h"><Filter>Services</Filter></QtMoc>
+    <QtMoc Include="services\IRegistrationService.h"><Filter>Services</Filter></QtMoc>
+    <QtMoc Include="services\IInterferogramService.h"><Filter>Services</Filter></QtMoc>
+    <QtMoc Include="services\IFlatEarthService.h"><Filter>Services</Filter></QtMoc>
+    <QtMoc Include="services\IDifferentialService.h"><Filter>Services</Filter></QtMoc>
+    <QtMoc Include="services\IFilterService.h"><Filter>Services</Filter></QtMoc>
+    <QtMoc Include="services\IUnwrappingService.h"><Filter>Services</Filter></QtMoc>
+    <QtMoc Include="services\IGeocodingService.h"><Filter>Services</Filter></QtMoc>
+    <ClCompile Include="services\impl\RegistrationServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
+    <ClCompile Include="services\impl\InterferogramServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
+    <ClCompile Include="services\impl\FlatEarthServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
+    <ClCompile Include="services\impl\DifferentialServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
+    <ClCompile Include="services\impl\FilterServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
+    <ClCompile Include="services\impl\UnwrappingServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
+    <ClCompile Include="services\impl\GeocodingServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
+    <QtMoc Include="services\impl\RegistrationServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
+    <QtMoc Include="services\impl\InterferogramServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
+    <QtMoc Include="services\impl\FlatEarthServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
+    <QtMoc Include="services\impl\DifferentialServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
+    <QtMoc Include="services\impl\FilterServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
+    <QtMoc Include="services\impl\UnwrappingServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
+    <QtMoc Include="services\impl\GeocodingServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="controllers\ApplicationController.cpp"><Filter>Controllers</Filter></ClCompile>
+    <ClCompile Include="controllers\TaskWorker.cpp"><Filter>Controllers</Filter></ClCompile>
+    <ClCompile Include="controllers\WorkerManager.cpp"><Filter>Controllers</Filter></ClCompile>
+    <QtMoc Include="controllers\ApplicationController.h"><Filter>Controllers</Filter></QtMoc>
+    <QtMoc Include="controllers\TaskWorker.h"><Filter>Controllers</Filter></QtMoc>
+    <QtMoc Include="controllers\WorkerManager.h"><Filter>Controllers</Filter></QtMoc>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="ui\MapCanvasWidget.cpp"><Filter>UI</Filter></ClCompile>
+    <ClCompile Include="ui\LayerPanel.cpp"><Filter>UI</Filter></ClCompile>
+    <ClCompile Include="ui\ProcessingMonitorPanel.cpp"><Filter>UI</Filter></ClCompile>
+    <QtMoc Include="ui\MapCanvasWidget.h"><Filter>UI</Filter></QtMoc>
+    <QtMoc Include="ui\LayerPanel.h"><Filter>UI</Filter></QtMoc>
+    <QtMoc Include="ui\ProcessingMonitorPanel.h"><Filter>UI</Filter></QtMoc>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="ui\Registration\RegistrationDialog.cpp"><Filter>UI\Registration</Filter></ClCompile>
+    <QtMoc Include="ui\Registration\RegistrationDialog.h"><Filter>UI\Registration</Filter></QtMoc>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="ui\Interferogram\InterferogramDialog.cpp"><Filter>UI\Interferogram</Filter></ClCompile>
+    <QtMoc Include="ui\Interferogram\InterferogramDialog.h"><Filter>UI\Interferogram</Filter></QtMoc>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="ui\Filter\FilterUnwrappingDialog.cpp"><Filter>UI\Filter</Filter></ClCompile>
+    <QtMoc Include="ui\Filter\FilterUnwrappingDialog.h"><Filter>UI\Filter</Filter></QtMoc>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="ui\Geocoding\GeocodingDialog.cpp"><Filter>UI\Geocoding</Filter></ClCompile>
+    <ClCompile Include="ui\Deformation\DeformationDialog.cpp"><Filter>UI\Deformation</Filter></ClCompile>
+    <ClCompile Include="ui\OverviewWidget.cpp"><Filter>UI</Filter></ClCompile>
+    <ClCompile Include="ui\SarMetadataPanel.cpp"><Filter>UI</Filter></ClCompile>
+    <QtMoc Include="ui\Geocoding\GeocodingDialog.h"><Filter>UI\Geocoding</Filter></QtMoc>
+    <QtMoc Include="ui\Deformation\DeformationDialog.h"><Filter>UI\Deformation</Filter></QtMoc>
+    <QtMoc Include="ui\OverviewWidget.h"><Filter>UI</Filter></QtMoc>
+    <QtMoc Include="ui\SarMetadataPanel.h"><Filter>UI</Filter></QtMoc>
+  </ItemGroup>
+</Project>
