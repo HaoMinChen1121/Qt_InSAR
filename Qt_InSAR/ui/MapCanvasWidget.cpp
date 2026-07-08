@@ -23,6 +23,7 @@ void MapCanvasWidget::setupUI()
     mCanvas = new QgsMapCanvas(this);
     mCanvas->setCanvasColor(QColor(255, 255, 255));
     mCanvas->enableAntiAliasing(true);
+    mCanvas->setParallelRenderingEnabled(false);
 
     layout->addWidget(mCanvas);
     setLayout(layout);
