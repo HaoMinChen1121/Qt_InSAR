@@ -23,8 +23,7 @@
 #include <QFile>
 #include <QDir>
 #include <QDebug>
-#include <cmath>
-#include <vector>
+#include <QTextStream>
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
 #include <gdal_priv.h>
@@ -56,83 +55,78 @@ void ApplicationController::createServices()
     mGeocodingSvc = std::make_unique<GeocodingServiceImpl>(this);
 }
 
-static bool convertComplexToAmplitude(GDALDatasetH srcDS, const QString& dstPath)
+// Creates a VRT file that wraps a complex SLC source with an on-the-fly
+// amplitude pixel function.  The VRT is ~1 KB of XML, created instantly —
+// no pixel conversion happens until QGIS renders tiles.
+static bool createAmplitudeVRT(const QString& vsiPath, const QString& vrtPath)
 {
+    GDALDatasetH srcDS = GDALOpen(vsiPath.toUtf8().constData(), GA_ReadOnly);
+    if (!srcDS) return false;
+
     int w = GDALGetRasterXSize(srcDS);
     int h = GDALGetRasterYSize(srcDS);
     GDALRasterBandH srcBand = GDALGetRasterBand(srcDS, 1);
-    GDALDataType srcType = GDALGetRasterDataType(srcBand);
+    QString srcTypeName = QString::fromUtf8(
+        GDALGetDataTypeName(GDALGetRasterDataType(srcBand)));
 
-    if (!GDALDataTypeIsComplex(srcType))
+    QFile f(vrtPath);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        GDALClose(srcDS);
         return false;
-
-    GDALDriverH gtDrv = GDALGetDriverByName("GTiff");
-    if (!gtDrv) return false;
-
-    GDALDatasetH dstDS = GDALCreate(gtDrv, dstPath.toUtf8().constData(),
-                                     w, h, 1, GDT_Float32, nullptr);
-    if (!dstDS) return false;
-
-    double geoTransform[6];
-    if (GDALGetGeoTransform(srcDS, geoTransform) == CE_None) {
-        GDALSetGeoTransform(dstDS, geoTransform);
-    } else {
-        int nGCPs = GDALGetGCPCount(srcDS);
-        if (nGCPs > 0)
-            GDALSetGCPs(dstDS, nGCPs, GDALGetGCPs(srcDS),
-                         GDALGetGCPProjection(srcDS));
     }
-    GDALSetProjection(dstDS, GDALGetProjectionRef(srcDS));
 
-    int elemSize = GDALGetDataTypeSizeBytes(srcType);
-    std::vector<char> srcBuf(static_cast<size_t>(w) * elemSize);
-    std::vector<float> dstBuf(w);
+    QTextStream ts(&f);
+    ts << "<VRTDataset rasterXSize=\"" << w
+       << "\" rasterYSize=\"" << h << "\">\n";
 
-    for (int y = 0; y < h; y++) {
-        if (GDALRasterIO(srcBand, GF_Read, 0, y, w, 1,
-                         srcBuf.data(), w, 1, srcType, 0, 0) != CE_None)
-            break;
+    const char* proj = GDALGetProjectionRef(srcDS);
+    if (proj && strlen(proj) > 0)
+        ts << "  <SRS>" << proj << "</SRS>\n";
 
-        if (srcType == GDT_CInt16) {
-            const auto* p = reinterpret_cast<const int16_t*>(srcBuf.data());
-            for (int x = 0; x < w; x++) {
-                float I = static_cast<float>(p[x * 2]);
-                float Q = static_cast<float>(p[x * 2 + 1]);
-                dstBuf[x] = std::sqrt(I * I + Q * Q);
-            }
-        } else if (srcType == GDT_CInt32) {
-            const auto* p = reinterpret_cast<const int32_t*>(srcBuf.data());
-            for (int x = 0; x < w; x++) {
-                float I = static_cast<float>(p[x * 2]);
-                float Q = static_cast<float>(p[x * 2 + 1]);
-                dstBuf[x] = std::sqrt(I * I + Q * Q);
-            }
-        } else if (srcType == GDT_CFloat32) {
-            const auto* p = reinterpret_cast<const float*>(srcBuf.data());
-            for (int x = 0; x < w; x++) {
-                float I = p[x * 2];
-                float Q = p[x * 2 + 1];
-                dstBuf[x] = std::sqrt(I * I + Q * Q);
-            }
-        } else {
-            GDALClose(dstDS);
-            return false;
+    int nGCPs = GDALGetGCPCount(srcDS);
+    if (nGCPs > 0) {
+        const char* gcpProj = GDALGetGCPProjection(srcDS);
+        ts << "  <GCPList projection=\""
+           << (gcpProj ? gcpProj : "") << "\">\n";
+        const GDAL_GCP* gcps = GDALGetGCPs(srcDS);
+        for (int i = 0; i < nGCPs; ++i) {
+            ts << "    <GCP Id=\"" << (i + 1)
+               << "\" Pixel=\"" << gcps[i].dfGCPPixel
+               << "\" Line=\"" << gcps[i].dfGCPLine
+               << "\" X=\"" << gcps[i].dfGCPX
+               << "\" Y=\"" << gcps[i].dfGCPY
+               << "\" Z=\"" << gcps[i].dfGCPZ << "\"/>\n";
         }
-
-        GDALRasterIO(GDALGetRasterBand(dstDS, 1), GF_Write, 0, y, w, 1,
-                     dstBuf.data(), w, 1, GDT_Float32, 0, 0);
+        ts << "  </GCPList>\n";
+    } else {
+        double gt[6];
+        if (GDALGetGeoTransform(srcDS, gt) == CE_None) {
+            ts << "  <GeoTransform>" << gt[0] << ", " << gt[1] << ", "
+               << gt[2] << ", " << gt[3] << ", " << gt[4] << ", "
+               << gt[5] << "</GeoTransform>\n";
+        }
     }
 
-    int levels[] = {2, 4, 8, 16, 32, 64};
-    GDALBuildOverviews(dstDS, "NEAREST", 6, levels, 0,
-                       nullptr, nullptr, nullptr);
-    GDALClose(dstDS);
+    ts << "  <VRTRasterBand dataType=\"Float32\" band=\"1\""
+          " subClass=\"VRTDerivedRasterBand\">\n";
+    ts << "    <PixelFunctionType>amplitude</PixelFunctionType>\n";
+    ts << "    <SimpleSource>\n";
+    ts << "      <SourceFilename>" << vsiPath << "</SourceFilename>\n";
+    ts << "      <SourceBand>1</SourceBand>\n";
+    ts << "      <SrcDataType>" << srcTypeName << "</SrcDataType>\n";
+    ts << "    </SimpleSource>\n";
+    ts << "  </VRTRasterBand>\n";
+    ts << "</VRTDataset>\n";
+
+    GDALClose(srcDS);
+    f.close();
     return true;
 }
 
-// Runs in background thread: opens VSI path and extracts/converts to temp TIFF.
-// Returns the temp path on success, empty QString on failure.
-static QString processOneVsiFile(const QString& vsiPath, const QString& tmpPath)
+// Runs in background thread: for complex data, creates a VRT that wraps the
+// source; for real data, extracts to a temp GeoTIFF as before.
+// basePath has no extension — the function appends .vrt or .tif.
+static QString processOneVsiFile(const QString& vsiPath, const QString& basePath)
 {
     GDALDatasetH srcDS = GDALOpen(vsiPath.toUtf8().constData(), GA_ReadOnly);
     if (!srcDS) return QString();
@@ -142,20 +136,22 @@ static QString processOneVsiFile(const QString& vsiPath, const QString& tmpPath)
     QString result;
 
     if (GDALDataTypeIsComplex(srcType)) {
-        if (convertComplexToAmplitude(srcDS, tmpPath))
-            result = tmpPath;
+        QString vrtPath = basePath + ".vrt";
+        if (createAmplitudeVRT(vsiPath, vrtPath))
+            result = vrtPath;
     } else {
+        QString tifPath = basePath + ".tif";
         GDALDriverH gtDrv = GDALGetDriverByName("GTiff");
         if (gtDrv) {
             GDALDatasetH dstDS = GDALCreateCopy(gtDrv,
-                tmpPath.toUtf8().constData(), srcDS, FALSE,
+                tifPath.toUtf8().constData(), srcDS, FALSE,
                 nullptr, nullptr, nullptr);
             if (dstDS) {
                 int levels[] = {2, 4, 8, 16, 32, 64};
                 GDALBuildOverviews(dstDS, "NEAREST", 6,
                     levels, 0, nullptr, nullptr, nullptr);
                 GDALClose(dstDS);
-                result = tmpPath;
+                result = tifPath;
             }
         }
     }
@@ -193,9 +189,9 @@ void ApplicationController::wireConnections()
                 name = path.section('/', -1);
 
             if (path.startsWith("/vsi")) {
-                QString tmpPath = QDir::tempPath()
-                    + "/insar_" + fi.completeBaseName() + ".tif";
-                vsiEntries.append({path, tmpPath, name});
+                QString basePath = QDir::tempPath()
+                    + "/insar_" + fi.completeBaseName();
+                vsiEntries.append({path, basePath, name});
             } else {
                 QgsRasterLayer* layer = new QgsRasterLayer(path, name);
                 if (layer->isValid()) {
