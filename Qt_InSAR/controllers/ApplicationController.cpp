@@ -23,6 +23,8 @@
 #include <QFile>
 #include <QDir>
 #include <QDebug>
+#include <cmath>
+#include <vector>
 #include <gdal_priv.h>
 
 ApplicationController::ApplicationController(MainWindow* mainWindow, QObject* parent)
@@ -50,6 +52,80 @@ void ApplicationController::createServices()
     mFilterSvc = std::make_unique<FilterServiceImpl>(this);
     mUnwrappingSvc = std::make_unique<UnwrappingServiceImpl>(this);
     mGeocodingSvc = std::make_unique<GeocodingServiceImpl>(this);
+}
+
+static bool convertComplexToAmplitude(GDALDatasetH srcDS, const QString& dstPath)
+{
+    int w = GDALGetRasterXSize(srcDS);
+    int h = GDALGetRasterYSize(srcDS);
+    GDALRasterBandH srcBand = GDALGetRasterBand(srcDS, 1);
+    GDALDataType srcType = GDALGetRasterDataType(srcBand);
+
+    if (!GDALDataTypeIsComplex(srcType))
+        return false;
+
+    GDALDriverH gtDrv = GDALGetDriverByName("GTiff");
+    if (!gtDrv) return false;
+
+    GDALDatasetH dstDS = GDALCreate(gtDrv, dstPath.toUtf8().constData(),
+                                     w, h, 1, GDT_Float32, nullptr);
+    if (!dstDS) return false;
+
+    double geoTransform[6];
+    if (GDALGetGeoTransform(srcDS, geoTransform) == CE_None) {
+        GDALSetGeoTransform(dstDS, geoTransform);
+    } else {
+        int nGCPs = GDALGetGCPCount(srcDS);
+        if (nGCPs > 0)
+            GDALSetGCPs(dstDS, nGCPs, GDALGetGCPs(srcDS),
+                         GDALGetGCPProjection(srcDS));
+    }
+    GDALSetProjection(dstDS, GDALGetProjectionRef(srcDS));
+
+    int elemSize = GDALGetDataTypeSizeBytes(srcType);
+    std::vector<char> srcBuf(static_cast<size_t>(w) * elemSize);
+    std::vector<float> dstBuf(w);
+
+    for (int y = 0; y < h; y++) {
+        if (GDALRasterIO(srcBand, GF_Read, 0, y, w, 1,
+                         srcBuf.data(), w, 1, srcType, 0, 0) != CE_None)
+            break;
+
+        if (srcType == GDT_CInt16) {
+            const auto* p = reinterpret_cast<const int16_t*>(srcBuf.data());
+            for (int x = 0; x < w; x++) {
+                float I = static_cast<float>(p[x * 2]);
+                float Q = static_cast<float>(p[x * 2 + 1]);
+                dstBuf[x] = std::sqrt(I * I + Q * Q);
+            }
+        } else if (srcType == GDT_CInt32) {
+            const auto* p = reinterpret_cast<const int32_t*>(srcBuf.data());
+            for (int x = 0; x < w; x++) {
+                float I = static_cast<float>(p[x * 2]);
+                float Q = static_cast<float>(p[x * 2 + 1]);
+                dstBuf[x] = std::sqrt(I * I + Q * Q);
+            }
+        } else if (srcType == GDT_CFloat32) {
+            const auto* p = reinterpret_cast<const float*>(srcBuf.data());
+            for (int x = 0; x < w; x++) {
+                float I = p[x * 2];
+                float Q = p[x * 2 + 1];
+                dstBuf[x] = std::sqrt(I * I + Q * Q);
+            }
+        } else {
+            GDALClose(dstDS);
+            return false;
+        }
+
+        GDALRasterIO(GDALGetRasterBand(dstDS, 1), GF_Write, 0, y, w, 1,
+                     dstBuf.data(), w, 1, GDT_Float32, 0, 0);
+    }
+
+    int levels[] = {2, 4, 8, 16, 32, 64};
+    GDALBuildOverviews(dstDS, "NEAREST", 6, levels, 0,
+                       nullptr, nullptr, nullptr);
+    GDALClose(dstDS);
+    return true;
 }
 
 void ApplicationController::wireConnections()
@@ -85,20 +161,32 @@ void ApplicationController::wireConnections()
                 if (srcDS) {
                     QString tmpPath = QDir::tempPath()
                         + "/insar_" + fi.completeBaseName() + ".tif";
-                    GDALDriverH gtDrv = GDALGetDriverByName("GTiff");
-                    if (gtDrv) {
-                        GDALDatasetH dstDS = GDALCreateCopy(gtDrv,
-                            tmpPath.toUtf8().constData(), srcDS, FALSE,
-                            nullptr, nullptr, nullptr);
-                        if (dstDS) {
-                            int levels[] = {2, 4, 8, 16, 32, 64};
-                            GDALBuildOverviews(dstDS, "NEAREST", 6,
-                                levels, 0, nullptr, nullptr, nullptr);
-                            GDALClose(dstDS);
+                    GDALRasterBandH hBand = GDALGetRasterBand(srcDS, 1);
+                    GDALDataType srcType = GDALGetRasterDataType(hBand);
+
+                    if (GDALDataTypeIsComplex(srcType)) {
+                        if (convertComplexToAmplitude(srcDS, tmpPath)) {
                             loadPath = tmpPath;
                             mTempFiles.append(tmpPath);
-                            qDebug() << "[InSAR] TIFF extracted:"
+                            qDebug() << "[InSAR] SLC amplitude:"
                                      << tmpPath;
+                        }
+                    } else {
+                        GDALDriverH gtDrv = GDALGetDriverByName("GTiff");
+                        if (gtDrv) {
+                            GDALDatasetH dstDS = GDALCreateCopy(gtDrv,
+                                tmpPath.toUtf8().constData(), srcDS, FALSE,
+                                nullptr, nullptr, nullptr);
+                            if (dstDS) {
+                                int levels[] = {2, 4, 8, 16, 32, 64};
+                                GDALBuildOverviews(dstDS, "NEAREST", 6,
+                                    levels, 0, nullptr, nullptr, nullptr);
+                                GDALClose(dstDS);
+                                loadPath = tmpPath;
+                                mTempFiles.append(tmpPath);
+                                qDebug() << "[InSAR] TIFF extracted:"
+                                         << tmpPath;
+                            }
                         }
                     }
                     GDALClose(srcDS);
