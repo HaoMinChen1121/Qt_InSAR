@@ -26,7 +26,56 @@
 #include <QTextStream>
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
+#include <cmath>
 #include <gdal_priv.h>
+
+// Custom GDAL pixel function: compute amplitude (sqrt(I²+Q²)) from
+// complex interleaved source.  Registered as "amplitude" at startup.
+static CPLErr amplitudePixelFunc(void **papoSources, int nSources,
+                                  void *pData, int nXSize, int nYSize,
+                                  GDALDataType eSrcType,
+                                  GDALDataType /* eBufType */,
+                                  int nPixelSpace, int nLineSpace)
+{
+    if (nSources != 1 || !papoSources[0] || !pData)
+        return CE_Failure;
+
+    if (eSrcType == GDT_CInt16) {
+        const auto* src = static_cast<const int16_t*>(papoSources[0]);
+        auto* dst = static_cast<GByte*>(pData);
+
+        for (int iy = 0; iy < nYSize; iy++) {
+            for (int ix = 0; ix < nXSize; ix++) {
+                int si = (iy * nXSize + ix) * 2;
+                float I = static_cast<float>(src[si]);
+                float Q = static_cast<float>(src[si + 1]);
+                float amp = std::sqrt(I * I + Q * Q);
+                *reinterpret_cast<float*>(dst + iy * nLineSpace
+                                          + ix * nPixelSpace) = amp;
+            }
+        }
+        return CE_None;
+    }
+
+    if (eSrcType == GDT_CFloat32) {
+        const auto* src = static_cast<const float*>(papoSources[0]);
+        auto* dst = static_cast<GByte*>(pData);
+
+        for (int iy = 0; iy < nYSize; iy++) {
+            for (int ix = 0; ix < nXSize; ix++) {
+                int si = (iy * nXSize + ix) * 2;
+                float I = src[si];
+                float Q = src[si + 1];
+                float amp = std::sqrt(I * I + Q * Q);
+                *reinterpret_cast<float*>(dst + iy * nLineSpace
+                                          + ix * nPixelSpace) = amp;
+            }
+        }
+        return CE_None;
+    }
+
+    return CE_Failure;
+}
 
 ApplicationController::ApplicationController(MainWindow* mainWindow, QObject* parent)
     : QObject(parent), mMainWindow(mainWindow)
@@ -41,6 +90,7 @@ ApplicationController::~ApplicationController() {
 
 void ApplicationController::initialize()
 {
+    GDALAddDerivedBandPixelFunc("amplitude", amplitudePixelFunc);
     wireConnections();
 }
 
