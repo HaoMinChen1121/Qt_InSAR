@@ -81,13 +81,18 @@ static bool createAmplitudeVRT(const QString& vsiPath, const QString& vrtPath)
 
     const char* proj = GDALGetProjectionRef(srcDS);
     if (proj && strlen(proj) > 0)
-        ts << "  <SRS>" << proj << "</SRS>\n";
+        ts << "  <SRS><![CDATA[" << proj << "]]></SRS>\n";
 
     int nGCPs = GDALGetGCPCount(srcDS);
     if (nGCPs > 0) {
         const char* gcpProj = GDALGetGCPProjection(srcDS);
+        QString escapedProj = QString::fromUtf8(gcpProj ? gcpProj : "");
+        escapedProj.replace("&", "&amp;")
+                   .replace("\"", "&quot;")
+                   .replace("<", "&lt;")
+                   .replace(">", "&gt;");
         ts << "  <GCPList projection=\""
-           << (gcpProj ? gcpProj : "") << "\">\n";
+           << escapedProj << "\">\n";
         const GDAL_GCP* gcps = GDALGetGCPs(srcDS);
         for (int i = 0; i < nGCPs; ++i) {
             ts << "    <GCP Id=\"" << (i + 1)
