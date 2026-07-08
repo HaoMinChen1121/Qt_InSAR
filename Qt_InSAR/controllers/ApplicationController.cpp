@@ -134,7 +134,20 @@ void ApplicationController::wireConnections()
             if (layerCrs.isValid()) {
                 canvas->setDestinationCrs(layerCrs);
             }
+            // Explicitly set canvas layers in tree order, then refresh.
+            // Mirrors QtAPPDemo's rebuildCanvasLayers() to ensure a
+            // consistent layer list before rendering, preventing
+            // z-order flicker during subsequent canvas interactions.
+            QList<QgsMapLayer*> ordered;
+            const QStringList ids = QgsProject::instance()
+                ->layerTreeRoot()->findLayerIds();
+            for (const QString& id : ids) {
+                QgsMapLayer* l = QgsProject::instance()->mapLayer(id);
+                if (l) ordered.append(l);
+            }
+            canvas->setLayers(ordered);
             canvas->zoomToFullExtent();
+            canvas->refresh();
             qDebug() << "[InSAR] Canvas ready, layers:" << newLayers.size();
         }
     });
