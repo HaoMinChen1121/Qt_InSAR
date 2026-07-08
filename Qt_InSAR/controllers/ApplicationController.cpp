@@ -25,6 +25,8 @@
 #include <QDebug>
 #include <cmath>
 #include <vector>
+#include <QtConcurrent/QtConcurrent>
+#include <QFutureWatcher>
 #include <gdal_priv.h>
 
 ApplicationController::ApplicationController(MainWindow* mainWindow, QObject* parent)
@@ -128,6 +130,39 @@ static bool convertComplexToAmplitude(GDALDatasetH srcDS, const QString& dstPath
     return true;
 }
 
+// Runs in background thread: opens VSI path and extracts/converts to temp TIFF.
+// Returns the temp path on success, empty QString on failure.
+static QString processOneVsiFile(const QString& vsiPath, const QString& tmpPath)
+{
+    GDALDatasetH srcDS = GDALOpen(vsiPath.toUtf8().constData(), GA_ReadOnly);
+    if (!srcDS) return QString();
+
+    GDALRasterBandH hBand = GDALGetRasterBand(srcDS, 1);
+    GDALDataType srcType = GDALGetRasterDataType(hBand);
+    QString result;
+
+    if (GDALDataTypeIsComplex(srcType)) {
+        if (convertComplexToAmplitude(srcDS, tmpPath))
+            result = tmpPath;
+    } else {
+        GDALDriverH gtDrv = GDALGetDriverByName("GTiff");
+        if (gtDrv) {
+            GDALDatasetH dstDS = GDALCreateCopy(gtDrv,
+                tmpPath.toUtf8().constData(), srcDS, FALSE,
+                nullptr, nullptr, nullptr);
+            if (dstDS) {
+                int levels[] = {2, 4, 8, 16, 32, 64};
+                GDALBuildOverviews(dstDS, "NEAREST", 6,
+                    levels, 0, nullptr, nullptr, nullptr);
+                GDALClose(dstDS);
+                result = tmpPath;
+            }
+        }
+    }
+    GDALClose(srcDS);
+    return result;
+}
+
 void ApplicationController::wireConnections()
 {
     ProcessingMonitorPanel* monitor = mMainWindow->processingMonitorPanel();
@@ -143,9 +178,13 @@ void ApplicationController::wireConnections()
 
     // 图层加载
     connect(layerPanel, &LayerPanel::layerAddRequested, this,
-        [this, canvas, layerPanel](const QStringList& files) {
+        [this, canvas, layerPanel, monitor](const QStringList& files) {
         if (mShuttingDown) return;
         QList<QgsMapLayer*> newLayers;
+
+        // Phase 1: load non-VSI files directly, collect VSI entries
+        struct VsiEntry { QString path; QString tmpPath; QString name; };
+        QVector<VsiEntry> vsiEntries;
 
         for (const QString& path : files) {
             QFileInfo fi(path);
@@ -153,74 +192,102 @@ void ApplicationController::wireConnections()
             if (name.isEmpty() || path.startsWith("/vsi"))
                 name = path.section('/', -1);
 
-            QString loadPath = path;
-
             if (path.startsWith("/vsi")) {
-                GDALDatasetH srcDS = GDALOpen(
-                    path.toUtf8().constData(), GA_ReadOnly);
-                if (srcDS) {
-                    QString tmpPath = QDir::tempPath()
-                        + "/insar_" + fi.completeBaseName() + ".tif";
-                    GDALRasterBandH hBand = GDALGetRasterBand(srcDS, 1);
-                    GDALDataType srcType = GDALGetRasterDataType(hBand);
-
-                    if (GDALDataTypeIsComplex(srcType)) {
-                        if (convertComplexToAmplitude(srcDS, tmpPath)) {
-                            loadPath = tmpPath;
-                            mTempFiles.append(tmpPath);
-                            qDebug() << "[InSAR] SLC amplitude:"
-                                     << tmpPath;
-                        }
-                    } else {
-                        GDALDriverH gtDrv = GDALGetDriverByName("GTiff");
-                        if (gtDrv) {
-                            GDALDatasetH dstDS = GDALCreateCopy(gtDrv,
-                                tmpPath.toUtf8().constData(), srcDS, FALSE,
-                                nullptr, nullptr, nullptr);
-                            if (dstDS) {
-                                int levels[] = {2, 4, 8, 16, 32, 64};
-                                GDALBuildOverviews(dstDS, "NEAREST", 6,
-                                    levels, 0, nullptr, nullptr, nullptr);
-                                GDALClose(dstDS);
-                                loadPath = tmpPath;
-                                mTempFiles.append(tmpPath);
-                                qDebug() << "[InSAR] TIFF extracted:"
-                                         << tmpPath;
-                            }
-                        }
-                    }
-                    GDALClose(srcDS);
-                }
-            }
-
-            QgsRasterLayer* layer = new QgsRasterLayer(loadPath, name);
-            if (layer->isValid()) {
-                QgsProject::instance()->addMapLayer(layer);
-                newLayers.append(layer);
-                layerPanel->onLayerLoaded(layer->id(), name,
-                    QStringLiteral("Raster"));
-                qDebug() << "[InSAR] Layer loaded:" << name;
+                QString tmpPath = QDir::tempPath()
+                    + "/insar_" + fi.completeBaseName() + ".tif";
+                vsiEntries.append({path, tmpPath, name});
             } else {
-                layerPanel->onLayerError(
-                    QStringLiteral("无法加载: %1").arg(name));
-                delete layer;
-                if (loadPath != path && QFile::exists(loadPath)) {
-                    QFile::remove(loadPath);
-                    mTempFiles.removeAll(loadPath);
+                QgsRasterLayer* layer = new QgsRasterLayer(path, name);
+                if (layer->isValid()) {
+                    QgsProject::instance()->addMapLayer(layer);
+                    newLayers.append(layer);
+                    layerPanel->onLayerLoaded(layer->id(), name,
+                        QStringLiteral("Raster"));
+                } else {
+                    layerPanel->onLayerError(
+                        QStringLiteral("无法加载: %1").arg(name));
+                    delete layer;
                 }
             }
         }
 
-        if (!newLayers.isEmpty()) {
-            QgsMapLayer* first = newLayers.first();
-            QgsCoordinateReferenceSystem layerCrs = first->crs();
-            if (layerCrs.isValid()) {
-                canvas->setDestinationCrs(layerCrs);
+        auto finishLoading = [this, canvas, newLayers]() mutable {
+            if (!newLayers.isEmpty()) {
+                QgsMapLayer* first = newLayers.first();
+                QgsCoordinateReferenceSystem crs = first->crs();
+                if (crs.isValid())
+                    canvas->setDestinationCrs(crs);
             }
             rebuildCanvasLayers();
             canvas->zoomToFullExtent();
-            qDebug() << "[InSAR] Canvas ready, layers:" << newLayers.size();
+        };
+
+        if (vsiEntries.isEmpty()) {
+            finishLoading();
+            return;
         }
+
+        // Phase 2: process VSI files in background thread
+        int total = vsiEntries.size();
+        monitor->appendLog(
+            QStringLiteral("正在处理 %1 个文件...").arg(total),
+            "#FF9800");
+
+        // Build vectors for the background function (deep copies, no refs)
+        QStringList vsiPaths, tmpPaths;
+        QStringList names;
+        for (const auto& e : vsiEntries) {
+            vsiPaths.append(e.path);
+            tmpPaths.append(e.tmpPath);
+            names.append(e.name);
+        }
+
+        auto* watcher = new QFutureWatcher<QStringList>(this);
+        connect(watcher, &QFutureWatcher<QStringList>::finished, this,
+            [this, watcher, canvas, layerPanel, monitor, total,
+             names, tmpPaths, newLayers, finishLoading]() mutable {
+            const QStringList results = watcher->result();
+
+            for (int i = 0; i < results.size(); ++i) {
+                const QString& loadPath = results[i];
+                if (loadPath.isEmpty()) {
+                    layerPanel->onLayerError(
+                        QStringLiteral("无法加载: %1").arg(names[i]));
+                    continue;
+                }
+                mTempFiles.append(loadPath);
+
+                QgsRasterLayer* layer =
+                    new QgsRasterLayer(loadPath, names[i]);
+                if (layer->isValid()) {
+                    QgsProject::instance()->addMapLayer(layer);
+                    newLayers.append(layer);
+                    layerPanel->onLayerLoaded(layer->id(), names[i],
+                        QStringLiteral("Raster"));
+                    qDebug() << "[InSAR] Layer loaded:" << names[i];
+                } else {
+                    layerPanel->onLayerError(
+                        QStringLiteral("无法加载: %1").arg(names[i]));
+                    delete layer;
+                    QFile::remove(loadPath);
+                }
+            }
+
+            finishLoading();
+            monitor->appendLog(
+                QStringLiteral("文件处理完成 (%1 个图层)").arg(total),
+                "#4CAF50");
+            watcher->deleteLater();
+        });
+
+        watcher->setFuture(
+            QtConcurrent::run([vsiPaths, tmpPaths]() -> QStringList {
+                QStringList results;
+                for (int i = 0; i < vsiPaths.size(); ++i)
+                    results.append(
+                        processOneVsiFile(vsiPaths[i], tmpPaths[i]));
+                return results;
+            }));
     });
 
     // 可见性切换
