@@ -22,7 +22,6 @@ class IInterferogramReader;
 class IInterferogramWriter;
 class IDemReader;
 class IOrbitDataReader;
-class QgsLayerTreeMapCanvasBridge;
 
 class ApplicationController : public QObject
 {
@@ -47,6 +46,7 @@ private:
     void createServices();
     void createDataAccess();
     void wireConnections();
+    void rebuildCanvasLayers();
 
     MainWindow* mMainWindow;
     WorkerManager* mWorkerManager = nullptr;
@@ -61,7 +61,6 @@ private:
 
     // 临时文件追踪 (/vsizip/ 提取的本地 GTiff)
     QStringList mTempFiles;
-    QgsLayerTreeMapCanvasBridge* mLayerTreeBridge = nullptr;
     bool mShuttingDown = false;
 };
 

@@ -24,7 +24,6 @@ void MapCanvasWidget::setupUI()
     mCanvas->setCanvasColor(QColor(255, 255, 255));
     mCanvas->enableAntiAliasing(true);
     mCanvas->setCachingEnabled(true);
-    mCanvas->setMapUpdateInterval(0);
 
     layout->addWidget(mCanvas);
     setLayout(layout);

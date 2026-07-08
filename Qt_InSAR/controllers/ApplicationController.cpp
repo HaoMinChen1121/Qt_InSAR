@@ -15,7 +15,6 @@
 
 #include <qgsrasterlayer.h>
 #include <qgslayertree.h>
-#include <qgslayertreemapcanvasbridge.h>
 #include <qgsproject.h>
 #include <qgsmapcanvas.h>
 #include <qgsrectangle.h>
@@ -65,10 +64,6 @@ void ApplicationController::wireConnections()
 
     LayerPanel* layerPanel = mMainWindow->layerPanel();
     QgsMapCanvas* canvas = mMainWindow->mapCanvasWidget()->mapCanvas();
-
-    // 图层树 ↔ 画布桥接
-    QgsLayerTree* layerTree = QgsProject::instance()->layerTreeRoot();
-    mLayerTreeBridge = new QgsLayerTreeMapCanvasBridge(layerTree, canvas, this);
 
     // 图层加载
     connect(layerPanel, &LayerPanel::layerAddRequested, this,
@@ -134,39 +129,29 @@ void ApplicationController::wireConnections()
             if (layerCrs.isValid()) {
                 canvas->setDestinationCrs(layerCrs);
             }
-            // Explicitly set canvas layers in tree order, then refresh.
-            // Mirrors QtAPPDemo's rebuildCanvasLayers() to ensure a
-            // consistent layer list before rendering, preventing
-            // z-order flicker during subsequent canvas interactions.
-            QList<QgsMapLayer*> ordered;
-            const QStringList ids = QgsProject::instance()
-                ->layerTreeRoot()->findLayerIds();
-            for (const QString& id : ids) {
-                QgsMapLayer* l = QgsProject::instance()->mapLayer(id);
-                if (l) ordered.append(l);
-            }
-            canvas->setLayers(ordered);
+            rebuildCanvasLayers();
             canvas->zoomToFullExtent();
-            canvas->refresh();
             qDebug() << "[InSAR] Canvas ready, layers:" << newLayers.size();
         }
     });
 
     // 可见性切换
     connect(layerPanel, &LayerPanel::layerVisibilityChanged, this,
-        [](const QString& id, bool visible) {
+        [this](const QString& id, bool visible) {
         QgsLayerTreeLayer* node =
             QgsProject::instance()->layerTreeRoot()->findLayer(id);
         if (node) {
             node->setItemVisibilityChecked(visible);
+            rebuildCanvasLayers();
         }
     });
 
     // 图层移除
     connect(layerPanel, &LayerPanel::layerRemoveRequested, this,
-        [](const QStringList& ids) {
+        [this](const QStringList& ids) {
         for (const QString& id : ids)
             QgsProject::instance()->removeMapLayer(id);
+        rebuildCanvasLayers();
     });
 
     // 缩放至图层
@@ -195,6 +180,26 @@ IUnwrappingService* ApplicationController::unwrappingService() const
 IGeocodingService* ApplicationController::geocodingService() const
 { return mGeocodingSvc.get(); }
 
+void ApplicationController::rebuildCanvasLayers()
+{
+    QgsMapCanvas* canvas = mMainWindow->mapCanvasWidget()->mapCanvas();
+    if (!canvas) return;
+
+    QgsLayerTree* root = QgsProject::instance()->layerTreeRoot();
+    QList<QgsMapLayer*> visible;
+    const QStringList ids = root->findLayerIds();
+    for (const QString& id : ids) {
+        QgsLayerTreeLayer* node = root->findLayer(id);
+        if (node && node->isVisible()) {
+            QgsMapLayer* layer = node->layer();
+            if (layer) visible.append(layer);
+        }
+    }
+
+    canvas->setLayers(visible);
+    canvas->refresh();
+}
+
 void ApplicationController::shutdown()
 {
     if (mShuttingDown) return;
@@ -202,10 +207,6 @@ void ApplicationController::shutdown()
 
     qDebug() << "[InSAR] ======== 开始清理 ========";
 
-    if (mLayerTreeBridge) {
-        delete mLayerTreeBridge;
-        mLayerTreeBridge = nullptr;
-    }
     if (mMainWindow && mMainWindow->mapCanvasWidget()) {
         QgsMapCanvas* canvas = mMainWindow->mapCanvasWidget()->mapCanvas();
         if (canvas) {
