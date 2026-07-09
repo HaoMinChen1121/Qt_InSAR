@@ -16,13 +16,6 @@ class IFilterService;
 class IUnwrappingService;
 class IGeocodingService;
 
-class ISlcReader;
-class ISlcWriter;
-class IInterferogramReader;
-class IInterferogramWriter;
-class IDemReader;
-class IOrbitDataReader;
-
 class ApplicationController : public QObject
 {
     Q_OBJECT
@@ -44,7 +37,6 @@ public:
 
 private:
     void createServices();
-    void createDataAccess();
     void wireConnections();
     void rebuildCanvasLayers();
 
