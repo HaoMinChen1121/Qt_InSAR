@@ -2,6 +2,7 @@
 
 #include <gdal_priv.h>
 #include <cmath>
+#include <vector>
 #include <QFile>
 #include <QTextStream>
 #include <QDebug>
@@ -118,11 +119,121 @@ static bool createAmplitudeVRT(const QString& vsiPath, const QString& vrtPath)
     ts << "      <SourceBand>1</SourceBand>\n";
     ts << "      <SrcDataType>" << srcTypeName << "</SrcDataType>\n";
     ts << "    </SimpleSource>\n";
+    // 预置近似统计值，避免 QGIS 全图扫描触发 /vsizip 解压风暴
+    // CInt16 振幅理论范围 0 ~ sqrt(32767²+32767²) ≈ 46341
+    ts << "    <Metadata>\n";
+    ts << "      <MDI key=\"STATISTICS_MINIMUM\">0</MDI>\n";
+    ts << "      <MDI key=\"STATISTICS_MAXIMUM\">46341</MDI>\n";
+    ts << "      <MDI key=\"STATISTICS_MEAN\">5000</MDI>\n";
+    ts << "      <MDI key=\"STATISTICS_STDDEV\">6000</MDI>\n";
+    ts << "    </Metadata>\n";
     ts << "  </VRTRasterBand>\n";
     ts << "</VRTDataset>\n";
 
     GDALClose(srcDS);
     f.close();
+    return true;
+}
+
+// ---- file-scope: pre-computed amplitude GeoTIFF for SLC (complex) data ----
+
+static bool createAmplitudeGeoTiff(const QString& vsiPath,
+                                    const QString& tifPath)
+{
+    GDALDatasetH srcDS = GDALOpen(vsiPath.toUtf8().constData(), GA_ReadOnly);
+    if (!srcDS) return false;
+
+    int w = GDALGetRasterXSize(srcDS);
+    int h = GDALGetRasterYSize(srcDS);
+    GDALRasterBandH srcBand = GDALGetRasterBand(srcDS, 1);
+    GDALDataType srcDT = GDALGetRasterDataType(srcBand);
+
+    GDALDriverH gtDrv = GDALGetDriverByName("GTiff");
+    if (!gtDrv) { GDALClose(srcDS); return false; }
+
+    GDALDatasetH dstDS = GDALCreate(gtDrv, tifPath.toUtf8().constData(),
+                                     w, h, 1, GDT_Float32, nullptr);
+    if (!dstDS) { GDALClose(srcDS); return false; }
+
+    // Copy georeferencing
+    double gt[6];
+    if (GDALGetGeoTransform(srcDS, gt) == CE_None)
+        GDALSetGeoTransform(dstDS, gt);
+    const char* proj = GDALGetProjectionRef(srcDS);
+    if (proj && strlen(proj) > 0)
+        GDALSetProjection(dstDS, proj);
+
+    int nGCPs = GDALGetGCPCount(srcDS);
+    if (nGCPs > 0) {
+        std::vector<GDAL_GCP> gcps(nGCPs);
+        const GDAL_GCP* srcGcps = GDALGetGCPs(srcDS);
+        for (int i = 0; i < nGCPs; ++i)
+            gcps[i] = srcGcps[i];
+        GDALSetGCPs(dstDS, nGCPs, gcps.data(),
+                     GDALGetGCPProjection(srcDS));
+    }
+
+    GDALRasterBandH dstBand = GDALGetRasterBand(dstDS, 1);
+
+    int blockXSize, blockYSize;
+    GDALGetBlockSize(srcBand, &blockXSize, &blockYSize);
+    if (blockXSize <= 0 || blockYSize <= 0) {
+        blockXSize = w;
+        blockYSize = 1;
+    }
+
+    if (srcDT == GDT_CInt16) {
+        std::vector<int16_t> srcBuf(blockXSize * blockYSize * 2);
+        std::vector<float> dstBuf(blockXSize * blockYSize);
+
+        for (int y = 0; y < h; y += blockYSize) {
+            int rows = (y + blockYSize <= h) ? blockYSize : (h - y);
+            if (GDALRasterIO(srcBand, GF_Read, 0, y, w, rows,
+                             srcBuf.data(), w, rows, GDT_CInt16, 0, 0)
+                != CE_None) break;
+
+            int n = w * rows;
+            for (int i = 0; i < n; i++) {
+                float I = static_cast<float>(srcBuf[i * 2]);
+                float Q = static_cast<float>(srcBuf[i * 2 + 1]);
+                dstBuf[i] = std::sqrt(I * I + Q * Q);
+            }
+
+            GDALRasterIO(dstBand, GF_Write, 0, y, w, rows,
+                         dstBuf.data(), w, rows, GDT_Float32, 0, 0);
+        }
+    } else if (srcDT == GDT_CFloat32) {
+        std::vector<float> srcBuf(blockXSize * blockYSize * 2);
+        std::vector<float> dstBuf(blockXSize * blockYSize);
+
+        for (int y = 0; y < h; y += blockYSize) {
+            int rows = (y + blockYSize <= h) ? blockYSize : (h - y);
+            if (GDALRasterIO(srcBand, GF_Read, 0, y, w, rows,
+                             srcBuf.data(), w, rows, GDT_CFloat32, 0, 0)
+                != CE_None) break;
+
+            int n = w * rows;
+            for (int i = 0; i < n; i++) {
+                float I = srcBuf[i * 2];
+                float Q = srcBuf[i * 2 + 1];
+                dstBuf[i] = std::sqrt(I * I + Q * Q);
+            }
+
+            GDALRasterIO(dstBand, GF_Write, 0, y, w, rows,
+                         dstBuf.data(), w, rows, GDT_Float32, 0, 0);
+        }
+    } else {
+        GDALClose(dstDS);
+        GDALClose(srcDS);
+        return false;
+    }
+
+    int levels[] = {2, 4, 8, 16, 32, 64};
+    GDALBuildOverviews(dstDS, "AVERAGE", 6, levels, 0, nullptr, nullptr,
+                       nullptr);
+
+    GDALClose(dstDS);
+    GDALClose(srcDS);
     return true;
 }
 
@@ -144,9 +255,12 @@ QString GdalVsiProcessor::process(const QString& vsiPath,
     QString result;
 
     if (GDALDataTypeIsComplex(srcType)) {
-        QString vrtPath = outputBasePath + ".vrt";
-        if (createAmplitudeVRT(vsiPath, vrtPath))
-            result = vrtPath;
+        GDALClose(srcDS);
+        srcDS = nullptr;
+
+        QString tifPath = outputBasePath + ".tif";
+        if (createAmplitudeGeoTiff(vsiPath, tifPath))
+            result = tifPath;
     } else {
         QString tifPath = outputBasePath + ".tif";
         GDALDriverH gtDrv = GDALGetDriverByName("GTiff");
@@ -163,6 +277,7 @@ QString GdalVsiProcessor::process(const QString& vsiPath,
             }
         }
     }
-    GDALClose(srcDS);
+    if (srcDS)
+        GDALClose(srcDS);
     return result;
 }

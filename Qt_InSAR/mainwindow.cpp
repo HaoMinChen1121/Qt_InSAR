@@ -200,10 +200,6 @@ void MainWindow::createCategoryFile(SARibbonCategory* page)
             QString(),
             QStringLiteral("Sentinel-1 产品 (*.zip *.SAFE);;"
                            "所有文件 (*.*)"));
-        if (path.isEmpty()) {
-            path = QFileDialog::getExistingDirectory(this,
-                QStringLiteral("选择 Sentinel-1 产品目录"));
-        }
         if (path.isEmpty()) return;
 
         emit sarProductOpenRequested(path);
