@@ -2,6 +2,7 @@
 
 #include <gdal_priv.h>
 #include <cmath>
+#include <vector>
 #include <QFile>
 #include <QTextStream>
 #include <QDebug>
@@ -139,31 +140,100 @@ static bool createAmplitudeVRT(const QString& vsiPath, const QString& vrtPath)
 static bool createAmplitudeGeoTiff(const QString& vsiPath,
                                     const QString& tifPath)
 {
-    // 1. 生成临时 VRT —— GDAL 内部处理 CInt16→振幅 的像素函数
-    QString vrtPath = tifPath + ".tmp.vrt";
-    if (!createAmplitudeVRT(vsiPath, vrtPath))
-        return false;
+    GDALDatasetH srcDS = GDALOpen(vsiPath.toUtf8().constData(), GA_ReadOnly);
+    if (!srcDS) return false;
 
-    // 2. 打开 VRT, 写出为 TIFF —— GDAL 内部逐块执行像素函数
-    GDALDatasetH vrtDS = GDALOpen(vrtPath.toUtf8().constData(), GA_ReadOnly);
-    if (!vrtDS) { QFile::remove(vrtPath); return false; }
+    int w = GDALGetRasterXSize(srcDS);
+    int h = GDALGetRasterYSize(srcDS);
+    GDALRasterBandH srcBand = GDALGetRasterBand(srcDS, 1);
+    GDALDataType srcDT = GDALGetRasterDataType(srcBand);
 
     GDALDriverH gtDrv = GDALGetDriverByName("GTiff");
-    GDALDatasetH dstDS = nullptr;
-    if (gtDrv) {
-        dstDS = GDALCreateCopy(gtDrv, tifPath.toUtf8().constData(),
-                                vrtDS, FALSE, nullptr, nullptr, nullptr);
+    if (!gtDrv) { GDALClose(srcDS); return false; }
+
+    GDALDatasetH dstDS = GDALCreate(gtDrv, tifPath.toUtf8().constData(),
+                                     w, h, 1, GDT_Float32, nullptr);
+    if (!dstDS) { GDALClose(srcDS); return false; }
+
+    // Copy georeferencing
+    double gt[6];
+    if (GDALGetGeoTransform(srcDS, gt) == CE_None)
+        GDALSetGeoTransform(dstDS, gt);
+    const char* proj = GDALGetProjectionRef(srcDS);
+    if (proj && strlen(proj) > 0)
+        GDALSetProjection(dstDS, proj);
+
+    int nGCPs = GDALGetGCPCount(srcDS);
+    if (nGCPs > 0) {
+        std::vector<GDAL_GCP> gcps(nGCPs);
+        const GDAL_GCP* srcGcps = GDALGetGCPs(srcDS);
+        for (int i = 0; i < nGCPs; ++i)
+            gcps[i] = srcGcps[i];
+        GDALSetGCPs(dstDS, nGCPs, gcps.data(),
+                     GDALGetGCPProjection(srcDS));
     }
-    GDALClose(vrtDS);
-    QFile::remove(vrtPath);
 
-    if (!dstDS) return false;
+    GDALRasterBandH dstBand = GDALGetRasterBand(dstDS, 1);
 
-    // 3. 构建金字塔用于多分辨率渲染
+    int blockXSize, blockYSize;
+    GDALGetBlockSize(srcBand, &blockXSize, &blockYSize);
+    if (blockXSize <= 0 || blockYSize <= 0) {
+        blockXSize = w;
+        blockYSize = 1;
+    }
+
+    if (srcDT == GDT_CInt16) {
+        std::vector<int16_t> srcBuf(blockXSize * blockYSize * 2);
+        std::vector<float> dstBuf(blockXSize * blockYSize);
+
+        for (int y = 0; y < h; y += blockYSize) {
+            int rows = (y + blockYSize <= h) ? blockYSize : (h - y);
+            if (GDALRasterIO(srcBand, GF_Read, 0, y, w, rows,
+                             srcBuf.data(), w, rows, GDT_CInt16, 0, 0)
+                != CE_None) break;
+
+            int n = w * rows;
+            for (int i = 0; i < n; i++) {
+                float I = static_cast<float>(srcBuf[i * 2]);
+                float Q = static_cast<float>(srcBuf[i * 2 + 1]);
+                dstBuf[i] = std::sqrt(I * I + Q * Q);
+            }
+
+            GDALRasterIO(dstBand, GF_Write, 0, y, w, rows,
+                         dstBuf.data(), w, rows, GDT_Float32, 0, 0);
+        }
+    } else if (srcDT == GDT_CFloat32) {
+        std::vector<float> srcBuf(blockXSize * blockYSize * 2);
+        std::vector<float> dstBuf(blockXSize * blockYSize);
+
+        for (int y = 0; y < h; y += blockYSize) {
+            int rows = (y + blockYSize <= h) ? blockYSize : (h - y);
+            if (GDALRasterIO(srcBand, GF_Read, 0, y, w, rows,
+                             srcBuf.data(), w, rows, GDT_CFloat32, 0, 0)
+                != CE_None) break;
+
+            int n = w * rows;
+            for (int i = 0; i < n; i++) {
+                float I = srcBuf[i * 2];
+                float Q = srcBuf[i * 2 + 1];
+                dstBuf[i] = std::sqrt(I * I + Q * Q);
+            }
+
+            GDALRasterIO(dstBand, GF_Write, 0, y, w, rows,
+                         dstBuf.data(), w, rows, GDT_Float32, 0, 0);
+        }
+    } else {
+        GDALClose(dstDS);
+        GDALClose(srcDS);
+        return false;
+    }
+
     int levels[] = {2, 4, 8, 16, 32, 64};
     GDALBuildOverviews(dstDS, "AVERAGE", 6, levels, 0, nullptr, nullptr,
                        nullptr);
+
     GDALClose(dstDS);
+    GDALClose(srcDS);
     return true;
 }
 

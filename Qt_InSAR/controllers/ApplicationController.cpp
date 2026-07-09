@@ -181,21 +181,10 @@ void ApplicationController::wireConnections()
 
         watcher->setFuture(
             QtConcurrent::run([vsiPaths, tmpPaths]() -> QStringList {
-                // 每个波段独立提交到线程池并行处理
-                QVector<QFuture<QString>> futures;
-                futures.reserve(vsiPaths.size());
-                for (int i = 0; i < vsiPaths.size(); ++i) {
-                    QString path = vsiPaths[i];
-                    QString tmp  = tmpPaths[i];
-                    futures.append(QtConcurrent::run(
-                        [path, tmp]() -> QString {
-                            return GdalVsiProcessor::process(path, tmp);
-                        }));
-                }
                 QStringList results;
-                results.reserve(futures.size());
-                for (auto& f : futures)
-                    results.append(f.result());  // 阻塞等待全部完成
+                for (int i = 0; i < vsiPaths.size(); ++i)
+                    results.append(
+                        GdalVsiProcessor::process(vsiPaths[i], tmpPaths[i]));
                 return results;
             }));
     });
