@@ -361,15 +361,16 @@ bool Sentinel1Product::parseManifest(const QString& manifestPath) {
             mProductType = sarProductTypeFromString(pt);
     }
 
-    // 极化
+    // 极化 — 遍历全部 transmitterReceiverPolarisation 元素
+    // (双极化产品有多个，每个包含单一极化如 "VV" 或 "VH")
     nl = root.elementsByTagName("s1sarl1:transmitterReceiverPolarisation");
     if (nl.isEmpty())
         nl = root.elementsByTagName("transmitterReceiverPolarisation");
     mPolarizations.clear();
-    if (!nl.isEmpty()) {
-        QString ps = nl.at(0).toElement().text().trimmed();
-        for (const QString& p : ps.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts))
-            mPolarizations.append(p);
+    for (int i = 0; i < nl.size(); ++i) {
+        QString ps = nl.at(i).toElement().text().trimmed();
+        if (!ps.isEmpty() && !mPolarizations.contains(ps))
+            mPolarizations.append(ps);
     }
     if (mPolarizations.isEmpty()) {
         if (info.polarization.contains("DV"))
@@ -399,7 +400,8 @@ bool Sentinel1Product::parseManifest(const QString& manifestPath) {
     mSensorInfo.productId       = mProductId;
     mSensorInfo.originalPath    = fi.dir().absolutePath();
     mSensorInfo.manifestPath    = manifestPath;
-    mSensorInfo.acquisitionStart = mAcquisitionStart;
+    if (mAcquisitionStart.isValid())
+        mSensorInfo.acquisitionStart = mAcquisitionStart;
     mSensorInfo.polarizations   = mPolarizations;
     mSensorInfo.annotationDir   = fi.dir().absolutePath() + "/annotation";
     mSensorInfo.measurementDir  = fi.dir().absolutePath() + "/measurement";
@@ -487,6 +489,12 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
     if (!nl.isEmpty())
         mSensorInfo.azimuthSamples = nl.at(0).toElement().text().toInt();
 
+    // 远距 = 近距 + (距离向采样数 - 1) × 距离向采样间距
+    if (mSensorInfo.nearRange > 0 && mSensorInfo.rangeSamples > 0
+        && mSensorInfo.rangeSpacing > 0)
+        mSensorInfo.farRange = mSensorInfo.nearRange
+            + (mSensorInfo.rangeSamples - 1) * mSensorInfo.rangeSpacing;
+
     // 更新 sensorInfo
     mSensorInfo.relativeOrbit = mOrbitNumberRel;
     mSensorInfo.absoluteOrbit = mOrbitNumberAbs;
@@ -523,23 +531,17 @@ void Sentinel1Product::discoverMeasurementFiles(const QString& measurementDir) {
         SarBandDescriptor b;
         b.rasterPath = measurementDir + "/" + tf;
         b.index = mBands.size();
+
+        // 产品类型决定数据格式，避免逐个 GDALOpen（/vsizip 解压开销）
         b.isComplex = (mProductType == SarProductType::SLC);
+        b.dataType  = b.isComplex ? QStringLiteral("CInt16")
+                                  : QStringLiteral("UInt16");
 
         // 从文件名推断极化和子条带
         S1FileNameInfo info = parseS1FileName(tf);
         if (info.polarization.size() == 2)
             b.polarization = info.polarization.toUpper();
         b.subSwath = info.subSwath.toUpper();
-
-        // 用 GDAL 获取数据类型和尺寸
-        CPLErr err;
-        GDALDatasetH hDS = GDALOpen(b.rasterPath.toUtf8().constData(), GA_ReadOnly);
-        if (hDS) {
-            b.rasterSize = QSize(GDALGetRasterXSize(hDS), GDALGetRasterYSize(hDS));
-            GDALRasterBandH hBand = GDALGetRasterBand(hDS, 1);
-            b.dataType = QString::fromUtf8(GDALGetDataTypeName(GDALGetRasterDataType(hBand)));
-            GDALClose(hDS);
-        }
 
         // 兜底: 从文件名关键字推断极化
         if (b.polarization.isEmpty()) {
