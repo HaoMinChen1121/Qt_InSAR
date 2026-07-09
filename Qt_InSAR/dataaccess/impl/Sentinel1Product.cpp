@@ -481,13 +481,23 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
         mSensorInfo.incidenceAngleFar   = inc + 5.0;
     }
 
-    // 采样数
+    // 采样数 (SLC: samplesPerBurst/linesPerBurst; GRD: numberOfSamples/numberOfLines)
     nl = root.elementsByTagName("samplesPerBurst");
     if (!nl.isEmpty())
         mSensorInfo.rangeSamples  = nl.at(0).toElement().text().toInt();
+    if (mSensorInfo.rangeSamples == 0) {
+        nl = root.elementsByTagName("numberOfSamples");
+        if (!nl.isEmpty())
+            mSensorInfo.rangeSamples = nl.at(0).toElement().text().toInt();
+    }
     nl = root.elementsByTagName("linesPerBurst");
     if (!nl.isEmpty())
         mSensorInfo.azimuthSamples = nl.at(0).toElement().text().toInt();
+    if (mSensorInfo.azimuthSamples == 0) {
+        nl = root.elementsByTagName("numberOfLines");
+        if (!nl.isEmpty())
+            mSensorInfo.azimuthSamples = nl.at(0).toElement().text().toInt();
+    }
 
     // 远距 = 近距 + (距离向采样数 - 1) × 距离向采样间距
     if (mSensorInfo.nearRange > 0 && mSensorInfo.rangeSamples > 0
