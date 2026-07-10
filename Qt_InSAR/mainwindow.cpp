@@ -162,14 +162,14 @@ void MainWindow::initSarMetadataPanel()
     mSarMetadataDock = new QDockWidget(QStringLiteral("SAR元数据"), this);
     mSarMetadataDock->setObjectName("SarMetadataDock");
     mSarMetadataDock->setAllowedAreas(Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea);
-    mSarMetadataDock->setMinimumWidth(220);
-    mSarMetadataDock->setMaximumWidth(400);
+    mSarMetadataDock->setMinimumWidth(280);
+    mSarMetadataDock->setMaximumWidth(600);
 
     mSarMetadataPanel = new SarMetadataPanel(mSarMetadataDock);
     mSarMetadataDock->setWidget(mSarMetadataPanel);
 
     addDockWidget(Qt::RightDockWidgetArea, mSarMetadataDock);
-    resizeDocks({mSarMetadataDock}, {240}, Qt::Horizontal);
+    resizeDocks({mSarMetadataDock}, {320}, Qt::Horizontal);
 }
 
 QAction* MainWindow::createAction(const QString& text, const QString& iconurl, const QString& objName)
