@@ -299,9 +299,10 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
                                        ":/icon/icon/save.svg", "actMaster");
     pnlIO->addLargeAction(actMaster);
     connect(actMaster, &QAction::triggered, this, [this]() {
-        if (mAppController && !mAppController->loadedSlcImages().isEmpty()) {
-            mAppController->buildSlcLayerMenu(true)->exec(QCursor::pos());
-        }
+        if (!mAppController) return;
+        QMenu* menu = mAppController->buildSlcLayerMenu(true);
+        menu->exec(mapToGlobal(QPoint(width() / 4, height() / 3)));
+        menu->deleteLater();
     });
 
     mLblMasterInfo = new QLabel(QStringLiteral("未选择"), this);
@@ -313,9 +314,10 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
                                       ":/icon/icon/Align-Left.svg", "actSlave");
     pnlIO->addLargeAction(actSlave);
     connect(actSlave, &QAction::triggered, this, [this]() {
-        if (mAppController && !mAppController->loadedSlcImages().isEmpty()) {
-            mAppController->buildSlcLayerMenu(false)->exec(QCursor::pos());
-        }
+        if (!mAppController) return;
+        QMenu* menu = mAppController->buildSlcLayerMenu(false);
+        menu->exec(mapToGlobal(QPoint(width() / 4, height() / 3)));
+        menu->deleteLater();
     });
 
     mLblSlaveInfo = new QLabel(QStringLiteral("未选择"), this);
