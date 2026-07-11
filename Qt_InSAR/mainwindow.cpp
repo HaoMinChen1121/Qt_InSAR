@@ -35,6 +35,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QCheckBox>
+#include <QGridLayout>
 #include <QVBoxLayout>
 
 MainWindow::MainWindow(QWidget* parent) : SARibbonMainWindow(parent)
@@ -294,29 +295,37 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     // ── Panel 1: 主辅影像 ──
     SARibbonPanel* pnlIO = page->addPanel(QStringLiteral("主辅影像"));
 
+    QWidget* ioContainer = new QWidget(this);
+    QGridLayout* ioGrid = new QGridLayout(ioContainer);
+    ioGrid->setContentsMargins(2, 2, 2, 2);
+    ioGrid->setVerticalSpacing(4);
+    ioGrid->setHorizontalSpacing(6);
+
     mBtnMaster = new QToolButton(this);
     mBtnMaster->setText(QStringLiteral("主影像"));
     mBtnMaster->setToolButtonStyle(Qt::ToolButtonTextOnly);
     mBtnMaster->setPopupMode(QToolButton::InstantPopup);
-    mBtnMaster->setMinimumSize(80, 40);
-    pnlIO->addSmallWidget(mBtnMaster);
+    mBtnMaster->setMinimumSize(80, 28);
+    ioGrid->addWidget(mBtnMaster, 0, 0);
 
     mLblMasterInfo = new QLabel(QStringLiteral("未选择"), this);
     mLblMasterInfo->setWordWrap(true);
-    mLblMasterInfo->setMaximumHeight(30);
-    pnlIO->addSmallWidget(mLblMasterInfo);
+    mLblMasterInfo->setMinimumWidth(100);
+    ioGrid->addWidget(mLblMasterInfo, 0, 1);
 
     mBtnSlave = new QToolButton(this);
     mBtnSlave->setText(QStringLiteral("辅影像"));
     mBtnSlave->setToolButtonStyle(Qt::ToolButtonTextOnly);
     mBtnSlave->setPopupMode(QToolButton::InstantPopup);
-    mBtnSlave->setMinimumSize(80, 40);
-    pnlIO->addSmallWidget(mBtnSlave);
+    mBtnSlave->setMinimumSize(80, 28);
+    ioGrid->addWidget(mBtnSlave, 1, 0);
 
     mLblSlaveInfo = new QLabel(QStringLiteral("未选择"), this);
     mLblSlaveInfo->setWordWrap(true);
-    mLblSlaveInfo->setMaximumHeight(30);
-    pnlIO->addSmallWidget(mLblSlaveInfo);
+    mLblSlaveInfo->setMinimumWidth(100);
+    ioGrid->addWidget(mLblSlaveInfo, 1, 1);
+
+    pnlIO->addSmallWidget(ioContainer);
 
     // ── Panel 2: 配准方法 ──
     SARibbonPanel* pnlMethod = page->addPanel(QStringLiteral("配准方法"));
