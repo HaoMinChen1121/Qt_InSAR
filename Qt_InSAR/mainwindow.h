@@ -16,6 +16,7 @@ class QSpinBox;
 class QDoubleSpinBox;
 class QCheckBox;
 class QLabel;
+class QMenu;
 
 class MapCanvasWidget;
 class LayerPanel;
