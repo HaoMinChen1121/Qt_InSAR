@@ -6,16 +6,18 @@
 #include <QComboBox>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
+#include <QCheckBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QGroupBox>
+#include <QHBoxLayout>
 
 RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
 {
     setWindowTitle(tr("影像配准参数"));
-    setMinimumSize(600, 450);
+    setMinimumSize(620, 480);
 
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
     QTabWidget* tabs = new QTabWidget(this);
@@ -45,14 +47,20 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
     QWidget* tab2 = new QWidget;
     QFormLayout* form2 = new QFormLayout(tab2);
     mCoarseMethod = new QComboBox;
-    mCoarseMethod->addItems({tr("轨道法"), tr("互相干法")});
+    mCoarseMethod->addItem(tr("轨道法"), "Orbit");
+    mCoarseMethod->addItem(tr("互相关"), "CrossCorrelation");
     form2->addRow(tr("粗配准方法:"), mCoarseMethod);
     mControlPoints = new QSpinBox;
     mControlPoints->setRange(16, 1024);
     mControlPoints->setValue(64);
     form2->addRow(tr("控制点数:"), mControlPoints);
+    mSearchWindow = new QSpinBox;
+    mSearchWindow->setRange(8, 512);
+    mSearchWindow->setValue(64);
+    form2->addRow(tr("搜索窗口半径:"), mSearchWindow);
     mFineMethod = new QComboBox;
-    mFineMethod->addItems({tr("子像素插值"), tr("过采样")});
+    mFineMethod->addItem(tr("亚像素"), "SubPixel");
+    mFineMethod->addItem(tr("过采样"), "Oversample");
     form2->addRow(tr("精配准方法:"), mFineMethod);
     mWindowSize = new QSpinBox;
     mWindowSize->setRange(8, 256);
@@ -63,14 +71,31 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
     mCorrThreshold->setSingleStep(0.05);
     mCorrThreshold->setValue(0.3);
     form2->addRow(tr("相关性阈值:"), mCorrThreshold);
+    mPolyDegree = new QComboBox;
+    mPolyDegree->addItem("1", 1);
+    mPolyDegree->addItem("2", 2);
+    mPolyDegree->addItem("3", 3);
+    mPolyDegree->setCurrentIndex(1);
+    form2->addRow(tr("多项式阶数:"), mPolyDegree);
     tabs->addTab(tab2, tr("配准"));
 
     // ===== Tab 3: 重采样 =====
     QWidget* tab3 = new QWidget;
     QFormLayout* form3 = new QFormLayout(tab3);
     mResamplingMethod = new QComboBox;
-    mResamplingMethod->addItems({"Sinc", tr("双线性"), tr("双三次")});
+    mResamplingMethod->addItem("Sinc", "Sinc");
+    mResamplingMethod->addItem(tr("双线性"), "Bilinear");
+    mResamplingMethod->addItem(tr("双三次"), "Bicubic");
     form3->addRow(tr("重采样方法:"), mResamplingMethod);
+    mSincWindow = new QSpinBox;
+    mSincWindow->setRange(4, 64);
+    mSincWindow->setValue(16);
+    form3->addRow(tr("Sinc 窗半径:"), mSincWindow);
+    mSincBeta = new QDoubleSpinBox;
+    mSincBeta->setRange(1.0, 10.0);
+    mSincBeta->setSingleStep(0.5);
+    mSincBeta->setValue(2.5);
+    form3->addRow(tr("Kaiser β:"), mSincBeta);
     mOutResRange = new QDoubleSpinBox;
     mOutResRange->setDecimals(4);
     mOutResRange->setRange(0, 9999);
@@ -96,6 +121,9 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
     form4->addRow(tr("输出目录:"), dirLayout);
     mOutputPrefix = new QLineEdit("registered");
     form4->addRow(tr("文件前缀:"), mOutputPrefix);
+    mEstimateBaseline = new QCheckBox(tr("配准前估算基线"));
+    mEstimateBaseline->setChecked(true);
+    form4->addRow(mEstimateBaseline);
     tabs->addTab(tab4, tr("输出"));
 
     mainLayout->addWidget(tabs);
@@ -124,16 +152,25 @@ void RegistrationDialog::setParams(const RegistrationParams& p)
 {
     mMasterPath->setText(p.masterPath);
     mSlavePath->setText(p.slavePath);
-    mCoarseMethod->setCurrentText(p.coarseMethod);
+    int idx = mCoarseMethod->findData(p.coarseMethod);
+    if (idx >= 0) mCoarseMethod->setCurrentIndex(idx);
     mControlPoints->setValue(p.coarseControlPoints);
-    mFineMethod->setCurrentText(p.fineMethod);
+    mSearchWindow->setValue(p.coarseSearchWindow);
+    idx = mFineMethod->findData(p.fineMethod);
+    if (idx >= 0) mFineMethod->setCurrentIndex(idx);
     mWindowSize->setValue(p.fineWindowSize);
     mCorrThreshold->setValue(p.correlationThreshold);
-    mResamplingMethod->setCurrentText(p.resamplingMethod);
+    idx = mPolyDegree->findData(p.polynomialDegree);
+    if (idx >= 0) mPolyDegree->setCurrentIndex(idx);
+    idx = mResamplingMethod->findData(p.resamplingMethod);
+    if (idx >= 0) mResamplingMethod->setCurrentIndex(idx);
+    mSincWindow->setValue(p.sincWindowSize);
+    mSincBeta->setValue(p.sincBeta);
     mOutResRange->setValue(p.outputResolutionRange);
     mOutResAzimuth->setValue(p.outputResolutionAzimuth);
     mOutputDir->setText(p.outputDir);
     mOutputPrefix->setText(p.outputPrefix);
+    mEstimateBaseline->setChecked(p.estimateBaseline);
 }
 
 RegistrationParams RegistrationDialog::params() const
@@ -141,15 +178,20 @@ RegistrationParams RegistrationDialog::params() const
     RegistrationParams p;
     p.masterPath = mMasterPath->text();
     p.slavePath = mSlavePath->text();
-    p.coarseMethod = mCoarseMethod->currentText();
+    p.coarseMethod = mCoarseMethod->currentData().toString();
     p.coarseControlPoints = mControlPoints->value();
-    p.fineMethod = mFineMethod->currentText();
+    p.coarseSearchWindow = mSearchWindow->value();
+    p.fineMethod = mFineMethod->currentData().toString();
     p.fineWindowSize = mWindowSize->value();
     p.correlationThreshold = mCorrThreshold->value();
-    p.resamplingMethod = mResamplingMethod->currentText();
+    p.polynomialDegree = mPolyDegree->currentData().toInt();
+    p.resamplingMethod = mResamplingMethod->currentData().toString();
+    p.sincWindowSize = mSincWindow->value();
+    p.sincBeta = mSincBeta->value();
     p.outputResolutionRange = mOutResRange->value();
     p.outputResolutionAzimuth = mOutResAzimuth->value();
     p.outputDir = mOutputDir->text();
     p.outputPrefix = mOutputPrefix->text();
+    p.estimateBaseline = mEstimateBaseline->isChecked();
     return p;
 }

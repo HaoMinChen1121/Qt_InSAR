@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include "SARibbonMainWindow.h"
+#include "domain/params/RegistrationParams.h"
 
 class SARibbonCategory;
 class SARibbonQuickAccessBar;
@@ -9,6 +10,12 @@ class SARibbonButtonGroupWidget;
 class SARibbonPanel;
 class QCloseEvent;
 class QLineEdit;
+class QToolButton;
+class QComboBox;
+class QSpinBox;
+class QDoubleSpinBox;
+class QCheckBox;
+class QLabel;
 
 class MapCanvasWidget;
 class LayerPanel;
@@ -34,6 +41,18 @@ public:
 
     void setAppController(ApplicationController* ctrl) { mAppController = ctrl; }
     ApplicationController* appController() const { return mAppController; }
+
+    // ── 配准控件访问器 (供 ApplicationController 使用) ──
+    RegistrationParams& regParams() { return mRegParams; }
+    QToolButton* masterButton() const { return mBtnMaster; }
+    QToolButton* slaveButton() const { return mBtnSlave; }
+    QLabel* masterInfoLabel() const { return mLblMasterInfo; }
+    QLabel* slaveInfoLabel() const { return mLblSlaveInfo; }
+    void updateImageSelectionLabel(QLabel* label, const QString& path);
+
+    // ── 配准辅助方法 ──
+    RegistrationParams collectRegParams() const;
+    void applyParamsToRibbon(const RegistrationParams& p);
 
 private:
     // 文件页
@@ -91,6 +110,29 @@ protected:
 private:
     QLineEdit* mSearchEditor = nullptr;
     ApplicationController* mAppController = nullptr;
+
+    // ── Ribbon 控件 (影像配准页) ──
+    QToolButton*     mBtnMaster = nullptr;
+    QToolButton*     mBtnSlave = nullptr;
+    QLabel*          mLblMasterInfo = nullptr;
+    QLabel*          mLblSlaveInfo = nullptr;
+    QComboBox*       mCoarseMethodCombo = nullptr;
+    QComboBox*       mFineMethodCombo = nullptr;
+    QSpinBox*        mGcpSpin = nullptr;
+    QSpinBox*        mSearchWinSpin = nullptr;
+    QDoubleSpinBox*  mCorrThreshSpin = nullptr;
+    QComboBox*       mResampleCombo = nullptr;
+    QLabel*          mOutputDirLabel = nullptr;
+    QCheckBox*       mKeepResCheck = nullptr;
+    RegistrationParams mRegParams;
+
+    QMenu* buildSlcLayerMenu(bool isMaster);
+
+signals:
+    /// 用户触发配准执行 (携带打包好的参数)
+    void registrationRunRequested(const RegistrationParams& params);
+    /// 用户触发基线快速估算
+    void baselineEstimateRequested(const QString& masterPath, const QString& slavePath);
 };
 
 #endif // MAINWINDOW_H

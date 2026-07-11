@@ -33,6 +33,8 @@
 #include <QMessageBox>
 #include <QSpinBox>
 #include <QTimer>
+#include <QToolButton>
+#include <QCheckBox>
 #include <QVBoxLayout>
 
 MainWindow::MainWindow(QWidget* parent) : SARibbonMainWindow(parent)
@@ -169,7 +171,7 @@ void MainWindow::initSarMetadataPanel()
     mSarMetadataDock->setWidget(mSarMetadataPanel);
 
     addDockWidget(Qt::RightDockWidgetArea, mSarMetadataDock);
-    resizeDocks({mSarMetadataDock}, {320}, Qt::Horizontal);
+    resizeDocks({mSarMetadataDock}, {300}, Qt::Horizontal);
 }
 
 QAction* MainWindow::createAction(const QString& text, const QString& iconurl, const QString& objName)
@@ -289,48 +291,215 @@ void MainWindow::createRightButtonGroup()
 // ========================================================================
 void MainWindow::createCategoryRegistration(SARibbonCategory* page)
 {
+    // ── Panel 1: 主辅影像 ──
     SARibbonPanel* pnlIO = page->addPanel(QStringLiteral("主辅影像"));
-    QAction* actMaster = createAction(QStringLiteral("主影像"), ":/icon/icon/save.svg", "actMaster");
-    pnlIO->addLargeAction(actMaster);
-    QAction* actSlave = createAction(QStringLiteral("辅影像"), ":/icon/icon/Align-Left.svg", "actSlave");
-    pnlIO->addLargeAction(actSlave);
 
+    mBtnMaster = new QToolButton(this);
+    mBtnMaster->setText(QStringLiteral("主影像"));
+    mBtnMaster->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    mBtnMaster->setPopupMode(QToolButton::InstantPopup);
+    mBtnMaster->setMinimumSize(80, 40);
+    pnlIO->addSmallWidget(mBtnMaster);
+
+    mLblMasterInfo = new QLabel(QStringLiteral("未选择"), this);
+    mLblMasterInfo->setWordWrap(true);
+    mLblMasterInfo->setMaximumHeight(30);
+    pnlIO->addSmallWidget(mLblMasterInfo);
+
+    mBtnSlave = new QToolButton(this);
+    mBtnSlave->setText(QStringLiteral("辅影像"));
+    mBtnSlave->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    mBtnSlave->setPopupMode(QToolButton::InstantPopup);
+    mBtnSlave->setMinimumSize(80, 40);
+    pnlIO->addSmallWidget(mBtnSlave);
+
+    mLblSlaveInfo = new QLabel(QStringLiteral("未选择"), this);
+    mLblSlaveInfo->setWordWrap(true);
+    mLblSlaveInfo->setMaximumHeight(30);
+    pnlIO->addSmallWidget(mLblSlaveInfo);
+
+    // ── Panel 2: 配准方法 ──
     SARibbonPanel* pnlMethod = page->addPanel(QStringLiteral("配准方法"));
-    QComboBox* coarseCombo = new QComboBox(this);
-    coarseCombo->addItems({QStringLiteral("轨道"), QStringLiteral("互相关")});
-    pnlMethod->addSmallWidget(coarseCombo);
-    QComboBox* fineCombo = new QComboBox(this);
-    fineCombo->addItems({QStringLiteral("亚像素"), QStringLiteral("过采样")});
-    pnlMethod->addSmallWidget(fineCombo);
-    QSpinBox* gcpSpin = new QSpinBox(this);
-    gcpSpin->setRange(16, 1024);
-    gcpSpin->setValue(64);
-    gcpSpin->setPrefix(QStringLiteral("GCPs: "));
-    pnlMethod->addSmallWidget(gcpSpin);
 
+    mCoarseMethodCombo = new QComboBox(this);
+    mCoarseMethodCombo->addItem(QStringLiteral("轨道法"), "Orbit");
+    mCoarseMethodCombo->addItem(QStringLiteral("互相关"), "CrossCorrelation");
+    pnlMethod->addSmallWidget(mCoarseMethodCombo);
+
+    mFineMethodCombo = new QComboBox(this);
+    mFineMethodCombo->addItem(QStringLiteral("亚像素"), "SubPixel");
+    mFineMethodCombo->addItem(QStringLiteral("过采样"), "Oversample");
+    pnlMethod->addSmallWidget(mFineMethodCombo);
+
+    mGcpSpin = new QSpinBox(this);
+    mGcpSpin->setRange(16, 1024);
+    mGcpSpin->setValue(64);
+    mGcpSpin->setPrefix(QStringLiteral("GCPs: "));
+    pnlMethod->addSmallWidget(mGcpSpin);
+
+    mSearchWinSpin = new QSpinBox(this);
+    mSearchWinSpin->setRange(8, 256);
+    mSearchWinSpin->setValue(64);
+    mSearchWinSpin->setPrefix(QStringLiteral("搜索窗: "));
+    pnlMethod->addSmallWidget(mSearchWinSpin);
+
+    mCorrThreshSpin = new QDoubleSpinBox(this);
+    mCorrThreshSpin->setRange(0.05, 1.0);
+    mCorrThreshSpin->setSingleStep(0.05);
+    mCorrThreshSpin->setValue(0.3);
+    mCorrThreshSpin->setPrefix(QStringLiteral("阈值: "));
+    pnlMethod->addSmallWidget(mCorrThreshSpin);
+
+    // ── Panel 3: 重采样 ──
     SARibbonPanel* pnlRes = page->addPanel(QStringLiteral("重采样"));
-    QComboBox* resCombo = new QComboBox(this);
-    resCombo->addItems({QStringLiteral("Sinc"), QStringLiteral("双线性"), QStringLiteral("双三次")});
-    pnlRes->addSmallWidget(resCombo);
+
+    mResampleCombo = new QComboBox(this);
+    mResampleCombo->addItem(QStringLiteral("Sinc"), "Sinc");
+    mResampleCombo->addItem(QStringLiteral("双线性"), "Bilinear");
+    mResampleCombo->addItem(QStringLiteral("双三次"), "Bicubic");
+    pnlRes->addSmallWidget(mResampleCombo);
+
+    mKeepResCheck = new QCheckBox(QStringLiteral("保持原始分辨率"), this);
+    mKeepResCheck->setChecked(true);
+    pnlRes->addSmallWidget(mKeepResCheck);
+
     QAction* actOutDirReg = createAction(QStringLiteral("输出目录"),
                                           ":/icon/icon/folder-stats.svg", "actOutDirReg");
+    mOutputDirLabel = new QLabel(QStringLiteral("未设置"), this);
+    mOutputDirLabel->setMaximumHeight(20);
     pnlRes->addSmallAction(actOutDirReg);
+    pnlRes->addSmallWidget(mOutputDirLabel);
+    connect(actOutDirReg, &QAction::triggered, this, [this]() {
+        QString d = QFileDialog::getExistingDirectory(this,
+            QStringLiteral("选择输出目录"));
+        if (!d.isEmpty()) {
+            mOutputDirLabel->setText(d);
+            mRegParams.outputDir = d;
+        }
+    });
 
+    // ── Panel 4: 执行 ──
     SARibbonPanel* pnlExec = page->addPanel(QStringLiteral("执行"));
+
     QAction* actExecReg = createAction(QStringLiteral("运行配准"),
                                         ":/icon/icon/folder-cog.svg", "actExecReg");
     pnlExec->addLargeAction(actExecReg);
     connect(actExecReg, &QAction::triggered, this, [this]() {
-        RegistrationDialog dlg(this);
-        if (dlg.exec() == QDialog::Accepted) {
-            mMonitorPanel->appendLog(QStringLiteral("影像配准已启动..."), "#4A90D9");
+        if (mRegParams.masterPath.isEmpty() || mRegParams.slavePath.isEmpty()) {
+            QMessageBox::warning(this,
+                QStringLiteral("提示"),
+                QStringLiteral("请先选择主影像和辅影像"));
+            return;
         }
+        if (mRegParams.masterSlcBandPath.isEmpty()
+            || mRegParams.slaveSlcBandPath.isEmpty()) {
+            QMessageBox::warning(this,
+                QStringLiteral("提示"),
+                QStringLiteral("主辅影像的SLC源数据路径无效, 请重新选择"));
+            return;
+        }
+        RegistrationParams p = collectRegParams();
+        mMonitorPanel->appendLog(
+            QStringLiteral("影像配准已启动...\n  主: %1\n  辅: %2")
+                .arg(QFileInfo(p.masterPath).fileName(),
+                     QFileInfo(p.slavePath).fileName()),
+            "#4A90D9");
+        emit registrationRunRequested(p);
     });
-    QAction* actAdvReg = createAction(QStringLiteral("高级参数"), ":/icon/icon/layout.svg", "actAdvReg");
+
+    QAction* actAdvReg = createAction(QStringLiteral("高级参数"),
+                                       ":/icon/icon/layout.svg", "actAdvReg");
     pnlExec->addSmallAction(actAdvReg);
     connect(actAdvReg, &QAction::triggered, this, [this]() {
-        RegistrationDialog dlg(this); dlg.exec();
+        RegistrationDialog dlg(this);
+        dlg.setParams(collectRegParams());
+        if (dlg.exec() == QDialog::Accepted) {
+            applyParamsToRibbon(dlg.params());
+        }
     });
+
+    QAction* actBaseline = createAction(QStringLiteral("基线估算"),
+                                         ":/icon/icon/redo.svg", "actBaseline");
+    pnlExec->addSmallAction(actBaseline);
+    connect(actBaseline, &QAction::triggered, this, [this]() {
+        if (mRegParams.masterPath.isEmpty() || mRegParams.slavePath.isEmpty()) {
+            QMessageBox::warning(this,
+                QStringLiteral("提示"),
+                QStringLiteral("请先选择主影像和辅影像"));
+            return;
+        }
+        emit baselineEstimateRequested(
+            mRegParams.masterPath, mRegParams.slavePath);
+    });
+
+    // ── 初始参数 ──
+    mRegParams.coarseMethod = "Orbit";
+    mRegParams.fineMethod = "SubPixel";
+    mRegParams.resamplingMethod = "Sinc";
+    mRegParams.outputPrefix = "registered";
+}
+
+// ── 配准参数收集 ──
+RegistrationParams MainWindow::collectRegParams() const
+{
+    RegistrationParams p = mRegParams; // 保留 master/slave 路径及元数据
+
+    p.coarseMethod  = mCoarseMethodCombo->currentData().toString();
+    p.fineMethod    = mFineMethodCombo->currentData().toString();
+    p.coarseControlPoints   = mGcpSpin->value();
+    p.coarseSearchWindow    = mSearchWinSpin->value();
+    p.fineWindowSize        = 32; // 固定窗口大小
+    p.correlationThreshold  = mCorrThreshSpin->value();
+    p.resamplingMethod      = mResampleCombo->currentData().toString();
+    p.outputPrefix          = mRegParams.outputPrefix;
+
+    if (mKeepResCheck->isChecked()) {
+        p.outputResolutionRange  = 0;
+        p.outputResolutionAzimuth = 0;
+    }
+    return p;
+}
+
+// ── 从对话框回写参数到 Ribbon ──
+void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
+{
+    int idx;
+    idx = mCoarseMethodCombo->findData(p.coarseMethod);
+    if (idx >= 0) mCoarseMethodCombo->setCurrentIndex(idx);
+
+    idx = mFineMethodCombo->findData(p.fineMethod);
+    if (idx >= 0) mFineMethodCombo->setCurrentIndex(idx);
+
+    mGcpSpin->setValue(p.coarseControlPoints);
+    mSearchWinSpin->setValue(p.coarseSearchWindow);
+    mCorrThreshSpin->setValue(p.correlationThreshold);
+
+    idx = mResampleCombo->findData(p.resamplingMethod);
+    if (idx >= 0) mResampleCombo->setCurrentIndex(idx);
+
+    if (p.outputResolutionRange == 0 && p.outputResolutionAzimuth == 0)
+        mKeepResCheck->setChecked(true);
+    else
+        mKeepResCheck->setChecked(false);
+
+    if (!p.outputDir.isEmpty()) {
+        mOutputDirLabel->setText(p.outputDir);
+        mRegParams.outputDir = p.outputDir;
+    }
+    mRegParams.outputPrefix = p.outputPrefix;
+    mRegParams.coarseMethod = p.coarseMethod;
+    mRegParams.fineMethod   = p.fineMethod;
+    mRegParams.resamplingMethod = p.resamplingMethod;
+}
+
+// ── 更新主/辅影像选择标签 ──
+void MainWindow::updateImageSelectionLabel(QLabel* label, const QString& path)
+{
+    QFileInfo fi(path);
+    QString name = fi.fileName();
+    if (name.isEmpty()) name = path.section('/', -1);
+    label->setText(name);
+    label->setToolTip(path);
 }
 
 // ========================================================================
