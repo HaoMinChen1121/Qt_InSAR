@@ -295,37 +295,33 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     // ── Panel 1: 主辅影像 ──
     SARibbonPanel* pnlIO = page->addPanel(QStringLiteral("主辅影像"));
 
-    QWidget* ioContainer = new QWidget(this);
-    QGridLayout* ioGrid = new QGridLayout(ioContainer);
-    ioGrid->setContentsMargins(2, 2, 2, 2);
-    ioGrid->setVerticalSpacing(4);
-    ioGrid->setHorizontalSpacing(6);
-
-    mBtnMaster = new QToolButton(this);
-    mBtnMaster->setText(QStringLiteral("主影像"));
-    mBtnMaster->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    mBtnMaster->setPopupMode(QToolButton::InstantPopup);
-    mBtnMaster->setMinimumSize(80, 28);
-    ioGrid->addWidget(mBtnMaster, 0, 0);
+    QAction* actMaster = createAction(QStringLiteral("主影像"),
+                                       ":/icon/icon/save.svg", "actMaster");
+    pnlIO->addLargeAction(actMaster);
+    connect(actMaster, &QAction::triggered, this, [this]() {
+        if (mAppController && !mAppController->loadedSlcImages().isEmpty()) {
+            mAppController->buildSlcLayerMenu(true)->exec(QCursor::pos());
+        }
+    });
 
     mLblMasterInfo = new QLabel(QStringLiteral("未选择"), this);
     mLblMasterInfo->setWordWrap(true);
-    mLblMasterInfo->setMinimumWidth(100);
-    ioGrid->addWidget(mLblMasterInfo, 0, 1);
+    mLblMasterInfo->setMaximumHeight(28);
+    pnlIO->addSmallWidget(mLblMasterInfo);
 
-    mBtnSlave = new QToolButton(this);
-    mBtnSlave->setText(QStringLiteral("辅影像"));
-    mBtnSlave->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    mBtnSlave->setPopupMode(QToolButton::InstantPopup);
-    mBtnSlave->setMinimumSize(80, 28);
-    ioGrid->addWidget(mBtnSlave, 1, 0);
+    QAction* actSlave = createAction(QStringLiteral("辅影像"),
+                                      ":/icon/icon/Align-Left.svg", "actSlave");
+    pnlIO->addLargeAction(actSlave);
+    connect(actSlave, &QAction::triggered, this, [this]() {
+        if (mAppController && !mAppController->loadedSlcImages().isEmpty()) {
+            mAppController->buildSlcLayerMenu(false)->exec(QCursor::pos());
+        }
+    });
 
     mLblSlaveInfo = new QLabel(QStringLiteral("未选择"), this);
     mLblSlaveInfo->setWordWrap(true);
-    mLblSlaveInfo->setMinimumWidth(100);
-    ioGrid->addWidget(mLblSlaveInfo, 1, 1);
-
-    pnlIO->addSmallWidget(ioContainer);
+    mLblSlaveInfo->setMaximumHeight(28);
+    pnlIO->addSmallWidget(mLblSlaveInfo);
 
     // ── Panel 2: 配准方法 ──
     SARibbonPanel* pnlMethod = page->addPanel(QStringLiteral("配准方法"));

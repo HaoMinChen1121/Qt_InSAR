@@ -614,12 +614,6 @@ void ApplicationController::rebuildCanvasLayers()
     }
 
     // 更新主辅影像选择按钮的菜单
-    if (mMainWindow->masterButton() && !mSlcRegistry.isEmpty()) {
-        mMainWindow->masterButton()->setMenu(buildSlcLayerMenu(true));
-    }
-    if (mMainWindow->slaveButton() && !mSlcRegistry.isEmpty()) {
-        mMainWindow->slaveButton()->setMenu(buildSlcLayerMenu(false));
-    }
 }
 
 void ApplicationController::shutdown()
