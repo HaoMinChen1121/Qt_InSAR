@@ -244,6 +244,11 @@ void ApplicationController::wireConnections()
         rebuildCanvasLayers();
     });
 
+    connect(layerPanel, &LayerPanel::fullExtentRequested, this,
+        [canvas]() {
+            canvas->zoomToFullExtent();
+        });
+
     connect(layerPanel, &LayerPanel::zoomToLayerRequested, this,
         [canvas](const QString& id) {
         QgsMapLayer* layer = QgsProject::instance()->mapLayer(id);

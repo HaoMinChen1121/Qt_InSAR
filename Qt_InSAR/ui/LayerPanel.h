@@ -23,6 +23,7 @@ signals:
     void zoomToLayerRequested(const QString& id);
     void layerSelectionChanged(const QString& id);
     void opacityChanged(const QString& id, double opacity);
+    void fullExtentRequested();
 
 public slots:
     void onLayerLoaded(const QString& id, const QString& name, const QString& type,

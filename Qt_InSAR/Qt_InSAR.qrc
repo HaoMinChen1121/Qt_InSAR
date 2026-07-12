@@ -48,6 +48,7 @@
         <file>icon/gallery/Photoshop.svg</file>
         <file>icon/gallery/Presentation-File.svg</file>
         <file>icon/gallery/Word.svg</file>
+        <file>icon/wordwrap.svg</file>
         <file>icon/Toolbox.svg</file>
     </qresource>
 </RCC>

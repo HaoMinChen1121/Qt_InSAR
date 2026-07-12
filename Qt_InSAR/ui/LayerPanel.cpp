@@ -41,6 +41,10 @@ void LayerPanel::setupUI()
     mToolbar->addSeparator();
     mToolbar->addAction(QIcon(":/icon/icon/layout.svg"),
                         QStringLiteral("缩放到图层"), this, &LayerPanel::onZoomToLayer);
+    mToolbar->addAction(QIcon(":/icon/icon/wordwrap.svg"),
+                        QStringLiteral("全图"), this, [this]() {
+        emit fullExtentRequested();
+    });
     layout->addWidget(mToolbar);
 
     // ── 图层树 ──
@@ -51,7 +55,7 @@ void LayerPanel::setupUI()
     mTree->header()->setSectionResizeMode(0, QHeaderView::Fixed);
     mTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     mTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    mTree->setColumnWidth(0, 60);
+    mTree->setColumnWidth(0, 80);
     mTree->setHeaderHidden(true);
     mTree->setSelectionMode(QAbstractItemView::SingleSelection);
     mTree->setDragDropMode(QAbstractItemView::InternalMove);
