@@ -83,7 +83,15 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     QWidget* tab3 = new QWidget;
     QFormLayout* f3 = new QFormLayout(tab3);
     mDiffDemPath = new QLineEdit;
-    f3->addRow(tr("DEM文件:"), mDiffDemPath);
+    QPushButton* demBrowse = new QPushButton(tr("浏览..."));
+    QHBoxLayout* demLayout = new QHBoxLayout;
+    demLayout->addWidget(mDiffDemPath, 1); demLayout->addWidget(demBrowse);
+    f3->addRow(tr("DEM文件:"), demLayout);
+    connect(demBrowse, &QPushButton::clicked, this, [this]() {
+        QString f = QFileDialog::getOpenFileName(this, tr("选择DEM文件"),
+            QString(), tr("DEM (*.tif *.tiff *.dem *.img);;所有 (*.*)"));
+        if (!f.isEmpty()) mDiffDemPath->setText(f);
+    });
     mDispDirection = new QComboBox;
     mDispDirection->addItems({"LOS", tr("垂直向")});
     f3->addRow(tr("形变方向:"), mDispDirection);
