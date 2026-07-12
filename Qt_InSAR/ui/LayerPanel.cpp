@@ -8,6 +8,8 @@
 #include <QHeaderView>
 #include <QFont>
 #include <QColor>
+#include <QStyle>
+#include <QApplication>
 
 LayerPanel::LayerPanel(QWidget* parent) : QWidget(parent) { setupUI(); }
 
@@ -16,11 +18,17 @@ void LayerPanel::setupUI()
     QVBoxLayout* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
 
+    QStyle* s = QApplication::style();
     mToolbar = new QToolBar(this);
-    mToolbar->addAction(QStringLiteral("+"), this, &LayerPanel::onAddLayer);
-    mToolbar->addAction(QStringLiteral("-"), this, &LayerPanel::onRemoveLayer);
-    mToolbar->addAction(QStringLiteral("↑"), this, &LayerPanel::onMoveUp);
-    mToolbar->addAction(QStringLiteral("↓"), this, &LayerPanel::onMoveDown);
+    mToolbar->setIconSize(QSize(16, 16));
+    mToolbar->addAction(s->standardIcon(QStyle::SP_FileDialogNewFolder),
+                        QStringLiteral("添加图层"), this, &LayerPanel::onAddLayer);
+    mToolbar->addAction(s->standardIcon(QStyle::SP_TrashIcon),
+                        QStringLiteral("移除图层"), this, &LayerPanel::onRemoveLayer);
+    mToolbar->addAction(s->standardIcon(QStyle::SP_ArrowUp),
+                        QStringLiteral("上移"), this, &LayerPanel::onMoveUp);
+    mToolbar->addAction(s->standardIcon(QStyle::SP_ArrowDown),
+                        QStringLiteral("下移"), this, &LayerPanel::onMoveDown);
     layout->addWidget(mToolbar);
 
     mTree = new QTreeWidget(this);
@@ -40,7 +48,9 @@ void LayerPanel::onAddLayer()
 {
     QStringList files = QFileDialog::getOpenFileNames(this,
         QStringLiteral("选择影像文件"), QString(),
-        QStringLiteral("栅格文件 (*.tif *.tiff *.img *.dat *.raw *.slc);;所有文件 (*.*)"));
+        QStringLiteral("栅格文件 (*.tif *.tiff *.img *.dat *.raw);;"
+                       "Sentinel-1 (*.zip *.SAFE);;"
+                       "所有文件 (*.*)"));
     if (!files.isEmpty())
         emit layerAddRequested(files);
 }
@@ -64,8 +74,34 @@ void LayerPanel::onRemoveLayer()
     }
 }
 
-void LayerPanel::onMoveUp() { /* TODO */ }
-void LayerPanel::onMoveDown() { /* TODO */ }
+void LayerPanel::onMoveUp()
+{
+    QList<QTreeWidgetItem*> sel = mTree->selectedItems();
+    if (sel.isEmpty()) return;
+    QTreeWidgetItem* item = sel.first();
+    QTreeWidgetItem* parent = item->parent();
+    int idx = parent ? parent->indexOfChild(item) : mTree->indexOfTopLevelItem(item);
+    if (idx <= 0) return;
+    QTreeWidgetItem* taken = parent ? parent->takeChild(idx) : mTree->takeTopLevelItem(idx);
+    if (parent) parent->insertChild(idx - 1, taken);
+    else mTree->insertTopLevelItem(idx - 1, taken);
+    mTree->setCurrentItem(taken);
+}
+
+void LayerPanel::onMoveDown()
+{
+    QList<QTreeWidgetItem*> sel = mTree->selectedItems();
+    if (sel.isEmpty()) return;
+    QTreeWidgetItem* item = sel.first();
+    QTreeWidgetItem* parent = item->parent();
+    int count = parent ? parent->childCount() : mTree->topLevelItemCount();
+    int idx = parent ? parent->indexOfChild(item) : mTree->indexOfTopLevelItem(item);
+    if (idx < 0 || idx >= count - 1) return;
+    QTreeWidgetItem* taken = parent ? parent->takeChild(idx) : mTree->takeTopLevelItem(idx);
+    if (parent) parent->insertChild(idx + 1, taken);
+    else mTree->insertTopLevelItem(idx + 1, taken);
+    mTree->setCurrentItem(taken);
+}
 
 void LayerPanel::onItemChanged(QTreeWidgetItem* item, int /*column*/)
 {
