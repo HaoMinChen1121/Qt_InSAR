@@ -134,6 +134,7 @@ void ApplicationController::wireConnections()
             } else {
                 QgsRasterLayer* layer = new QgsRasterLayer(path, name);
                 if (layer->isValid()) {
+                    layer->setCustomProperty("insar_band_path", path);
                     QgsProject::instance()->addMapLayer(layer, false);
                     if (!groupName.isEmpty()) {
                         QgsLayerTreeGroup* grp = QgsProject::instance()
@@ -184,7 +185,7 @@ void ApplicationController::wireConnections()
         auto* watcher = new QFutureWatcher<QStringList>(this);
         connect(watcher, &QFutureWatcher<QStringList>::finished, this,
             [this, watcher, canvas, layerPanel, monitor, total,
-             names, tmpPaths, newLayers, finishLoading, groupName]() mutable {
+             names, vsiPaths, newLayers, finishLoading, groupName]() mutable {
             const QStringList results = watcher->result();
 
             for (int i = 0; i < results.size(); ++i) {
@@ -199,6 +200,7 @@ void ApplicationController::wireConnections()
                 QgsRasterLayer* layer =
                     new QgsRasterLayer(loadPath, names[i]);
                 if (layer->isValid()) {
+                    layer->setCustomProperty("insar_band_path", vsiPaths[i]);
                     QgsProject::instance()->addMapLayer(layer, false);
                     if (!groupName.isEmpty()) {
                         QgsLayerTreeGroup* grp = QgsProject::instance()
@@ -659,9 +661,9 @@ void ApplicationController::rebuildCanvasLayers()
             const QString& layerId = it.key();
             QgsMapLayer* layer = it.value();
             if (!layer) continue;
-            QString srcPath = layer->source();
-            if (mPendingSlcRegistry.contains(srcPath)) {
-                mSlcRegistry[layerId] = mPendingSlcRegistry.take(srcPath);
+            QString bandPath = layer->customProperty("insar_band_path").toString();
+            if (!bandPath.isEmpty() && mPendingSlcRegistry.contains(bandPath)) {
+                mSlcRegistry[layerId] = mPendingSlcRegistry.take(bandPath);
             }
         }
         // 清理仍然未关联的临时条目 (可能加载失败)
