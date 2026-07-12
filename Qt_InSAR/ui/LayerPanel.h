@@ -22,10 +22,14 @@ signals:
     void layerSelectionChanged(const QString& id);
 
 public slots:
-    void onLayerLoaded(const QString& id, const QString& name, const QString& type);
+    void onLayerLoaded(const QString& id, const QString& name, const QString& type,
+                       const QString& groupName = QString());
     void onLayerRemoved(const QString& id);
     void onLayerError(const QString& errorMsg);
     void onAddLayer();
+
+private:
+    QTreeWidgetItem* ensureGroup(const QString& groupName);
 
 private slots:
     void onRemoveLayer();

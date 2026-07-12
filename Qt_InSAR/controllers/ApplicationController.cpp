@@ -21,6 +21,7 @@
 
 #include <qgsrasterlayer.h>
 #include <qgslayertree.h>
+#include <qgslayertreegroup.h>
 #include <qgsproject.h>
 #include <qgsmapcanvas.h>
 #include <qgsrectangle.h>
@@ -114,6 +115,9 @@ void ApplicationController::wireConnections()
         if (mShuttingDown) return;
         QList<QgsMapLayer*> newLayers;
 
+        // 捕获当前分组名（按值，避免后续产品加载时覆盖）
+        QString groupName = mPendingGroupName;
+
         struct VsiEntry { QString path; QString tmpPath; QString name; };
         QVector<VsiEntry> vsiEntries;
 
@@ -130,10 +134,16 @@ void ApplicationController::wireConnections()
             } else {
                 QgsRasterLayer* layer = new QgsRasterLayer(path, name);
                 if (layer->isValid()) {
-                    QgsProject::instance()->addMapLayer(layer);
+                    QgsProject::instance()->addMapLayer(layer, false);
+                    if (!groupName.isEmpty()) {
+                        QgsLayerTreeGroup* grp = QgsProject::instance()
+                            ->layerTreeRoot()->findGroup(groupName);
+                        if (grp) grp->addLayer(layer);
+                        else QgsProject::instance()->layerTreeRoot()->addLayer(layer);
+                    }
                     newLayers.append(layer);
                     layerPanel->onLayerLoaded(layer->id(), name,
-                        QStringLiteral("Raster"));
+                        QStringLiteral("Raster"), groupName);
                 } else {
                     layerPanel->onLayerError(
                         QStringLiteral("无法加载: %1").arg(name));
@@ -142,7 +152,7 @@ void ApplicationController::wireConnections()
             }
         }
 
-        auto finishLoading = [this, canvas, newLayers]() mutable {
+        auto finishLoading = [this, canvas, newLayers, groupName]() mutable {
             if (!newLayers.isEmpty()) {
                 QgsMapLayer* first = newLayers.first();
                 QgsCoordinateReferenceSystem crs = first->crs();
@@ -151,6 +161,7 @@ void ApplicationController::wireConnections()
             }
             rebuildCanvasLayers();
             canvas->zoomToFullExtent();
+            mPendingGroupName.clear();
         };
 
         if (vsiEntries.isEmpty()) {
@@ -173,7 +184,7 @@ void ApplicationController::wireConnections()
         auto* watcher = new QFutureWatcher<QStringList>(this);
         connect(watcher, &QFutureWatcher<QStringList>::finished, this,
             [this, watcher, canvas, layerPanel, monitor, total,
-             names, tmpPaths, newLayers, finishLoading]() mutable {
+             names, tmpPaths, newLayers, finishLoading, groupName]() mutable {
             const QStringList results = watcher->result();
 
             for (int i = 0; i < results.size(); ++i) {
@@ -188,10 +199,16 @@ void ApplicationController::wireConnections()
                 QgsRasterLayer* layer =
                     new QgsRasterLayer(loadPath, names[i]);
                 if (layer->isValid()) {
-                    QgsProject::instance()->addMapLayer(layer);
+                    QgsProject::instance()->addMapLayer(layer, false);
+                    if (!groupName.isEmpty()) {
+                        QgsLayerTreeGroup* grp = QgsProject::instance()
+                            ->layerTreeRoot()->findGroup(groupName);
+                        if (grp) grp->addLayer(layer);
+                        else QgsProject::instance()->layerTreeRoot()->addLayer(layer);
+                    }
                     newLayers.append(layer);
                     layerPanel->onLayerLoaded(layer->id(), names[i],
-                        QStringLiteral("Raster"));
+                        QStringLiteral("Raster"), groupName);
                     qDebug() << "[InSAR] Layer loaded:" << names[i];
                 } else {
                     layerPanel->onLayerError(
@@ -504,6 +521,18 @@ void ApplicationController::onSarProductOpenRequested(const QString& path)
     const auto& bands = product->bands();
     LayerPanel* layerPanel = mMainWindow->layerPanel();
     if (layerPanel && !bands.isEmpty()) {
+        // 构建产品分组名
+        QString groupName = QStringLiteral("%1 %2 %3 Orbit%4")
+            .arg(sensorInfo.missionId.isEmpty() ? sensorInfo.sensorType : sensorInfo.missionId)
+            .arg(sensorInfo.acquisitionMode)
+            .arg(sensorInfo.acquisitionStart.toString("yyyy-MM-dd"))
+            .arg(sensorInfo.relativeOrbit);
+        mPendingGroupName = groupName;
+
+        // 在 QGIS 图层树中创建分组
+        QgsLayerTreeGroup* qgisGroup =
+            QgsProject::instance()->layerTreeRoot()->addGroup(groupName);
+
         QStringList paths;
         for (const auto& b : bands) {
             paths.append(b.rasterPath);

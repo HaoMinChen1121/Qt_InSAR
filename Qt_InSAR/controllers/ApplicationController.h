@@ -89,6 +89,9 @@ private:
     // 待关联: 波段路径 → 来源信息 (等待 QGIS 分配 layer ID)
     QMap<QString, SlcSourceInfo> mPendingSlcRegistry;
 
+    // 当前正在加载的产品分组名
+    QString mPendingGroupName;
+
     // 主/辅影像选择
     QString mSelectedMasterLayerId;
     QString mSelectedSlaveLayerId;
