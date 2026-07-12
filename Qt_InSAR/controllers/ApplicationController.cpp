@@ -130,6 +130,8 @@ void ApplicationController::wireConnections()
                             ->layerTreeRoot()->findGroup(groupName);
                         if (grp) grp->addLayer(layer);
                         else QgsProject::instance()->layerTreeRoot()->addLayer(layer);
+                    } else {
+                        QgsProject::instance()->layerTreeRoot()->addLayer(layer);
                     }
                     newLayers.append(layer);
                     layerPanel->onLayerLoaded(layer->id(), name,
@@ -185,6 +187,8 @@ void ApplicationController::wireConnections()
                             ->layerTreeRoot()->findGroup(groupName);
                         if (grp) grp->addLayer(layer);
                         else QgsProject::instance()->layerTreeRoot()->addLayer(layer);
+                    } else {
+                        QgsProject::instance()->layerTreeRoot()->addLayer(layer);
                     }
                     newLayers.append(layer);
                     layerPanel->onLayerLoaded(layer->id(), names[i],
