@@ -183,8 +183,11 @@ bool InterferogramServiceImpl::stageInterferogram(
     qDebug() << "[Ifg-CK1] master" << mReader.width() << "x" << mReader.height()
              << "slave" << sReader.width() << "x" << sReader.height();
 
-    int outW = width  / rgLooks;
-    int outH = height / azLooks;
+    // 用实际读取尺寸而非传入参数（QSAR band 可能未设 rasterSize）
+    int realW = mReader.width();
+    int realH = mReader.height();
+    int outW = realW / rgLooks;
+    int outH = realH / azLooks;
     qDebug() << "[Ifg-CK2] outW=" << outW << "outH=" << outH;
     if (outW < 1 || outH < 1) { qDebug() << "[Ifg-CK2] FAIL dims"; return false; }
     qDebug() << "[Ifg-CK3] allocating" << outW << "x" << outH;
@@ -201,9 +204,9 @@ bool InterferogramServiceImpl::stageInterferogram(
         int readH = azLooks + cohWindow * 2;
         int row0 = srcRow - cohWindow;
 
-        auto mData = mReader.readBandWindow(0, 0, row0, width, readH);
-        auto sData = sReader.readBandWindow(0, 0, row0, width, readH);
-        int actualH = std::min(mData.size() / width, sData.size() / width);
+        auto mData = mReader.readBandWindow(0, 0, row0, realW, readH);
+        auto sData = sReader.readBandWindow(0, 0, row0, realW, readH);
+        int actualH = std::min(mData.size() / realW, sData.size() / realW);
         if (actualH == 0) {
             for (int col = 0; col < outW; ++col) {
                 output[row * outW + col] = std::complex<float>(0, 0);
@@ -220,8 +223,8 @@ bool InterferogramServiceImpl::stageInterferogram(
             std::complex<double> mAvg(0, 0), sAvg(0, 0);
             for (int ar = 0; ar < azLooks; ++ar) {
                 for (int ac = 0; ac < rgLooks; ++ac) {
-                    int idx = (rowOff + ar) * width + (srcCol + ac);
-                    if (idx >= 0 && idx < actualH * width) {
+                    int idx = (rowOff + ar) * realW + (srcCol + ac);
+                    if (idx >= 0 && idx < actualH * realW) {
                         mAvg += std::complex<double>(mData[idx].real(), mData[idx].imag());
                         sAvg += std::complex<double>(sData[idx].real(), sData[idx].imag());
                     }
@@ -240,8 +243,8 @@ bool InterferogramServiceImpl::stageInterferogram(
                 for (int wc = -cohWindow/2; wc <= cohWindow/2; ++wc) {
                     int sc = srcCol + cohWindow/2 + wc;
                     int sr = rowOff + cohWindow/2 + wr;
-                    if (sc >= 0 && sc < width && sr >= 0 && sr < actualH) {
-                        int idx = sr * width + sc;
+                    if (sc >= 0 && sc < realW && sr >= 0 && sr < actualH) {
+                        int idx = sr * realW + sc;
                         auto mv = mData[idx]; auto sv = sData[idx];
                         crossSum += std::complex<double>(mv.real(), mv.imag())
                             * std::complex<double>(sv.real(), -sv.imag());
