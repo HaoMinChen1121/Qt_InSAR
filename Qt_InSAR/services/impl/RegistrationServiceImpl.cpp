@@ -311,22 +311,36 @@ bool RegistrationServiceImpl::processBandPair(
     Q_UNUSED(totalPairs);
     QString mPath = masterBand.rasterPath;
     QString sPath = slaveBand.rasterPath;
+    QString pairName = QStringLiteral("%1/%2 %3_%4")
+        .arg(pairIndex + 1).arg(totalPairs)
+        .arg(masterBand.subSwath).arg(masterBand.polarization);
+
+    emit progressChanged(0, pairName + QStringLiteral(": 打开主波段..."));
+    qDebug() << "[Reg]" << pairName << ": opening master" << mPath.left(80);
 
     GdalSlcReader reader;
     if (!reader.open(mPath)) {
-        qWarning() << "[Reg] 无法打开主波段:" << mPath;
+        qWarning() << "[Reg]" << pairName << ": FAIL master open";
+        emit progressChanged(0, pairName + QStringLiteral(": 打开失败"));
         return false;
     }
     int mW = reader.width(), mH = reader.height();
     reader.close();
+    qDebug() << "[Reg]" << pairName << ": master" << mW << "x" << mH;
+
+    emit progressChanged(5, pairName + QStringLiteral(": 打开辅波段..."));
+    qDebug() << "[Reg]" << pairName << ": opening slave" << sPath.left(80);
     if (!reader.open(sPath)) {
-        qWarning() << "[Reg] 无法打开辅波段:" << sPath;
+        qWarning() << "[Reg]" << pairName << ": FAIL slave open";
+        emit progressChanged(0, pairName + QStringLiteral(": 打开失败"));
         return false;
     }
     int sW = reader.width(), sH = reader.height();
     reader.close();
+    qDebug() << "[Reg]" << pairName << ": slave" << sW << "x" << sH;
 
     // 轨道粗配准
+    emit progressChanged(10, pairName + QStringLiteral(": 轨道粗配准..."));
     auto gcps = coarseByOrbit(
         mParams.masterOrbitVectors, mParams.slaveOrbitVectors,
         mParams.masterDoppler, mParams.slaveDoppler,
@@ -337,9 +351,13 @@ bool RegistrationServiceImpl::processBandPair(
     if (mCancelled) return false;
 
     // 互相关精化
+    emit progressChanged(20, pairName + QStringLiteral(": 互相关..."));
+    qDebug() << "[Reg]" << pairName << ": cross-correlation start,"
+             << gcps.size() << "GCPs";
     coarseByCorrelation(gcps, &reader, mPath, sPath, mW, mH, sW, sH,
         mParams.fineWindowSize, mParams.coarseSearchWindow,
         mParams.correlationThreshold);
+    qDebug() << "[Reg]" << pairName << ": cross-correlation done";
 
     // 过滤
     QVector<CoarseGcp> validGcps;
@@ -347,11 +365,14 @@ bool RegistrationServiceImpl::processBandPair(
         if (g.correlation >= mParams.correlationThreshold)
             validGcps.append(g);
     if (validGcps.size() < 6) {
-        qWarning() << "[Reg] GCP不足:" << validGcps.size();
+        qWarning() << "[Reg]" << pairName << ": GCP不足:" << validGcps.size();
+        emit progressChanged(0, pairName + QStringLiteral(": GCP不足(%1)").arg(validGcps.size()));
         return false;
     }
 
     // 精配准
+    emit progressChanged(40, pairName + QStringLiteral(": 精配准..."));
+    qDebug() << "[Reg]" << pairName << ": fine reg start";
     int oversample = (mParams.fineMethod == "Oversample") ? 16 : 64;
     RegPolynomial poly = fineRegister(validGcps, &reader,
         mPath, sPath, mW, mH, sW, sH,
@@ -359,12 +380,15 @@ bool RegistrationServiceImpl::processBandPair(
         mParams.fineWindowSize);
 
     mCorrelation = meanCorrelation(validGcps);
-    if (poly.validGcps < 6) return false;
+    if (poly.validGcps < 6) {
+        qWarning() << "[Reg]" << pairName << ": poly fit failed GCPs:" << poly.validGcps;
+        return false;
+    }
     if (mCancelled) return false;
 
     // 重采样
-    QString pairName = QStringLiteral("%1_%2")
-        .arg(masterBand.subSwath).arg(masterBand.polarization);
+    emit progressChanged(60, pairName + QStringLiteral(": 重采样..."));
+    qDebug() << "[Reg]" << pairName << ": resample start";
     QString outPath = outputDir.isEmpty()
         ? QFileInfo(mPath).absolutePath() + "/" + prefix + "_" + pairName + "_reg.tif"
         : outputDir + "/" + prefix + "_" + pairName + "_reg.tif";
@@ -376,10 +400,13 @@ bool RegistrationServiceImpl::processBandPair(
         outPath);
 
     if (ok) {
+        emit progressChanged(90, pairName + QStringLiteral(": 完成"));
         qDebug() << "[Reg]" << pairName
-                 << QStringLiteral("RMSE r:%1 a:%2")
+                 << QStringLiteral("OK RMSE r:%1 a:%2")
                     .arg(poly.rmseRange, 0, 'f', 3)
                     .arg(poly.rmseAzimuth, 0, 'f', 3);
+    } else {
+        qWarning() << "[Reg]" << pairName << ": resample FAILED";
     }
     return ok;
 }
