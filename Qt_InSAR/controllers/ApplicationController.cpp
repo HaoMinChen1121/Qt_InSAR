@@ -270,7 +270,11 @@ void ApplicationController::wireConnections()
             mSlcRegistry.remove(id);
             // 如果分组变空, 删除空分组节点
             if (parent && parent != root && parent->children().isEmpty()) {
-                parent->parent()->removeChildNode(parent);
+                QgsLayerTreeNode* grandParent = parent->parent();
+                if (grandParent) {
+                    static_cast<QgsLayerTreeGroup*>(grandParent)
+                        ->removeChildNode(parent);
+                }
             }
         }
         rebuildCanvasLayers();
