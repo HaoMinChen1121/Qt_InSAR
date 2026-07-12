@@ -48,11 +48,20 @@ void LayerPanel::onAddLayer()
 void LayerPanel::onRemoveLayer()
 {
     QList<QTreeWidgetItem*> selected = mTree->selectedItems();
-    QStringList ids;
-    for (auto* item : selected)
-        ids << item->data(0, Qt::UserRole).toString();
-    if (!ids.isEmpty())
-        emit layerRemoveRequested(ids);
+    if (selected.isEmpty()) return;
+
+    QTreeWidgetItem* item = selected.first();
+    QString id = item->data(0, Qt::UserRole).toString();
+
+    if (id == "__group__") {
+        // 移除整个产品分组
+        QStringList childIds;
+        for (int i = 0; i < item->childCount(); ++i)
+            childIds << item->child(i)->data(0, Qt::UserRole).toString();
+        emit layerRemoveRequested(childIds);
+    } else if (!id.isEmpty()) {
+        emit layerRemoveRequested({id});
+    }
 }
 
 void LayerPanel::onMoveUp() { /* TODO */ }
@@ -61,7 +70,8 @@ void LayerPanel::onMoveDown() { /* TODO */ }
 void LayerPanel::onItemChanged(QTreeWidgetItem* item, int /*column*/)
 {
     QString id = item->data(0, Qt::UserRole).toString();
-    if (id.isEmpty()) return; // 分组标题项跳过
+    if (id == "__group__") return; // 分组可见性由子项连接处理
+    if (id.isEmpty()) return;
     bool visible = (item->checkState(0) == Qt::Checked);
     emit layerVisibilityChanged(id, visible);
 }
@@ -71,7 +81,7 @@ void LayerPanel::onItemSelectionChanged()
     QList<QTreeWidgetItem*> selected = mTree->selectedItems();
     if (!selected.isEmpty()) {
         QString id = selected.first()->data(0, Qt::UserRole).toString();
-        if (!id.isEmpty())
+        if (!id.isEmpty() && id != "__group__")
             emit layerSelectionChanged(id);
     }
 }
@@ -81,17 +91,42 @@ void LayerPanel::onContextMenu(const QPoint& pos)
     QTreeWidgetItem* item = mTree->itemAt(pos);
     if (!item) return;
     QString id = item->data(0, Qt::UserRole).toString();
-    if (id.isEmpty()) return; // 分组标题
 
     QMenu menu(this);
-    QAction* zoomAct = menu.addAction(QStringLiteral("缩放至图层"));
-    menu.addSeparator();
-    QAction* removeAct = menu.addAction(QStringLiteral("移除"));
-    QAction* selected = menu.exec(mTree->viewport()->mapToGlobal(pos));
-    if (selected == zoomAct)
-        emit zoomToLayerRequested(id);
-    else if (selected == removeAct)
-        emit layerRemoveRequested({id});
+
+    if (id == "__group__") {
+        // 产品分组右键菜单
+        QAction* zoomAct = menu.addAction(QStringLiteral("缩放至产品范围"));
+        menu.addSeparator();
+        QAction* removeAct = menu.addAction(QStringLiteral("移除产品"));
+
+        QAction* selected = menu.exec(mTree->viewport()->mapToGlobal(pos));
+        if (!selected) return;
+
+        if (selected == zoomAct) {
+            // 收集所有子图层ID，发出缩放请求
+            QStringList childIds;
+            for (int i = 0; i < item->childCount(); ++i)
+                childIds << item->child(i)->data(0, Qt::UserRole).toString();
+            if (!childIds.isEmpty())
+                emit zoomToLayerRequested(childIds.first());
+        } else if (selected == removeAct) {
+            QStringList childIds;
+            for (int i = 0; i < item->childCount(); ++i)
+                childIds << item->child(i)->data(0, Qt::UserRole).toString();
+            if (!childIds.isEmpty())
+                emit layerRemoveRequested(childIds);
+        }
+    } else if (!id.isEmpty()) {
+        QAction* zoomAct = menu.addAction(QStringLiteral("缩放至图层"));
+        menu.addSeparator();
+        QAction* removeAct = menu.addAction(QStringLiteral("移除"));
+        QAction* selected = menu.exec(mTree->viewport()->mapToGlobal(pos));
+        if (selected == zoomAct)
+            emit zoomToLayerRequested(id);
+        else if (selected == removeAct)
+            emit layerRemoveRequested({id});
+    }
 }
 
 QTreeWidgetItem* LayerPanel::ensureGroup(const QString& groupName)
@@ -106,8 +141,9 @@ QTreeWidgetItem* LayerPanel::ensureGroup(const QString& groupName)
     auto* group = new QTreeWidgetItem();
     group->setText(0, groupName);
     group->setText(1, QStringLiteral("产品"));
-    group->setData(0, Qt::UserRole, QStringLiteral("__group__"));
-    group->setFlags(group->flags() & ~Qt::ItemIsUserCheckable);
+    group->setData(0, Qt::UserRole, "__group__");
+    group->setFlags(group->flags() | Qt::ItemIsUserCheckable);
+    group->setCheckState(0, Qt::Checked);
     QFont f = group->font(0);
     f.setBold(true);
     group->setFont(0, f);
@@ -133,7 +169,8 @@ void LayerPanel::onLayerLoaded(const QString& id, const QString& name,
     } else {
         QTreeWidgetItem* group = ensureGroup(groupName);
         group->insertChild(0, item);
-        // 分组可见性控制子图层
+
+        // 分组 checkbox 控制所有子图层显隐
         connect(mTree, &QTreeWidget::itemChanged, this,
             [this, group](QTreeWidgetItem* changed, int col) {
                 if (changed == group && col == 0) {

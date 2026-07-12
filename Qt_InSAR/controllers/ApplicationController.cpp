@@ -261,9 +261,17 @@ void ApplicationController::wireConnections()
     // 图层移除
     connect(layerPanel, &LayerPanel::layerRemoveRequested, this,
         [this](const QStringList& ids) {
+        QgsLayerTreeGroup* root = QgsProject::instance()->layerTreeRoot();
         for (const QString& id : ids) {
+            // 找到该图层所属的 QGIS 分组, 以便后续清理空分组
+            QgsLayerTreeLayer* node = root->findLayer(id);
+            QgsLayerTreeNode* parent = node ? node->parent() : nullptr;
             QgsProject::instance()->removeMapLayer(id);
             mSlcRegistry.remove(id);
+            // 如果分组变空, 删除空分组节点
+            if (parent && parent != root && parent->children().isEmpty()) {
+                parent->parent()->removeChildNode(parent);
+            }
         }
         rebuildCanvasLayers();
     });
