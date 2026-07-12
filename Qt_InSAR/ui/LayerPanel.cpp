@@ -22,8 +22,12 @@ void LayerPanel::setupUI()
 
     // ── 工具栏 ──
     mToolbar = new QToolBar(this);
-    mToolbar->setIconSize(QSize(16, 16));
+    mToolbar->setIconSize(QSize(20, 20));
     mToolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    mToolbar->setMovable(false);
+    mToolbar->setStyleSheet(
+        QStringLiteral("QToolBar { spacing: 4px; padding: 2px; }"
+                       "QToolButton { padding: 4px; }"));
 
     mToolbar->addAction(QIcon(":/icon/icon/save.svg"),
                         QStringLiteral("添加图层"), this, &LayerPanel::onAddLayer);
