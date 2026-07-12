@@ -142,9 +142,9 @@ void ApplicationController::wireConnections()
             if (name.isEmpty() || path.startsWith("/vsi"))
                 name = path.section('/', -1);
 
-            // 检测复数数据 — 复数 TIFF 需先转幅度才能渲染
-            bool isComplex = false;
-            {
+            // VSI 路径必然是复数（SAR SLC），跳过 GDALOpen 避免主线程阻塞
+            bool isComplex = path.startsWith("/vsi");
+            if (!isComplex) {
                 GDALDatasetH hDS = GDALOpen(path.toUtf8().constData(), GA_ReadOnly);
                 if (hDS) {
                     GDALDataType dt = GDALGetRasterDataType(GDALGetRasterBand(hDS, 1));
@@ -154,7 +154,7 @@ void ApplicationController::wireConnections()
                 }
             }
 
-            if (path.startsWith("/vsi") || isComplex) {
+            if (isComplex) {
                 QString basePath = QDir::tempPath() + "/insar_" + fi.completeBaseName();
                 vsiEntries.append({path, basePath, name});
             } else {
