@@ -21,6 +21,8 @@ public:
     RegistrationParams params() const;
 
 private:
+    // 保留元数据 (路径/轨道/传感器)，不被对话框覆盖
+    RegistrationParams mMetaHolder;
     // Tab 1: 主辅影像
     QLineEdit* mMasterPath;
     QLineEdit* mSlavePath;

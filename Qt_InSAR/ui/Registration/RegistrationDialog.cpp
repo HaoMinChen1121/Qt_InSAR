@@ -150,8 +150,27 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
 
 void RegistrationDialog::setParams(const RegistrationParams& p)
 {
+    // 保留元数据，防止 params() 输出时丢失
+    mMetaHolder = p;
+
     mMasterPath->setText(p.masterPath);
     mSlavePath->setText(p.slavePath);
+
+    // 更新元数据标签
+    auto metaText = [](const QString& path) -> QString {
+        if (path.isEmpty()) return QStringLiteral("未加载");
+        QFileInfo fi(path);
+        return fi.fileName();
+    };
+    mMasterMeta->setText(
+        p.masterPath.isEmpty()
+            ? QStringLiteral("未加载")
+            : QStringLiteral("已选择: %1").arg(metaText(p.masterPath)));
+    mSlaveMeta->setText(
+        p.slavePath.isEmpty()
+            ? QStringLiteral("未加载")
+            : QStringLiteral("已选择: %1").arg(metaText(p.slavePath)));
+
     int idx = mCoarseMethod->findData(p.coarseMethod);
     if (idx >= 0) mCoarseMethod->setCurrentIndex(idx);
     mControlPoints->setValue(p.coarseControlPoints);
@@ -175,7 +194,7 @@ void RegistrationDialog::setParams(const RegistrationParams& p)
 
 RegistrationParams RegistrationDialog::params() const
 {
-    RegistrationParams p;
+    RegistrationParams p = mMetaHolder; // 保留元数据
     p.masterPath = mMasterPath->text();
     p.slavePath = mSlavePath->text();
     p.coarseMethod = mCoarseMethod->currentData().toString();
