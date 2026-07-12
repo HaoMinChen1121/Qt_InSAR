@@ -316,7 +316,10 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
 
     mLblMasterInfo = new QLabel(QStringLiteral("主: 未选择"), this);
     mLblMasterInfo->setWordWrap(true);
-    mLblMasterInfo->setMaximumHeight(20);
+    mLblMasterInfo->setMaximumHeight(18);
+    QFont infoFont = mLblMasterInfo->font();
+    infoFont.setPointSize(8);
+    mLblMasterInfo->setFont(infoFont);
     pnlIO->addSmallWidget(mLblMasterInfo);
 
     QAction* actSlave = createAction(QStringLiteral("辅影像\n(点击选择)"),
@@ -337,7 +340,10 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
 
     mLblSlaveInfo = new QLabel(QStringLiteral("辅: 未选择"), this);
     mLblSlaveInfo->setWordWrap(true);
-    mLblSlaveInfo->setMaximumHeight(20);
+    mLblSlaveInfo->setMaximumHeight(18);
+    QFont slaveInfoFont = mLblSlaveInfo->font();
+    slaveInfoFont.setPointSize(8);
+    mLblSlaveInfo->setFont(slaveInfoFont);
     pnlIO->addSmallWidget(mLblSlaveInfo);
 
     // ── Panel 2: 配准策略 ──
@@ -346,7 +352,10 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mCoarseMethodCombo = new QComboBox(this);
     mCoarseMethodCombo->addItem(QStringLiteral("轨道法"), "Orbit");
     mCoarseMethodCombo->addItem(QStringLiteral("互相关"), "CrossCorrelation");
-    mCoarseMethodCombo->setMinimumWidth(130);
+    mCoarseMethodCombo->setMinimumWidth(140);
+    QFont comboFont = mCoarseMethodCombo->font();
+    comboFont.setPointSize(8);
+    mCoarseMethodCombo->setFont(comboFont);
     pnlMethod->addSmallWidget(mCoarseMethodCombo);
 
     // ── Panel 3: 执行 ──
