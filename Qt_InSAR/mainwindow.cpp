@@ -438,11 +438,14 @@ void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
 // ── 更新主/辅影像选择标签 ──
 void MainWindow::updateImageSelectionLabel(QLabel* label, const QString& path)
 {
+    QString text = label == mLblMasterInfo ? QStringLiteral("主: ") : QStringLiteral("辅: ");
     QFileInfo fi(path);
     QString name = fi.fileName();
     if (name.isEmpty()) name = path.section('/', -1);
-    label->setText(name);
+    text += name;
+    label->setText(text);
     label->setToolTip(path);
+    label->repaint();
 }
 
 // ========================================================================

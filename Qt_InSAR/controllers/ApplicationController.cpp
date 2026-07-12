@@ -392,7 +392,10 @@ QMenu* ApplicationController::buildSlcLayerMenu(bool isMaster)
 // ──────────────────────────────────────────────────────────
 void ApplicationController::onMasterImageSelected(const QString& layerId)
 {
-    if (!mSlcRegistry.contains(layerId)) return;
+    if (!mSlcRegistry.contains(layerId)) {
+        qDebug() << "[Reg] onMasterImageSelected: layerId not in registry:" << layerId;
+        return;
+    }
 
     mSelectedMasterLayerId = layerId;
     const SlcSourceInfo& info = mSlcRegistry[layerId];
@@ -409,6 +412,7 @@ void ApplicationController::onMasterImageSelected(const QString& layerId)
 
     mMainWindow->updateImageSelectionLabel(
         mMainWindow->masterInfoLabel(), info.displayName);
+    qDebug() << "[Reg] Master selected:" << info.displayName << info.slcImage.polarization;
 
     ProcessingMonitorPanel* monitor = mMainWindow->processingMonitorPanel();
     if (monitor) {
