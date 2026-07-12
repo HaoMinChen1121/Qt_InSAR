@@ -10,6 +10,7 @@
 #include "domain/SarSensorInfo.h"
 #include "domain/OrbitInfo.h"
 #include "domain/params/RegistrationParams.h"
+#include "domain/params/InterferogramParams.h"
 #include "dataaccess/ISarProduct.h"
 
 class MainWindow;
