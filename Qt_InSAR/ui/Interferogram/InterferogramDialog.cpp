@@ -74,7 +74,15 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     mOrbitFile = new QLineEdit;
     f2->addRow(tr("轨道文件:"), mOrbitFile);
     mFlatDemPath = new QLineEdit;
-    f2->addRow(tr("DEM文件:"), mFlatDemPath);
+    QPushButton* flatDemBrowse = new QPushButton(tr("浏览..."));
+    QHBoxLayout* flatDemLayout = new QHBoxLayout;
+    flatDemLayout->addWidget(mFlatDemPath, 1); flatDemLayout->addWidget(flatDemBrowse);
+    f2->addRow(tr("DEM文件:"), flatDemLayout);
+    connect(flatDemBrowse, &QPushButton::clicked, this, [this]() {
+        QString f = QFileDialog::getOpenFileName(this, tr("选择DEM文件"),
+            QString(), tr("DEM (*.tif *.tiff *.dem *.img);;所有 (*.*)"));
+        if (!f.isEmpty()) mFlatDemPath->setText(f);
+    });
     mPreciseOrbit = new QCheckBox(tr("使用精密轨道")); mPreciseOrbit->setChecked(true);
     f2->addWidget(mPreciseOrbit);
     tabs->addTab(tab2, tr("去平地"));
