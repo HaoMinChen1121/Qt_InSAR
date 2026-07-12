@@ -295,7 +295,7 @@ void MainWindow::createRightButtonGroup()
 // ========================================================================
 void MainWindow::createCategoryRegistration(SARibbonCategory* page)
 {
-    // ── Panel 1: 影像选择 (宽, 2个大按钮并排) ──
+    // ── Panel 1: 影像选择 ──
     SARibbonPanel* pnlIO = page->addPanel(QStringLiteral("影像选择"));
 
     QAction* actMaster = createAction(QStringLiteral("主影像\n(点击选择)"),
@@ -340,90 +340,16 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mLblSlaveInfo->setMaximumHeight(20);
     pnlIO->addSmallWidget(mLblSlaveInfo);
 
-    // ── Panel 2: 配准参数 (表单布局, 宽) ──
-    SARibbonPanel* pnlMethod = page->addPanel(QStringLiteral("配准参数"));
-
-    QWidget* paramContainer = new QWidget(this);
-    QFormLayout* paramForm = new QFormLayout(paramContainer);
-    paramForm->setContentsMargins(6, 2, 6, 2);
-    paramForm->setVerticalSpacing(3);
-    paramForm->setHorizontalSpacing(6);
+    // ── Panel 2: 配准策略 ──
+    SARibbonPanel* pnlMethod = page->addPanel(QStringLiteral("配准策略"));
 
     mCoarseMethodCombo = new QComboBox(this);
     mCoarseMethodCombo->addItem(QStringLiteral("轨道法"), "Orbit");
     mCoarseMethodCombo->addItem(QStringLiteral("互相关"), "CrossCorrelation");
     mCoarseMethodCombo->setMinimumWidth(130);
-    paramForm->addRow(QStringLiteral("粗配准:"), mCoarseMethodCombo);
+    pnlMethod->addSmallWidget(mCoarseMethodCombo);
 
-    mFineMethodCombo = new QComboBox(this);
-    mFineMethodCombo->addItem(QStringLiteral("亚像素"), "SubPixel");
-    mFineMethodCombo->addItem(QStringLiteral("过采样"), "Oversample");
-    mFineMethodCombo->setMinimumWidth(130);
-    paramForm->addRow(QStringLiteral("精配准:"), mFineMethodCombo);
-
-    mGcpSpin = new QSpinBox(this);
-    mGcpSpin->setRange(16, 1024);
-    mGcpSpin->setValue(64);
-    mGcpSpin->setMinimumWidth(130);
-    paramForm->addRow(QStringLiteral("GCP数:"), mGcpSpin);
-
-    mSearchWinSpin = new QSpinBox(this);
-    mSearchWinSpin->setRange(8, 256);
-    mSearchWinSpin->setValue(64);
-    mSearchWinSpin->setMinimumWidth(130);
-    paramForm->addRow(QStringLiteral("搜索窗:"), mSearchWinSpin);
-
-    mCorrThreshSpin = new QDoubleSpinBox(this);
-    mCorrThreshSpin->setRange(0.05, 1.0);
-    mCorrThreshSpin->setSingleStep(0.05);
-    mCorrThreshSpin->setValue(0.3);
-    mCorrThreshSpin->setMinimumWidth(130);
-    paramForm->addRow(QStringLiteral("相关阈值:"), mCorrThreshSpin);
-
-    paramContainer->setMinimumWidth(300);
-    paramContainer->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
-    pnlMethod->addSmallWidget(paramContainer);
-
-    // ── Panel 3: 重采样与输出 ──
-    SARibbonPanel* pnlRes = page->addPanel(QStringLiteral("重采样与输出"));
-
-    QWidget* resContainer = new QWidget(this);
-    QFormLayout* resForm = new QFormLayout(resContainer);
-    resForm->setContentsMargins(6, 2, 6, 2);
-    resForm->setVerticalSpacing(3);
-    resForm->setHorizontalSpacing(6);
-
-    mResampleCombo = new QComboBox(this);
-    mResampleCombo->addItem(QStringLiteral("Sinc"), "Sinc");
-    mResampleCombo->addItem(QStringLiteral("双线性"), "Bilinear");
-    mResampleCombo->addItem(QStringLiteral("双三次"), "Bicubic");
-    mResampleCombo->setMinimumWidth(130);
-    resForm->addRow(QStringLiteral("插值方法:"), mResampleCombo);
-
-    mKeepResCheck = new QCheckBox(QStringLiteral("保持原始分辨率"), this);
-    mKeepResCheck->setChecked(true);
-    resForm->addRow(mKeepResCheck);
-
-    QPushButton* btnOutDir = new QPushButton(QStringLiteral("选择输出目录..."), this);
-    btnOutDir->setMinimumWidth(130);
-    mOutputDirLabel = new QLabel(QStringLiteral("未设置"), this);
-    mOutputDirLabel->setWordWrap(true);
-    mOutputDirLabel->setMaximumHeight(20);
-    resForm->addRow(btnOutDir, mOutputDirLabel);
-    connect(btnOutDir, &QPushButton::clicked, this, [this]() {
-        QString d = QFileDialog::getExistingDirectory(this,
-            QStringLiteral("选择输出目录"));
-        if (!d.isEmpty()) {
-            mOutputDirLabel->setText(d);
-            mRegParams.outputDir = d;
-        }
-    });
-
-    resContainer->setMinimumWidth(280);
-    resContainer->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
-    pnlRes->addSmallWidget(resContainer);
-
-    // ── Panel 4: 执行 ──
+    // ── Panel 3: 执行 ──
     SARibbonPanel* pnlExec = page->addPanel(QStringLiteral("执行"));
 
     QAction* actExecReg = createAction(QStringLiteral("运行配准"),
@@ -459,7 +385,8 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
         RegistrationDialog dlg(this);
         dlg.setParams(collectRegParams());
         if (dlg.exec() == QDialog::Accepted) {
-            applyParamsToRibbon(dlg.params());
+            mRegParams = dlg.params();
+            applyParamsToRibbon(mRegParams);
         }
     });
 
@@ -489,52 +416,22 @@ RegistrationParams MainWindow::collectRegParams() const
 {
     RegistrationParams p = mRegParams; // 保留 master/slave 路径及元数据
 
-    p.coarseMethod  = mCoarseMethodCombo->currentData().toString();
-    p.fineMethod    = mFineMethodCombo->currentData().toString();
-    p.coarseControlPoints   = mGcpSpin->value();
-    p.coarseSearchWindow    = mSearchWinSpin->value();
-    p.fineWindowSize        = 32; // 固定窗口大小
-    p.correlationThreshold  = mCorrThreshSpin->value();
-    p.resamplingMethod      = mResampleCombo->currentData().toString();
-    p.outputPrefix          = mRegParams.outputPrefix;
+    // Ribbon 上的粗配准方法
+    if (mCoarseMethodCombo)
+        p.coarseMethod = mCoarseMethodCombo->currentData().toString();
 
-    if (mKeepResCheck->isChecked()) {
-        p.outputResolutionRange  = 0;
-        p.outputResolutionAzimuth = 0;
-    }
+    // 其余参数由"高级参数"对话框或默认值维护
     return p;
 }
 
 // ── 从对话框回写参数到 Ribbon ──
 void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
 {
-    int idx;
-    idx = mCoarseMethodCombo->findData(p.coarseMethod);
-    if (idx >= 0) mCoarseMethodCombo->setCurrentIndex(idx);
-
-    idx = mFineMethodCombo->findData(p.fineMethod);
-    if (idx >= 0) mFineMethodCombo->setCurrentIndex(idx);
-
-    mGcpSpin->setValue(p.coarseControlPoints);
-    mSearchWinSpin->setValue(p.coarseSearchWindow);
-    mCorrThreshSpin->setValue(p.correlationThreshold);
-
-    idx = mResampleCombo->findData(p.resamplingMethod);
-    if (idx >= 0) mResampleCombo->setCurrentIndex(idx);
-
-    if (p.outputResolutionRange == 0 && p.outputResolutionAzimuth == 0)
-        mKeepResCheck->setChecked(true);
-    else
-        mKeepResCheck->setChecked(false);
-
-    if (!p.outputDir.isEmpty()) {
-        mOutputDirLabel->setText(p.outputDir);
-        mRegParams.outputDir = p.outputDir;
+    if (mCoarseMethodCombo) {
+        int idx = mCoarseMethodCombo->findData(p.coarseMethod);
+        if (idx >= 0) mCoarseMethodCombo->setCurrentIndex(idx);
     }
-    mRegParams.outputPrefix = p.outputPrefix;
-    mRegParams.coarseMethod = p.coarseMethod;
-    mRegParams.fineMethod   = p.fineMethod;
-    mRegParams.resamplingMethod = p.resamplingMethod;
+    mRegParams = p;
 }
 
 // ── 更新主/辅影像选择标签 ──
