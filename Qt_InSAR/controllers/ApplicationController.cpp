@@ -229,12 +229,13 @@ void ApplicationController::wireConnections()
     });
 
     connect(layerPanel, &LayerPanel::layerRemoveRequested, this,
-        [this](const QStringList& ids) {
+        [this, layerPanel](const QStringList& ids) {
         QgsLayerTreeGroup* root = QgsProject::instance()->layerTreeRoot();
         for (const QString& id : ids) {
             QgsLayerTreeLayer* node = root->findLayer(id);
             QgsLayerTreeNode* parent = node ? node->parent() : nullptr;
             QgsProject::instance()->removeMapLayer(id);
+            layerPanel->onLayerRemoved(id);  // 同步移除 QTreeWidget 项
             if (parent && parent != root && parent->children().isEmpty()) {
                 QgsLayerTreeNode* gp = parent->parent();
                 if (gp) static_cast<QgsLayerTreeGroup*>(gp)->removeChildNode(parent);
