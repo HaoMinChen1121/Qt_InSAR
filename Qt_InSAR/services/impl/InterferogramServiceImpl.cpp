@@ -186,9 +186,12 @@ bool InterferogramServiceImpl::stageInterferogram(
     int outW = width  / rgLooks;
     int outH = height / azLooks;
     if (outW < 1 || outH < 1) return false;
+    qDebug() << "[Ifg] allocating" << outW << "x" << outH;
 
     QVector<std::complex<float>> output(outW * outH);
     QVector<float> coherence(outW * outH);
+    qDebug() << "[Ifg] allocated, entering loop";
+
     int cohWindow = 5;
 
     for (int row = 0; row < outH; ++row) {
