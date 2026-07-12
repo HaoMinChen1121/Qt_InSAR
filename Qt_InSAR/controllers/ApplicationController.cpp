@@ -276,6 +276,32 @@ void ApplicationController::wireConnections()
         }
     });
 
+    // 图层选择 → 更新 SAR 元数据面板
+    SarMetadataPanel* metaPanel = mMainWindow->sarMetadataPanel();
+    connect(layerPanel, &LayerPanel::layerSelectionChanged, this,
+        [this, metaPanel](const QString& id) {
+            if (!metaPanel) return;
+            auto it = mSlcRegistry.find(id);
+            if (it == mSlcRegistry.end()) return;
+            const SlcSourceInfo& info = it.value();
+            const SarSensorInfo& s = info.sensorInfo;
+            metaPanel->setMetadata(
+                s.sensorType,
+                s.acquisitionStart.toString("yyyy-MM-dd hh:mm"),
+                sarProductTypeToString(s.productType),
+                s.polarizations.join(","),
+                s.wavelength,
+                s.rangeSpacing,
+                s.azimuthSpacing,
+                s.nearRange,
+                s.farRange,
+                s.prf,
+                s.centerFreq,
+                s.orbitDirection,
+                s.relativeOrbit,
+                s.acquisitionMode);
+        });
+
     // 主辅影像选择菜单连接 (在 buildSlcLayerMenu 中响应)
 }
 
