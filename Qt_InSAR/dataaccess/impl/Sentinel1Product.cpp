@@ -446,19 +446,38 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
             mDoppler.centroid = coeff.text().toDouble();
     }
 
-    // 轨道状态向量
-    nl = root.elementsByTagName("orbitStateVector");
+    // 轨道状态向量 (Sentinel-1 实际格式: <orbit><time>...<position><x>...)
+    nl = root.elementsByTagName("orbit");
     for (int i = 0; i < nl.size() && i < 50; ++i) {
-        QDomElement osv = nl.at(i).toElement();
+        QDomElement orbel = nl.at(i).toElement();
         OrbitStateVector sv;
-        sv.time = osv.firstChildElement("osvTime").text().toDouble();
-        sv.x = osv.firstChildElement("xPos").text().toDouble();
-        sv.y = osv.firstChildElement("yPos").text().toDouble();
-        sv.z = osv.firstChildElement("zPos").text().toDouble();
-        sv.vx = osv.firstChildElement("xVel").text().toDouble();
-        sv.vy = osv.firstChildElement("yVel").text().toDouble();
-        sv.vz = osv.firstChildElement("zVel").text().toDouble();
-        mOrbitVectors.append(sv);
+        sv.time = orbel.firstChildElement("time").text().toDouble();
+        QDomElement pos = orbel.firstChildElement("position");
+        sv.x  = pos.firstChildElement("x").text().toDouble();
+        sv.y  = pos.firstChildElement("y").text().toDouble();
+        sv.z  = pos.firstChildElement("z").text().toDouble();
+        QDomElement vel = orbel.firstChildElement("velocity");
+        sv.vx = vel.firstChildElement("x").text().toDouble();
+        sv.vy = vel.firstChildElement("y").text().toDouble();
+        sv.vz = vel.firstChildElement("z").text().toDouble();
+        if (sv.time > 0) mOrbitVectors.append(sv);
+    }
+
+    // 兼容旧格式: <orbitStateVector><osvTime>...<xPos>...
+    if (mOrbitVectors.isEmpty()) {
+        nl = root.elementsByTagName("orbitStateVector");
+        for (int i = 0; i < nl.size() && i < 50; ++i) {
+            QDomElement osv = nl.at(i).toElement();
+            OrbitStateVector sv;
+            sv.time = osv.firstChildElement("osvTime").text().toDouble();
+            sv.x = osv.firstChildElement("xPos").text().toDouble();
+            sv.y = osv.firstChildElement("yPos").text().toDouble();
+            sv.z = osv.firstChildElement("zPos").text().toDouble();
+            sv.vx = osv.firstChildElement("xVel").text().toDouble();
+            sv.vy = osv.firstChildElement("yVel").text().toDouble();
+            sv.vz = osv.firstChildElement("zVel").text().toDouble();
+            if (sv.time > 0) mOrbitVectors.append(sv);
+        }
     }
 
     // 近距
