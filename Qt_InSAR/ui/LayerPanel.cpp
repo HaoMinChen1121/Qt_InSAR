@@ -51,7 +51,7 @@ void LayerPanel::setupUI()
     mTree->header()->setSectionResizeMode(0, QHeaderView::Fixed);
     mTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     mTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    mTree->setColumnWidth(0, 44);
+    mTree->setColumnWidth(0, 60);
     mTree->setHeaderHidden(true);
     mTree->setSelectionMode(QAbstractItemView::SingleSelection);
     mTree->setDragDropMode(QAbstractItemView::InternalMove);
