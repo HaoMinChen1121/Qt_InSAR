@@ -197,10 +197,12 @@ bool InterferogramServiceImpl::stageInterferogram(
 
     // 创建三个独立文件
     GDALDriverH driver = GDALGetDriverByName("GTiff");
+    double gt[6] = {0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
     GDALDatasetH hIfg = GDALCreate(driver, ifgPath.toUtf8().constData(), outW, outH, 1, GDT_CFloat32, nullptr);
     GDALDatasetH hCoh = GDALCreate(driver, cohPath.toUtf8().constData(), outW, outH, 1, GDT_Float32, nullptr);
     GDALDatasetH hPh  = GDALCreate(driver, phasePath.toUtf8().constData(), outW, outH, 1, GDT_Float32, nullptr);
     if (!hIfg || !hCoh || !hPh) { qWarning() << "[Ifg] cannot create output"; return false; }
+    GDALSetGeoTransform(hIfg, gt); GDALSetGeoTransform(hCoh, gt); GDALSetGeoTransform(hPh, gt);
 
     QVector<std::complex<float>> rowComplex(outW);
     QVector<float> rowPhase(outW);
@@ -293,8 +295,10 @@ bool InterferogramServiceImpl::stageFlatEarth(
 
     QDir().mkpath(QFileInfo(outPath).absolutePath());
     GDALDriverH drv = GDALGetDriverByName("GTiff");
+    double gt[6] = {0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
     GDALDatasetH hOut = GDALCreate(drv, outPath.toUtf8().constData(), w, h, 1, GDT_CFloat32, nullptr);
     if (!hOut) return false;
+    GDALSetGeoTransform(hOut, gt);
 
     QVector<std::complex<float>> rowBuf(w);
     double Re = 6378137.0, H = 800000.0;
