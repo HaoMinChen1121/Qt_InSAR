@@ -5,6 +5,8 @@
 #include "dataaccess/impl/QsarIO.h"
 #include "dataaccess/SarProductFactory.h"
 
+#include <gdal_priv.h>
+
 #include <QtMath>
 #include <QDebug>
 #include <QFileInfo>
@@ -29,6 +31,8 @@ void InterferogramServiceImpl::execute()
 {
     mRunning = true;
     mCancelled = false;
+
+    GDALAllRegister();
 
     if (mParams.masterQsarPath.isEmpty() || mParams.slaveQsarPath.isEmpty()) {
         emit errorOccurred(QStringLiteral("请先选择主影像和辅影像产品"));
