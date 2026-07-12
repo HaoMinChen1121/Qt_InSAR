@@ -78,6 +78,8 @@ void ApplicationController::wireConnections()
             this, &ApplicationController::onRegistrationRunRequested);
     connect(mMainWindow, &MainWindow::baselineEstimateRequested,
             this, &ApplicationController::onBaselineEstimateRequested);
+    connect(mMainWindow, &MainWindow::interferogramRunRequested,
+            this, &ApplicationController::onInterferogramRunRequested);
 
     ProcessingMonitorPanel* monitor = mMainWindow->processingMonitorPanel();
     connect(mWorkerManager, &WorkerManager::taskProgressChanged,
@@ -99,6 +101,19 @@ void ApplicationController::wireConnections()
             monitor->onFinished(success, outputPath);
         });
     connect(mRegistrationSvc.get(), &IProcessingService::errorOccurred,
+        monitor, &ProcessingMonitorPanel::onError);
+
+    connect(mInterferogramSvc.get(), &IProcessingService::progressChanged,
+        monitor, &ProcessingMonitorPanel::onProgress);
+    connect(mInterferogramSvc.get(), &IProcessingService::finished, this,
+        [this, monitor](bool success, const QString& outputPath) {
+            if (success) {
+                monitor->appendLog(QStringLiteral("干涉图生成完成: %1").arg(outputPath), "#4CAF50");
+                emit mMainWindow->layerPanel()->layerAddRequested({outputPath});
+            }
+            monitor->onFinished(success, outputPath);
+        });
+    connect(mInterferogramSvc.get(), &IProcessingService::errorOccurred,
         monitor, &ProcessingMonitorPanel::onError);
 
     LayerPanel* layerPanel = mMainWindow->layerPanel();
@@ -469,6 +484,12 @@ void ApplicationController::onRegistrationRunRequested(const RegistrationParams&
     QtConcurrent::run([this]() {
         mRegistrationSvc->execute();
     });
+}
+
+void ApplicationController::onInterferogramRunRequested(const InterferogramParams& params)
+{
+    mInterferogramSvc->setParams(params);
+    QtConcurrent::run([this]() { mInterferogramSvc->execute(); });
 }
 
 void ApplicationController::onBaselineEstimateRequested()

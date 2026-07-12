@@ -5,6 +5,12 @@
 
 struct InterferogramParams
 {
+    // 输入 — QSAR产品路径
+    QString   masterQsarPath;             // 主影像QSAR路径 (.qsar)
+    QString   slaveQsarPath;              // 辅影像QSAR路径 (registered.qsar)
+    QString   masterProductDisplay;       // 主产品显示名
+    QString   slaveProductDisplay;        // 辅产品显示名
+
     // 干涉图生成
     int       rangeLooks = 1;            // 距离向多视比
     int       azimuthLooks = 1;           // 方位向多视比

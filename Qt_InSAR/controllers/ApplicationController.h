@@ -66,6 +66,7 @@ private slots:
     void onSarProductOpenRequested(const QString& path);
     void onRegistrationRunRequested(const RegistrationParams& params);
     void onBaselineEstimateRequested();
+    void onInterferogramRunRequested(const InterferogramParams& params);
     void onMasterProductSelected(const QString& productPath);
     void onSlaveProductSelected(const QString& productPath);
 

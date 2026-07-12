@@ -3,6 +3,7 @@
 
 #include "SARibbonMainWindow.h"
 #include "domain/params/RegistrationParams.h"
+#include "domain/params/InterferogramParams.h"
 
 class SARibbonCategory;
 class SARibbonQuickAccessBar;
@@ -126,6 +127,7 @@ private:
     QLabel*          mOutputDirLabel = nullptr;
     QCheckBox*       mKeepResCheck = nullptr;
     RegistrationParams mRegParams;
+    InterferogramParams mIfgParams;
 
     QMenu* buildSlcLayerMenu(bool isMaster);
 
@@ -134,6 +136,7 @@ signals:
     void registrationRunRequested(const RegistrationParams& params);
     /// 用户触发基线快速估算
     void baselineEstimateRequested();
+    void interferogramRunRequested(const InterferogramParams& params);
 };
 
 #endif // MAINWINDOW_H

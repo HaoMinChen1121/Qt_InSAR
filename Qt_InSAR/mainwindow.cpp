@@ -478,35 +478,46 @@ void MainWindow::createCategoryInterferogram(SARibbonCategory* page)
     QSpinBox* azSpin = new QSpinBox(this); azSpin->setRange(1, 32); azSpin->setValue(1);
     azSpin->setPrefix(QStringLiteral("Az: "));
     pnlIfg->addSmallWidget(azSpin);
-    QComboBox* outTypeCombo = new QComboBox(this);
-    outTypeCombo->addItems({QStringLiteral("复数"), QStringLiteral("相位"), QStringLiteral("相干性")});
-    pnlIfg->addSmallWidget(outTypeCombo);
 
     SARibbonPanel* pnlFlat = page->addPanel(QStringLiteral("平地效应"));
     QComboBox* refCombo = new QComboBox(this);
     refCombo->addItems({QStringLiteral("椭球面"), QStringLiteral("轨道"), QStringLiteral("外部DEM")});
     pnlFlat->addSmallWidget(refCombo);
-    QAction* actOrbit = createAction(QStringLiteral("轨道文件"), ":/icon/icon/save.svg", "actOrbit");
-    pnlFlat->addLargeAction(actOrbit);
 
     SARibbonPanel* pnlDiff = page->addPanel(QStringLiteral("差分干涉"));
     QAction* actDem = createAction(QStringLiteral("DEM文件"), ":/icon/icon/save.svg", "actDemDiff");
     pnlDiff->addLargeAction(actDem);
-    QComboBox* dirCombo = new QComboBox(this);
-    dirCombo->addItems({QStringLiteral("LOS"), QStringLiteral("垂直向")});
-    pnlDiff->addSmallWidget(dirCombo);
+    connect(actDem, &QAction::triggered, this, [this]() {
+        QString f = QFileDialog::getOpenFileName(this,
+            QStringLiteral("选择DEM文件"), QString(),
+            QStringLiteral("DEM文件 (*.tif *.tiff *.dem);;所有文件 (*.*)"));
+        if (!f.isEmpty()) mIfgParams.demPath = f;
+    });
 
     SARibbonPanel* pnlExec = page->addPanel(QStringLiteral("执行"));
     QAction* actExecIfg = createAction(QStringLiteral("生成干涉图"),
                                         ":/icon/icon/folder-cog.svg", "actExecIfg");
     pnlExec->addLargeAction(actExecIfg);
     connect(actExecIfg, &QAction::triggered, this, [this]() {
+        mIfgParams.rangeLooks = 1;
+        mIfgParams.azimuthLooks = 1;
+        mIfgParams.referenceSource = "Orbit";
+        if (mIfgParams.masterQsarPath.isEmpty() || mIfgParams.slaveQsarPath.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("提示"),
+                QStringLiteral("请先通过\"高级参数\"设置主辅QSAR产品路径"));
+            return;
+        }
         mMonitorPanel->appendLog(QStringLiteral("干涉图生成已启动..."), "#4A90D9");
+        emit interferogramRunRequested(mIfgParams);
     });
     QAction* actAdvIfg = createAction(QStringLiteral("高级参数"), ":/icon/icon/layout.svg", "actAdvIfg");
     pnlExec->addSmallAction(actAdvIfg);
     connect(actAdvIfg, &QAction::triggered, this, [this]() {
-        InterferogramDialog dlg(this); dlg.exec();
+        InterferogramDialog dlg(this);
+        dlg.setParams(mIfgParams);
+        if (dlg.exec() == QDialog::Accepted) {
+            mIfgParams = dlg.params();
+        }
     });
 }
 
