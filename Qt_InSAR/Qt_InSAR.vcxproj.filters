@@ -32,9 +32,12 @@
     <ClCompile Include="dataaccess\impl\GdalDemReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\OrbitDataReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\Sentinel1Product.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\QsarIO.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClInclude Include="dataaccess\ISarProduct.h"><Filter>DataAccess</Filter></ClInclude>
     <ClInclude Include="dataaccess\SarProductFactory.h"><Filter>DataAccess</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h"><Filter>DataAccess\Impl</Filter></ClInclude>
+    <ClInclude Include="dataaccess\impl\QsarIO.h"><Filter>DataAccess\Impl</Filter></ClInclude>
+    <ClInclude Include="domain\QsarProduct.h"><Filter>Domain</Filter></ClInclude>
     <ClInclude Include="domain\SarProductType.h"><Filter>Domain</Filter></ClInclude>
     <ClInclude Include="domain\SarSensorInfo.h"><Filter>Domain</Filter></ClInclude>
     <ClInclude Include="domain\params\DeformationParams.h"><Filter>Domain\Params</Filter></ClInclude>
