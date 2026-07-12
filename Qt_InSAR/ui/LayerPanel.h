@@ -6,6 +6,8 @@
 class QTreeWidget;
 class QTreeWidgetItem;
 class QToolBar;
+class QSlider;
+class QLabel;
 
 class LayerPanel : public QWidget
 {
@@ -20,6 +22,7 @@ signals:
     void layerOrderChanged(const QStringList& orderedIds);
     void zoomToLayerRequested(const QString& id);
     void layerSelectionChanged(const QString& id);
+    void opacityChanged(const QString& id, double opacity);
 
 public slots:
     void onLayerLoaded(const QString& id, const QString& name, const QString& type,
@@ -35,6 +38,7 @@ private slots:
     void onRemoveLayer();
     void onMoveUp();
     void onMoveDown();
+    void onZoomToLayer();
     void onItemChanged(QTreeWidgetItem* item, int column);
     void onItemSelectionChanged();
     void onContextMenu(const QPoint& pos);
@@ -42,7 +46,9 @@ private slots:
 private:
     void setupUI();
     QTreeWidget* mTree;
-    QToolBar* mToolbar;
+    QToolBar*    mToolbar;
+    QSlider*     mOpacitySlider = nullptr;
+    QLabel*      mOpacityLabel  = nullptr;
 };
 
 #endif // LAYERPANEL_H
