@@ -196,10 +196,23 @@ bool InterferogramServiceImpl::stageInterferogram(
         if (mCancelled) return false;
         int srcRow = row * azLooks;
         int readH = azLooks + cohWindow * 2;
+        int row0 = srcRow - cohWindow;
 
-        auto mData = mReader.readBandWindow(0, 0, srcRow - cohWindow, width, readH);
-        auto sData = sReader.readBandWindow(0, 0, srcRow - cohWindow, width, readH);
-        if (mData.size() < width * readH || sData.size() < width * readH) continue;
+        // 读窗口 (允许边界裁剪)
+        auto mData = mReader.readBandWindow(0, 0, row0, width, readH);
+        auto sData = sReader.readBandWindow(0, 0, row0, width, readH);
+        int actualH = std::min(mData.size() / width, sData.size() / width);
+        if (actualH == 0) {
+            // 填充零
+            for (int col = 0; col < outW; ++col) {
+                output[row * outW + col] = std::complex<float>(0, 0);
+                coherence[row * outW + col] = 0.0f;
+            }
+            continue;
+        }
+
+        // mData 中当前处理行的 offset (相对于读取窗口)
+        int rowOff = cohWindow + (row0 < 0 ? row0 : 0);
 
         for (int col = 0; col < outW; ++col) {
             int srcCol = col * rgLooks;
@@ -208,27 +221,29 @@ bool InterferogramServiceImpl::stageInterferogram(
             std::complex<double> mAvg(0, 0), sAvg(0, 0);
             for (int ar = 0; ar < azLooks; ++ar) {
                 for (int ac = 0; ac < rgLooks; ++ac) {
-                    int idx = (cohWindow + ar) * width + (srcCol + ac);
-                    mAvg += std::complex<double>(mData[idx].real(), mData[idx].imag());
-                    sAvg += std::complex<double>(sData[idx].real(), sData[idx].imag());
+                    int idx = (rowOff + ar) * width + (srcCol + ac);
+                    if (idx >= 0 && idx < actualH * width) {
+                        mAvg += std::complex<double>(mData[idx].real(), mData[idx].imag());
+                        sAvg += std::complex<double>(sData[idx].real(), sData[idx].imag());
+                    }
                 }
             }
             int nPix = azLooks * rgLooks;
             mAvg /= nPix;
             sAvg /= nPix;
 
-            // 干涉图: M * conj(S)
+            // 干涉图
             std::complex<double> ifg = mAvg * std::conj(sAvg);
             output[row * outW + col] = std::complex<float>(ifg.real(), ifg.imag());
 
-            // 相干性 (cohWindow x cohWindow)
+            // 相干性
             std::complex<double> crossSum(0, 0);
             double magM = 0, magS = 0;
             for (int wr = -cohWindow/2; wr <= cohWindow/2; ++wr) {
                 for (int wc = -cohWindow/2; wc <= cohWindow/2; ++wc) {
                     int sc = srcCol + cohWindow/2 + wc;
-                    int sr = cohWindow + cohWindow/2 + wr;
-                    if (sc >= 0 && sc < width && sr >= 0 && sr < readH) {
+                    int sr = rowOff + cohWindow/2 + wr;
+                    if (sc >= 0 && sc < width && sr >= 0 && sr < actualH) {
                         int idx = sr * width + sc;
                         auto mv = mData[idx]; auto sv = sData[idx];
                         crossSum += std::complex<double>(mv.real(), mv.imag())
@@ -243,8 +258,14 @@ bool InterferogramServiceImpl::stageInterferogram(
         }
     }
 
+    // 确保输出目录存在
+    QDir().mkpath(QFileInfo(outPath).absolutePath());
+
     GdalInterferogramWriter writer;
-    if (!writer.create(outPath, outW, outH, true)) return false;
+    if (!writer.create(outPath, outW, outH, true)) {
+        qWarning() << "[Ifg] writer.create failed:" << outPath;
+        return false;
+    }
     writer.writeComplex(output);
     writer.writeCoherence(coherence);
 
