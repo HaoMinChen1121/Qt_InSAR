@@ -116,7 +116,14 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     QWidget* tab4 = new QWidget;
     QFormLayout* f4 = new QFormLayout(tab4);
     mOutputDir = new QLineEdit;
-    f4->addRow(tr("输出目录:"), mOutputDir);
+    QPushButton* outDirBrowse = new QPushButton(tr("浏览..."));
+    QHBoxLayout* outDirLayout = new QHBoxLayout;
+    outDirLayout->addWidget(mOutputDir, 1); outDirLayout->addWidget(outDirBrowse);
+    f4->addRow(tr("输出目录:"), outDirLayout);
+    connect(outDirBrowse, &QPushButton::clicked, this, [this]() {
+        QString d = QFileDialog::getExistingDirectory(this, tr("选择输出目录"));
+        if (!d.isEmpty()) mOutputDir->setText(d);
+    });
     mOutputPrefix = new QLineEdit("interferogram");
     f4->addRow(tr("文件前缀:"), mOutputPrefix);
     tabs->addTab(tab4, tr("输出"));
