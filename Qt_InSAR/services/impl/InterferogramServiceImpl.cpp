@@ -118,7 +118,7 @@ void InterferogramServiceImpl::execute()
             emit progressChanged(basePct + 35, pairName + QStringLiteral(": 平地效应去除..."));
             QString flatPath = outputDir + "/" + prefix + "_" + pairName + "_flat.tif";
             double wl = 0.0555;  // Sentinel-1 C-band
-            if (!stageFlatEarth(ifgPath, flatPath, w, h, wl, 800000.0, 2.33, 1680.0)) {
+            if (!stageFlatEarth(ifgBase + "_ifg.tif", flatPath, w, h, wl, 800000.0, 2.33, 1680.0)) {
                 qWarning() << "[Ifg] Stage 2 failed:" << pairName;
                 // 继续使用原始干涉图
             }
@@ -129,7 +129,7 @@ void InterferogramServiceImpl::execute()
             emit progressChanged(basePct + 65, pairName + QStringLiteral(": 差分干涉..."));
             QString diffPath = outputDir + "/" + prefix + "_" + pairName + "_diff.tif";
             double wl = 0.0555;
-            stageDifferential(ifgPath, mParams.demPath, diffPath, w, h, wl, 800000.0, 2.33);
+            stageDifferential(ifgBase + "_ifg.tif", mParams.demPath, diffPath, w, h, wl, 800000.0, 2.33);
         }
 
         ++succeeded;
