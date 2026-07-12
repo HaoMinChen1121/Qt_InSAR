@@ -14,6 +14,8 @@ public:
         const QString& projection = QString()) override;
     bool writeBand(int bandIndex,
         const QVector<std::complex<float>>& data) override;
+    bool writeRow(int row,
+        const QVector<std::complex<float>>& data) override;
     void close() override;
     QString lastError() const override;
 

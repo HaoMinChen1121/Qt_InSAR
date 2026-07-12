@@ -70,6 +70,31 @@ bool GdalSlcWriter::writeBand(int bandIndex,
     return true;
 }
 
+bool GdalSlcWriter::writeRow(int row,
+    const QVector<std::complex<float>>& data)
+{
+    if (!mDataset) {
+        mLastError = QStringLiteral("数据集未创建");
+        return false;
+    }
+    GDALDataset* ds = static_cast<GDALDataset*>(mDataset);
+    int w = ds->GetRasterXSize();
+    int h = ds->GetRasterYSize();
+    if (row < 0 || row >= h) return false;
+    if (data.size() < w) return false;
+
+    GDALRasterBand* band = ds->GetRasterBand(1);
+    CPLErr err = band->RasterIO(GF_Write, 0, row, w, 1,
+        const_cast<std::complex<float>*>(data.constData()),
+        w, 1, GDT_CFloat32, 0, 0);
+
+    if (err != CE_None) {
+        mLastError = QStringLiteral("写入行 %1 失败").arg(row);
+        return false;
+    }
+    return true;
+}
+
 void GdalSlcWriter::close()
 {
     if (mDataset) {

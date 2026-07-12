@@ -15,6 +15,8 @@ public:
         const QString& projection = QString()) = 0;
     virtual bool writeBand(int bandIndex,
         const QVector<std::complex<float>>& data) = 0;
+    virtual bool writeRow(int row,
+        const QVector<std::complex<float>>& data) = 0;
     virtual void close() = 0;
 
     virtual QString lastError() const = 0;

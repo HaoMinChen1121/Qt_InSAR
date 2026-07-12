@@ -810,12 +810,14 @@ bool RegistrationServiceImpl::resampleImage(
     const QString& interpMethod, int sincWindow, double sincBeta,
     const QString& outputPath)
 {
+    qDebug() << "[Reg] resample: creating output" << outputPath;
     if (!writer->create(outputPath, masterW, masterH, 1)) {
         qWarning() << "[Reg] 创建输出文件失败:" << writer->lastError();
         return false;
     }
 
-    QVector<std::complex<float>> output(masterW * masterH);
+    // 逐行重采样 + 写入，避免分配 2GB 全图缓冲
+    QVector<std::complex<float>> rowBuf(masterW);
     int step = qMax(1, masterH / 100);
 
     for (int row = 0; row < masterH; ++row) {
@@ -826,7 +828,6 @@ bool RegistrationServiceImpl::resampleImage(
             emit progressChanged(pct, QStringLiteral("重采样 %1/%2").arg(row).arg(masterH));
         }
 
-        // 当前行需要的辅影像窗口（y方向）
         double rNorm = 0.5;
         double aNorm = static_cast<double>(row) / masterH;
         double rowOff = poly.aziCoeffs[0] + poly.aziCoeffs[1]*rNorm + poly.aziCoeffs[2]*aNorm
@@ -838,33 +839,35 @@ bool RegistrationServiceImpl::resampleImage(
         int sYH = readRadius * 2 + 1;
         if (sY0 < 0) { sYH += sY0; sY0 = 0; }
         if (sY0 + sYH > slaveH) sYH = slaveH - sY0;
-        if (sYH <= 0) continue;
+        if (sYH <= 0) {
+            rowBuf.fill(std::complex<float>(0, 0));
+        } else {
+            auto sWindow = sReader->readBandWindow(0, 0, sY0, slaveW, sYH);
+            for (int col = 0; col < masterW; ++col) {
+                double rN = static_cast<double>(col) / masterW;
+                double aN = static_cast<double>(row) / masterH;
+                double colOff = poly.rangeCoeffs[0] + poly.rangeCoeffs[1]*rN + poly.rangeCoeffs[2]*aN
+                    + poly.rangeCoeffs[3]*rN*aN + poly.rangeCoeffs[4]*rN*rN + poly.rangeCoeffs[5]*aN*aN;
 
-        // 读取当前行窗口
-        auto sWindow = sReader->readBandWindow(0, 0, sY0, slaveW, sYH);
-        if (sWindow.size() < slaveW * sYH) continue;
+                double sx = col + colOff;
+                double sy = static_cast<double>(row + static_cast<int>(rowOff) - sY0
+                    + (rowOff - static_cast<int>(rowOff)));
 
-        for (int col = 0; col < masterW; ++col) {
-            double rN = static_cast<double>(col) / masterW;
-            double aN = static_cast<double>(row) / masterH;
-            double colOff = poly.rangeCoeffs[0] + poly.rangeCoeffs[1]*rN + poly.rangeCoeffs[2]*aN
-                + poly.rangeCoeffs[3]*rN*aN + poly.rangeCoeffs[4]*rN*rN + poly.rangeCoeffs[5]*aN*aN;
-
-            double sx = col + colOff;
-            double sy = static_cast<double>(row + static_cast<int>(rowOff) - sY0
-                + (rowOff - static_cast<int>(rowOff)));
-
-            int idx = row * masterW + col;
-            if (sx >= 0 && sx < slaveW - 1 && sy >= 0 && sy < sYH - 1) {
-                output[idx] = interp2D(sWindow, slaveW, sYH, sx, sy,
-                    interpMethod, sincWindow, sincBeta);
-            } else {
-                output[idx] = std::complex<float>(0, 0);
+                if (sx >= 0 && sx < slaveW - 1 && sy >= 0 && sy < sYH - 1
+                    && sWindow.size() >= slaveW * sYH) {
+                    rowBuf[col] = interp2D(sWindow, slaveW, sYH, sx, sy,
+                        interpMethod, sincWindow, sincBeta);
+                } else {
+                    rowBuf[col] = std::complex<float>(0, 0);
+                }
             }
         }
+
+        // 逐行写入
+        writer->writeRow(row, rowBuf);
     }
 
-    return writer->writeBand(0, output);
+    return true;
 }
 
 // ──────────────────────────────────────────────────────────
