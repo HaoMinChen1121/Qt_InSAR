@@ -160,11 +160,12 @@ void RegistrationDialog::setParams(const RegistrationParams& p)
     auto metaText = [&p](bool isMaster) -> QString {
         const QString& displayName = isMaster ? p.masterDisplayName : p.slaveDisplayName;
         const QString& prodPath = isMaster ? p.masterProductPath : p.slaveProductPath;
+        if (prodPath.isEmpty()) return QStringLiteral("未加载");
         const auto& orbits = isMaster ? p.masterOrbitVectors : p.slaveOrbitVectors;
-        if (prodPath.isEmpty() && orbits.isEmpty()) return QStringLiteral("未加载");
-        return QStringLiteral("%1 (%2轨道点)")
-            .arg(displayName.isEmpty() ? QStringLiteral("已选择") : displayName)
-            .arg(orbits.size());
+        QString extra = orbits.isEmpty()
+            ? QStringLiteral(" (无轨道数据)")
+            : QStringLiteral(" (%1轨道点)").arg(orbits.size());
+        return (displayName.isEmpty() ? QStringLiteral("已选择") : displayName) + extra;
     };
     mMasterMeta->setText(QStringLiteral("主: %1").arg(metaText(true)));
     mSlaveMeta->setText(QStringLiteral("辅: %1").arg(metaText(false)));

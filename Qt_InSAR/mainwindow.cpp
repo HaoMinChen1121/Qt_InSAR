@@ -420,16 +420,36 @@ void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
         int idx = mCoarseMethodCombo->findData(p.coarseMethod);
         if (idx >= 0) mCoarseMethodCombo->setCurrentIndex(idx);
     }
-    // 保留产品路径和元数据
+    // 保留产品路径和元数据（含轨道向量），不被对话框覆盖
+    QList<OrbitStateVector> mov = mRegParams.masterOrbitVectors;
+    QList<OrbitStateVector> sov = mRegParams.slaveOrbitVectors;
+    DopplerInfo mdp = mRegParams.masterDoppler;
+    DopplerInfo sdp = mRegParams.slaveDoppler;
     QString mp = mRegParams.masterProductPath;
     QString sp = mRegParams.slaveProductPath;
     QString md = mRegParams.masterDisplayName;
     QString sd = mRegParams.slaveDisplayName;
+    double wl = mRegParams.wavelength;
+    double mrs = mRegParams.masterRangeSpacing;
+    double mas = mRegParams.masterAzimuthSpacing;
+    double mnr = mRegParams.masterNearRange;
+    double mprf = mRegParams.masterPrf;
+
     mRegParams = p;
+
+    mRegParams.masterOrbitVectors = mov;
+    mRegParams.slaveOrbitVectors = sov;
+    mRegParams.masterDoppler = mdp;
+    mRegParams.slaveDoppler = sdp;
     mRegParams.masterProductPath = mp;
     mRegParams.slaveProductPath = sp;
     mRegParams.masterDisplayName = md;
     mRegParams.slaveDisplayName = sd;
+    mRegParams.wavelength = wl;
+    mRegParams.masterRangeSpacing = mrs;
+    mRegParams.masterAzimuthSpacing = mas;
+    mRegParams.masterNearRange = mnr;
+    mRegParams.masterPrf = mprf;
     mRegParams.masterPath = mp;
     mRegParams.slavePath = sp;
 }
