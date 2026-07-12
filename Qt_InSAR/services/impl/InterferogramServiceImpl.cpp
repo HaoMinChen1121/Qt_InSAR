@@ -257,14 +257,28 @@ bool InterferogramServiceImpl::stageInterferogram(
         qWarning() << "[Ifg] writer.create failed:" << outPath;
         return false;
     }
-    writer.writeComplex(output);
-    writer.writeCoherence(coherence);
+    qDebug() << "[Ifg] writer created OK, writing complex...";
 
+    if (!writer.writeComplex(output)) {
+        qWarning() << "[Ifg] writeComplex failed";
+        return false;
+    }
+    qDebug() << "[Ifg] complex written, writing coherence...";
+    if (!writer.writeCoherence(coherence)) {
+        qWarning() << "[Ifg] writeCoherence failed";
+        return false;
+    }
+
+    qDebug() << "[Ifg] coherence written, computing phase...";
     QVector<float> phase(outW * outH);
     for (int i = 0; i < outW * outH; ++i)
         phase[i] = std::atan2(output[i].imag(), output[i].real());
-    writer.writePhase(phase);
+    if (!writer.writePhase(phase)) {
+        qWarning() << "[Ifg] writePhase failed";
+        return false;
+    }
 
+    qDebug() << "[Ifg] stageInterferogram SUCCESS";
     return true;
 }
 
