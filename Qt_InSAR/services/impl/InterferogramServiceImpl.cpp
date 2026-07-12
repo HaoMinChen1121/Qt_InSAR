@@ -290,43 +290,36 @@ bool InterferogramServiceImpl::stageFlatEarth(
     GdalSlcReader reader;
     if (!reader.open(ifgPath)) return false;
     int w = reader.width(), h = reader.height();
-    auto ifgData = reader.readBand(0);
-    reader.close();
-    if (ifgData.size() < w * h) return false;
 
-    QVector<std::complex<float>> flat(w * h);
+    QDir().mkpath(QFileInfo(outPath).absolutePath());
+    GDALDriverH drv = GDALGetDriverByName("GTiff");
+    GDALDatasetH hOut = GDALCreate(drv, outPath.toUtf8().constData(), w, h, 1, GDT_CFloat32, nullptr);
+    if (!hOut) return false;
 
-    // WGS84椭球参数
-    double Re = 6378137.0;
-    double e2 = 0.00669437999014;
-    double H = 800000.0; // 卫星轨道高度 (m) 近似
+    QVector<std::complex<float>> rowBuf(w);
+    double Re = 6378137.0, H = 800000.0;
 
     for (int row = 0; row < h; ++row) {
-        if (mCancelled) return false;
+        if (mCancelled) { GDALClose(hOut); return false; }
+        auto rowData = reader.readBandWindow(0, 0, row, w, 1);
         for (int col = 0; col < w; ++col) {
             double R = nearRange + col * rangeSpacing;
             double theta = std::acos((Re + H) / (Re * 1.001));
-            // 简化平地相位: φ_flat = -4π/λ * Bpar
-            // 使用之前配准阶段计算的基线
             double phiFlat = 0;
             if (R > 0) {
-                double sinTheta = std::sin(theta);
-                double Bpar = 20.0; // 平行基线 (m) 缺省值
-                phiFlat = -4.0 * M_PI / wavelength * Bpar * sinTheta;
+                double Bpar = 20.0;
+                phiFlat = -4.0 * M_PI / wavelength * Bpar * std::sin(theta);
             }
-            int idx = row * w + col;
             float c = std::cos(static_cast<float>(phiFlat));
             float s = std::sin(static_cast<float>(phiFlat));
-            auto v = ifgData[idx];
-            flat[idx] = std::complex<float>(
+            auto v = rowData.size() > col ? rowData[col] : std::complex<float>(0,0);
+            rowBuf[col] = std::complex<float>(
                 v.real() * c + v.imag() * s,
                 v.imag() * c - v.real() * s);
         }
+        GDALRasterIO(GDALGetRasterBand(hOut,1), GF_Write, 0, row, w, 1, rowBuf.data(), w, 1, GDT_CFloat32, 0, 0);
     }
-
-    GdalInterferogramWriter writer;
-    if (!writer.create(outPath, w, h, true)) return false;
-    writer.writeComplex(flat);
+    GDALClose(hOut);
     return true;
 }
 
