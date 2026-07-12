@@ -37,6 +37,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QToolButton>
+#include <QTimer>
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
 #include <algorithm>
@@ -403,7 +404,10 @@ void ApplicationController::onSlaveProductSelected(const QString& productPath)
 void ApplicationController::onRegistrationRunRequested(const RegistrationParams& params)
 {
     mRegistrationSvc->setParams(params);
-    mWorkerManager->enqueueTask(mRegistrationSvc.get());
+    // 在主线程事件循环中执行，避免 GDAL /vsizip/ 子线程死锁
+    QTimer::singleShot(0, this, [this]() {
+        mRegistrationSvc->execute();
+    });
 }
 
 void ApplicationController::onBaselineEstimateRequested()
@@ -411,7 +415,9 @@ void ApplicationController::onBaselineEstimateRequested()
     RegistrationParams p = mMainWindow->collectRegParams();
     p.estimateBaseline = true;
     mRegistrationSvc->setParams(p);
-    mWorkerManager->enqueueTask(mRegistrationSvc.get());
+    QTimer::singleShot(0, this, [this]() {
+        mRegistrationSvc->execute();
+    });
 }
 
 // ──────────────────────────────────────────────────────────
