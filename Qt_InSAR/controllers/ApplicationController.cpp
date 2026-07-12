@@ -124,14 +124,16 @@ void ApplicationController::wireConnections()
                 QgsRasterLayer* layer = new QgsRasterLayer(path, name);
                 if (layer->isValid()) {
                     layer->setCustomProperty("insar_band_path", path);
-                    QgsProject::instance()->addMapLayer(layer, false);
                     if (!groupName.isEmpty()) {
+                        // SAR 产品: 加到项目+分组
+                        QgsProject::instance()->addMapLayer(layer, false);
                         QgsLayerTreeGroup* grp = QgsProject::instance()
                             ->layerTreeRoot()->findGroup(groupName);
                         if (grp) grp->addLayer(layer);
                         else QgsProject::instance()->layerTreeRoot()->addLayer(layer);
                     } else {
-                        QgsProject::instance()->layerTreeRoot()->addLayer(layer);
+                        // 通用栅格: QGIS 自动管理图层树
+                        QgsProject::instance()->addMapLayer(layer);
                     }
                     newLayers.append(layer);
                     layerPanel->onLayerLoaded(layer->id(), name,
@@ -147,8 +149,10 @@ void ApplicationController::wireConnections()
             if (!newLayers.isEmpty()) {
                 QgsMapLayer* first = newLayers.first();
                 QgsCoordinateReferenceSystem crs = first->crs();
-                if (crs.isValid()) canvas->setDestinationCrs(crs);
-                else canvas->setExtent(first->extent());
+                if (crs.isValid())
+                    canvas->setDestinationCrs(crs);
+                else
+                    canvas->setDestinationCrs(QgsCoordinateReferenceSystem());
             }
             rebuildCanvasLayers();
             canvas->zoomToFullExtent();
