@@ -37,6 +37,7 @@
 #include <QToolButton>
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
+#include <algorithm>
 #include <QScopedPointer>
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
@@ -662,6 +663,8 @@ void ApplicationController::rebuildCanvasLayers()
         }
     }
 
+    // 反转：树顶部 = 画布顶层（用户直觉）而非QGIS默认的反向
+    std::reverse(visible.begin(), visible.end());
     canvas->setLayers(visible);
     canvas->refresh();
 
