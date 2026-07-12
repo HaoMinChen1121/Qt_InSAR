@@ -180,13 +180,14 @@ bool InterferogramServiceImpl::stageInterferogram(
         return false;
     }
 
-    qDebug() << "[Ifg] master" << mReader.width() << "x" << mReader.height()
+    qDebug() << "[Ifg-CK1] master" << mReader.width() << "x" << mReader.height()
              << "slave" << sReader.width() << "x" << sReader.height();
 
     int outW = width  / rgLooks;
     int outH = height / azLooks;
-    if (outW < 1 || outH < 1) return false;
-    qDebug() << "[Ifg] allocating" << outW << "x" << outH;
+    qDebug() << "[Ifg-CK2] outW=" << outW << "outH=" << outH;
+    if (outW < 1 || outH < 1) { qDebug() << "[Ifg-CK2] FAIL dims"; return false; }
+    qDebug() << "[Ifg-CK3] allocating" << outW << "x" << outH;
 
     QVector<std::complex<float>> output(outW * outH);
     QVector<float> coherence(outW * outH);
