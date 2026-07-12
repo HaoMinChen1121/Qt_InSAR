@@ -403,7 +403,10 @@ void ApplicationController::onSlaveProductSelected(const QString& productPath)
 void ApplicationController::onRegistrationRunRequested(const RegistrationParams& params)
 {
     mRegistrationSvc->setParams(params);
-    mWorkerManager->enqueueTask(mRegistrationSvc.get());
+    // WorkerManager 的独立 QThread 中 GDAL VSI 会死锁，改用 QThreadPool
+    QtConcurrent::run([this]() {
+        mRegistrationSvc->execute();
+    });
 }
 
 void ApplicationController::onBaselineEstimateRequested()
@@ -411,7 +414,9 @@ void ApplicationController::onBaselineEstimateRequested()
     RegistrationParams p = mMainWindow->collectRegParams();
     p.estimateBaseline = true;
     mRegistrationSvc->setParams(p);
-    mWorkerManager->enqueueTask(mRegistrationSvc.get());
+    QtConcurrent::run([this]() {
+        mRegistrationSvc->execute();
+    });
 }
 
 // ──────────────────────────────────────────────────────────
