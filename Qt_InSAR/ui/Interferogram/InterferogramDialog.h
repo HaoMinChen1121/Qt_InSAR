@@ -27,6 +27,10 @@ public:
     DifferentialParams differentialParams() const;
 
 private:
+    // Tab 0: 输入
+    QLineEdit* mMasterQsar;
+    QLineEdit* mSlaveQsar;
+
     // Tab 1: 干涉图
     QSpinBox* mRangeLooks;
     QSpinBox* mAzimuthLooks;

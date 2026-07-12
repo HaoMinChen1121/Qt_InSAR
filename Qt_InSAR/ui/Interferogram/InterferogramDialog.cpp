@@ -20,6 +20,31 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
     QTabWidget* tabs = new QTabWidget;
 
+    // ===== Tab 0: 输入 =====
+    QWidget* tab0 = new QWidget;
+    QFormLayout* f0 = new QFormLayout(tab0);
+    mMasterQsar = new QLineEdit;
+    QPushButton* masterBrowse = new QPushButton(tr("浏览..."));
+    QHBoxLayout* masterLayout = new QHBoxLayout;
+    masterLayout->addWidget(mMasterQsar, 1); masterLayout->addWidget(masterBrowse);
+    f0->addRow(tr("主影像(.qsar):"), masterLayout);
+    connect(masterBrowse, &QPushButton::clicked, this, [this]() {
+        QString f = QFileDialog::getOpenFileName(this, tr("选择主影像QSAR"),
+            QString(), tr("QSAR (*.qsar);;所有 (*.*)"));
+        if (!f.isEmpty()) mMasterQsar->setText(f);
+    });
+    mSlaveQsar = new QLineEdit;
+    QPushButton* slaveBrowse = new QPushButton(tr("浏览..."));
+    QHBoxLayout* slaveLayout = new QHBoxLayout;
+    slaveLayout->addWidget(mSlaveQsar, 1); slaveLayout->addWidget(slaveBrowse);
+    f0->addRow(tr("辅影像(.qsar):"), slaveLayout);
+    connect(slaveBrowse, &QPushButton::clicked, this, [this]() {
+        QString f = QFileDialog::getOpenFileName(this, tr("选择辅影像QSAR"),
+            QString(), tr("QSAR (*.qsar);;所有 (*.*)"));
+        if (!f.isEmpty()) mSlaveQsar->setText(f);
+    });
+    tabs->addTab(tab0, tr("输入"));
+
     // ===== Tab 1: 干涉图 =====
     QWidget* tab1 = new QWidget;
     QFormLayout* f1 = new QFormLayout(tab1);
@@ -90,10 +115,16 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
 
 void InterferogramDialog::setParams(const InterferogramParams& p)
 {
+    mMasterQsar->setText(p.masterQsarPath);
+    mSlaveQsar->setText(p.slaveQsarPath);
     mRangeLooks->setValue(p.rangeLooks);
     mAzimuthLooks->setValue(p.azimuthLooks);
     mOutputType->setCurrentText(p.outputType);
     mSpectralFilter->setChecked(p.spectralFilter);
+    mRefSource->setCurrentText(p.referenceSource);
+    mDiffDemPath->setText(p.demPath);
+    mDispDirection->setCurrentText(p.displacementDirection);
+    mAtmCorr->setChecked(p.atmosphericCorrection);
     mOutputDir->setText(p.outputDir);
     mOutputPrefix->setText(p.outputPrefix);
 }
@@ -101,10 +132,16 @@ void InterferogramDialog::setParams(const InterferogramParams& p)
 InterferogramParams InterferogramDialog::params() const
 {
     InterferogramParams p;
+    p.masterQsarPath = mMasterQsar->text();
+    p.slaveQsarPath = mSlaveQsar->text();
     p.rangeLooks = mRangeLooks->value();
     p.azimuthLooks = mAzimuthLooks->value();
     p.outputType = mOutputType->currentText();
     p.spectralFilter = mSpectralFilter->isChecked();
+    p.referenceSource = mRefSource->currentText();
+    p.demPath = mDiffDemPath->text();
+    p.displacementDirection = mDispDirection->currentText();
+    p.atmosphericCorrection = mAtmCorr->isChecked();
     p.outputDir = mOutputDir->text();
     p.outputPrefix = mOutputPrefix->text();
     return p;
