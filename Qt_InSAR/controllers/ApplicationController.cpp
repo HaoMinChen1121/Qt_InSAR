@@ -17,6 +17,7 @@
 #include "dataaccess/SarProductFactory.h"
 #include "dataaccess/impl/GdalVsiProcessor.h"
 #include "dataaccess/impl/GdalSlcReader.h"
+#include "dataaccess/impl/QsarIO.h"
 #include "dataaccess/ISarProduct.h"
 
 #include <gdal_priv.h>
@@ -110,10 +111,32 @@ void ApplicationController::wireConnections()
         QList<QgsMapLayer*> newLayers;
         QString groupName = mPendingGroupName;
 
+        // 展开 .qsar 产品文件
+        QStringList expandedFiles;
+        for (const QString& f : files) {
+            if (f.endsWith(".qsar", Qt::CaseInsensitive)) {
+                QsarProduct qsar = QsarIO::read(f);
+                if (!qsar.bands.isEmpty()) {
+                    // 设置分组名
+                    mPendingGroupName = qsar.productType + " " + qsar.sourceMaster;
+                    groupName = mPendingGroupName;
+                    QgsProject::instance()->layerTreeRoot()->addGroup(groupName);
+                    for (const auto& b : qsar.bands)
+                        expandedFiles.append(b.file);
+                    monitor->appendLog(
+                        QStringLiteral("加载QSAR产品: %1 (%2波段)")
+                            .arg(QFileInfo(f).fileName()).arg(qsar.bands.size()),
+                        "#4CAF50");
+                }
+            } else {
+                expandedFiles.append(f);
+            }
+        }
+
         struct VsiEntry { QString path; QString tmpPath; QString name; };
         QVector<VsiEntry> vsiEntries;
 
-        for (const QString& path : files) {
+        for (const QString& path : expandedFiles) {
             QFileInfo fi(path);
             QString name = fi.fileName();
             if (name.isEmpty() || path.startsWith("/vsi"))

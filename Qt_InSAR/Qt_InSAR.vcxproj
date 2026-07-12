@@ -119,6 +119,7 @@
     <ClCompile Include="dataaccess\impl\OrbitDataReader.cpp" />
     <ClCompile Include="dataaccess\impl\Sentinel1Product.cpp" />
     <ClCompile Include="dataaccess\impl\GdalVsiProcessor.cpp" />
+    <ClCompile Include="dataaccess\impl\QsarIO.cpp" />
     <!-- Service stubs -->
     <ClCompile Include="services\impl\RegistrationServiceImpl.cpp" />
     <ClCompile Include="services\impl\InterferogramServiceImpl.cpp" />
@@ -178,6 +179,8 @@
     <ClInclude Include="dataaccess\SarProductFactory.h" />
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h" />
     <ClInclude Include="dataaccess\impl\GdalVsiProcessor.h" />
+    <ClInclude Include="dataaccess\impl\QsarIO.h" />
+    <ClInclude Include="domain\QsarProduct.h" />
     <ClInclude Include="domain\SarProductType.h" />
     <ClInclude Include="domain\SarSensorInfo.h" />
     <ClInclude Include="domain\params\DeformationParams.h" />

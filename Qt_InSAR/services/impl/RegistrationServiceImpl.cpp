@@ -2,6 +2,8 @@
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/GdalSlcWriter.h"
 #include "dataaccess/SarProductFactory.h"
+#include "dataaccess/impl/QsarIO.h"
+#include "domain/QsarProduct.h"
 
 #include <gdal_priv.h>
 
@@ -11,6 +13,7 @@
 #include <QDir>
 #include <QScopedPointer>
 #include <QApplication>
+#include <QDateTime>
 #include <algorithm>
 #include <numeric>
 #include <cmath>
@@ -292,6 +295,42 @@ void RegistrationServiceImpl::execute() {
     }
 
     if (succeeded > 0) {
+        // 写出 .qsar 产品描述头文件
+        QsarProduct qsar;
+        qsar.productType = "RegisteredSLC";
+        qsar.created = QDateTime::currentDateTime().toString(Qt::ISODate);
+        qsar.sourceMaster = mParams.masterDisplayName;
+        qsar.sourceSlave = mParams.slaveDisplayName;
+        qsar.coarseMethod = mParams.coarseMethod;
+        qsar.resamplingMethod = mParams.resamplingMethod;
+        qsar.outputPrefix = mParams.outputPrefix;
+        qsar.baseline.perpendicular = 0;
+        qsar.baseline.temporal = 0;
+        QString qsarDir;
+        for (int i = 0; i < pairs.size(); ++i) {
+            QsarBand b;
+            b.subSwath = pairs[i].master.subSwath;
+            b.polarization = pairs[i].master.polarization;
+            b.width = pairs[i].master.rasterSize.width();
+            b.height = pairs[i].master.rasterSize.height();
+            QString pairName = QStringLiteral("%1of%2_%3_%4")
+                .arg(i + 1).arg(pairs.size())
+                .arg(b.subSwath).arg(b.polarization);
+            QString outPath;
+            if (mParams.outputDir.isEmpty())
+                outPath = QDir::tempPath() + "/" + mParams.outputPrefix + "_" + pairName + "_reg.tif";
+            else
+                outPath = mParams.outputDir + "/" + mParams.outputPrefix + "_" + pairName + "_reg.tif";
+            b.file = QFileInfo(outPath).fileName();
+            qsar.bands.append(b);
+            qsarDir = QFileInfo(outPath).absolutePath();
+        }
+        if (!qsarDir.isEmpty()) {
+            QString qsarPath = qsarDir + "/" + mParams.outputPrefix + ".qsar";
+            QsarIO::write(qsarPath, qsar);
+            lastOutput = qsarPath;
+        }
+
         emit progressChanged(100, QStringLiteral("配准完成 (%1/%2对)")
             .arg(succeeded).arg(pairs.size()));
         emit finished(true, lastOutput);

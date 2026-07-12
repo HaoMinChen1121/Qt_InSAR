@@ -123,7 +123,7 @@ void MainWindow::initLayerPanel()
     mLayerDock = new QDockWidget(QStringLiteral("图层"), this);
     mLayerDock->setObjectName("LayerDock");
     mLayerDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    mLayerDock->setMinimumWidth(300);
+    mLayerDock->setMinimumWidth(350);
     mLayerDock->resize(340, 600);
     mLayerPanel = new LayerPanel(mLayerDock);
     mLayerDock->setWidget(mLayerPanel);
@@ -256,6 +256,18 @@ void MainWindow::createCategoryFile(SARibbonCategory* page)
     connect(actAddRaster, &QAction::triggered, this, [this]() {
         if (mLayerPanel)
             mLayerPanel->onAddLayer();
+    });
+
+    QAction* actOpenQsar = createAction(QStringLiteral("打开QSAR\n产品"),
+                                         ":/icon/icon/presentationFile.svg", "actOpenQsar");
+    pnlGeneral->addLargeAction(actOpenQsar);
+    connect(actOpenQsar, &QAction::triggered, this, [this]() {
+        QString f = QFileDialog::getOpenFileName(this,
+            QStringLiteral("选择 QSAR 产品文件"),
+            QString(),
+            QStringLiteral("QSAR 产品 (*.qsar);;所有文件 (*.*)"));
+        if (!f.isEmpty() && mLayerPanel)
+            emit mLayerPanel->layerAddRequested({f});
     });
 
     QAction* actOpen = createAction(QStringLiteral("打开\n项目"), ":/icon/icon/folder-stats.svg", "actOpen");
