@@ -30,6 +30,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QDir>
+#include <QFileDialog>
 #include <QDebug>
 #include <QMessageBox>
 #include <QMenu>
@@ -344,30 +345,42 @@ IGeocodingService* ApplicationController::geocodingService() const
 QMenu* ApplicationController::buildSlcLayerMenu(bool isMaster)
 {
     QMenu* menu = new QMenu(mMainWindow);
-    if (mSlcRegistry.isEmpty()) {
-        QAction* act = menu->addAction(QStringLiteral("(无可用SLC图层)"));
-        act->setEnabled(false);
-        return menu;
-    }
 
-    for (auto it = mSlcRegistry.constBegin(); it != mSlcRegistry.constEnd(); ++it) {
-        const QString& layerId = it.key();
-        const SlcSourceInfo& info = it.value();
-        QString label = QStringLiteral("%1 [%2] %3×%4")
-            .arg(info.displayName)
-            .arg(info.slcImage.polarization)
-            .arg(info.slcImage.rasterSize.width())
-            .arg(info.slcImage.rasterSize.height());
+    // 始终显示打开文件选项
+    QAction* openAct = menu->addAction(QStringLiteral("📂 打开产品文件..."));
+    connect(openAct, &QAction::triggered, this, [this, isMaster]() {
+        QString path = QFileDialog::getOpenFileName(mMainWindow,
+            QStringLiteral("选择 Sentinel-1 产品"),
+            QString(),
+            QStringLiteral("Sentinel-1 产品 (*.zip *.SAFE);;"
+                           "所有文件 (*.*)"));
+        if (!path.isEmpty()) {
+            mPendingAutoSelect = isMaster;
+            onSarProductOpenRequested(path);
+        }
+    });
 
-        QAction* act = menu->addAction(label);
-        if (isMaster) {
-            connect(act, &QAction::triggered, this, [this, layerId]() {
-                onMasterImageSelected(layerId);
-            });
-        } else {
-            connect(act, &QAction::triggered, this, [this, layerId]() {
-                onSlaveImageSelected(layerId);
-            });
+    if (!mSlcRegistry.isEmpty()) {
+        menu->addSeparator();
+        for (auto it = mSlcRegistry.constBegin(); it != mSlcRegistry.constEnd(); ++it) {
+            const QString& layerId = it.key();
+            const SlcSourceInfo& info = it.value();
+            QString label = QStringLiteral("%1 [%2] %3×%4")
+                .arg(info.displayName)
+                .arg(info.slcImage.polarization)
+                .arg(info.slcImage.rasterSize.width())
+                .arg(info.slcImage.rasterSize.height());
+
+            QAction* act = menu->addAction(label);
+            if (isMaster) {
+                connect(act, &QAction::triggered, this, [this, layerId]() {
+                    onMasterImageSelected(layerId);
+                });
+            } else {
+                connect(act, &QAction::triggered, this, [this, layerId]() {
+                    onSlaveImageSelected(layerId);
+                });
+            }
         }
     }
 
@@ -672,6 +685,7 @@ void ApplicationController::rebuildCanvasLayers()
     // 在此处将 mPendingSlcRegistry 中的条目迁移到 mSlcRegistry
     if (!mPendingSlcRegistry.isEmpty()) {
         QMap<QString, QgsMapLayer*> layers = QgsProject::instance()->mapLayers();
+        QString firstNewId;
         for (auto it = layers.constBegin(); it != layers.constEnd(); ++it) {
             const QString& layerId = it.key();
             QgsMapLayer* layer = it.value();
@@ -679,10 +693,19 @@ void ApplicationController::rebuildCanvasLayers()
             QString bandPath = layer->customProperty("insar_band_path").toString();
             if (!bandPath.isEmpty() && mPendingSlcRegistry.contains(bandPath)) {
                 mSlcRegistry[layerId] = mPendingSlcRegistry.take(bandPath);
+                if (firstNewId.isEmpty()) firstNewId = layerId;
             }
         }
-        // 清理仍然未关联的临时条目 (可能加载失败)
         mPendingSlcRegistry.clear();
+
+        // 自动选择 (从"打开产品文件"菜单触发)
+        if (mPendingAutoSelect >= 0 && !firstNewId.isEmpty()) {
+            if (mPendingAutoSelect == 1)
+                onMasterImageSelected(firstNewId);
+            else
+                onSlaveImageSelected(firstNewId);
+            mPendingAutoSelect = -1;
+        }
     }
 
     // 更新主辅影像选择按钮的菜单

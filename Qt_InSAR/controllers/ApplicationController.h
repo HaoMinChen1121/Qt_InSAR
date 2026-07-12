@@ -92,6 +92,9 @@ private:
     // 当前正在加载的产品分组名
     QString mPendingGroupName;
 
+    // 待自动选择: -1=无, 0=辅影像, 1=主影像
+    int mPendingAutoSelect = -1;
+
     // 主/辅影像选择
     QString mSelectedMasterLayerId;
     QString mSelectedSlaveLayerId;
