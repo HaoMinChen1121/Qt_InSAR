@@ -24,9 +24,6 @@
 
 #include <qgsrasterlayer.h>
 #include <qgslayertree.h>
-#include <qgsrastershader.h>
-#include <qgssinglebandpseudocolorrenderer.h>
-#include <qgscolorrampshader.h>
 #include <qgslayertreegroup.h>
 
 #include <qgsproject.h>
@@ -46,45 +43,6 @@
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
 #include <algorithm>
-#include <cmath>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-static void applyPhaseColorRamp(QgsRasterLayer* layer)
-{
-    QList<QgsColorRampShader::ColorRampItem> items;
-    for (int i = 0; i <= 256; ++i) {
-        double v = -M_PI + 2.0 * M_PI * i / 256.0;
-        double h = (i % 256) / 256.0;
-        QColor c = QColor::fromHsvF(h, 0.8, 0.9);
-        items.append(QgsColorRampShader::ColorRampItem(v, c, QString::number(v, 'f', 2)));
-    }
-    auto* shader = new QgsColorRampShader(-M_PI, M_PI);
-    shader->setColorRampItemList(items);
-    shader->setColorRampType(QgsColorRampShader::Interpolated);
-    shader->classifyColorRamp();
-    auto* renderer = new QgsSingleBandPseudoColorRenderer(
-        layer->dataProvider(), 1, shader);
-    layer->setRenderer(renderer);
-}
-
-static void applyCoherenceColorRamp(QgsRasterLayer* layer)
-{
-    QList<QgsColorRampShader::ColorRampItem> items;
-    items.append(QgsColorRampShader::ColorRampItem(0.0, QColor(0,0,0), "0"));
-    items.append(QgsColorRampShader::ColorRampItem(0.3, QColor(200,0,0), "0.3"));
-    items.append(QgsColorRampShader::ColorRampItem(0.6, QColor(255,255,0), "0.6"));
-    items.append(QgsColorRampShader::ColorRampItem(1.0, QColor(255,255,255), "1"));
-    auto* shader = new QgsColorRampShader(0.0, 1.0);
-    shader->setColorRampItemList(items);
-    shader->setColorRampType(QgsColorRampShader::Interpolated);
-    shader->classifyColorRamp();
-    auto* renderer = new QgsSingleBandPseudoColorRenderer(
-        layer->dataProvider(), 1, shader);
-    layer->setRenderer(renderer);
-}
 
 ApplicationController::ApplicationController(MainWindow* mainWindow, QObject* parent)
     : QObject(parent), mMainWindow(mainWindow)
@@ -232,14 +190,6 @@ void ApplicationController::wireConnections()
                     newLayers.append(layer);
                     QString layerType = QStringLiteral("Raster");
                     // 自动彩色渲染: 相位用cyclic色带, 相干性用灰度
-                    // 自动彩色渲染
-                    if (name.contains("_phase")) {
-                        applyPhaseColorRamp(layer);
-                        layerType = QStringLiteral("相位");
-                    } else if (name.contains("_coh")) {
-                        applyCoherenceColorRamp(layer);
-                        layerType = QStringLiteral("相干性");
-                    }
                     layerPanel->onLayerLoaded(layer->id(), name,
                         layerType, groupName);
                 } else {
