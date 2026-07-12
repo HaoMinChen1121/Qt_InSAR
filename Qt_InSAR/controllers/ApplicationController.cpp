@@ -401,6 +401,7 @@ void ApplicationController::onMasterImageSelected(const QString& layerId)
     const SlcSourceInfo& info = mSlcRegistry[layerId];
 
     mMainWindow->regParams().masterPath = info.slcImage.filePath;
+    mMainWindow->regParams().masterDisplayName = info.displayName;
     mMainWindow->regParams().masterSlcBandPath = info.bandPath;
     mMainWindow->regParams().masterOrbitVectors = info.orbitVectors;
     mMainWindow->regParams().masterDoppler = info.doppler;
@@ -438,6 +439,7 @@ void ApplicationController::onSlaveImageSelected(const QString& layerId)
     const SlcSourceInfo& info = mSlcRegistry[layerId];
 
     mMainWindow->regParams().slavePath = info.slcImage.filePath;
+    mMainWindow->regParams().slaveDisplayName = info.displayName;
     mMainWindow->regParams().slaveSlcBandPath = info.bandPath;
     mMainWindow->regParams().slaveOrbitVectors = info.orbitVectors;
     mMainWindow->regParams().slaveDoppler = info.doppler;
@@ -600,8 +602,12 @@ void ApplicationController::onSarProductOpenRequested(const QString& path)
             srcInfo.productPath = productPath;
             srcInfo.bandPath = b.rasterPath;
             srcInfo.bandIndex = b.index;
-            srcInfo.displayName = QStringLiteral("%1_%2")
-                .arg(b.subSwath).arg(b.polarization);
+            QString shortDate = sensorInfo.acquisitionStart.toString("MMdd");
+            srcInfo.displayName = QStringLiteral("%1_%2_%3_%4")
+                .arg(sensorInfo.missionId.isEmpty() ? sensorInfo.sensorType : sensorInfo.missionId)
+                .arg(shortDate)
+                .arg(b.subSwath)
+                .arg(b.polarization);
             srcInfo.sensorInfo = sensorInfo;
             srcInfo.orbitVectors = orbitVectors;
             srcInfo.doppler = doppler;

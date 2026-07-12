@@ -157,19 +157,17 @@ void RegistrationDialog::setParams(const RegistrationParams& p)
     mSlavePath->setText(p.slavePath);
 
     // 更新元数据标签
-    auto metaText = [](const QString& path) -> QString {
-        if (path.isEmpty()) return QStringLiteral("未加载");
-        QFileInfo fi(path);
-        return fi.fileName();
+    auto metaText = [&p](bool isMaster) -> QString {
+        const QString& displayName = isMaster ? p.masterDisplayName : p.slaveDisplayName;
+        const QString& slcPath = isMaster ? p.masterSlcBandPath : p.slaveSlcBandPath;
+        const auto& orbits = isMaster ? p.masterOrbitVectors : p.slaveOrbitVectors;
+        if (slcPath.isEmpty()) return QStringLiteral("未加载");
+        return QStringLiteral("%1 (轨道点:%2)")
+            .arg(displayName.isEmpty() ? QStringLiteral("已选择") : displayName)
+            .arg(orbits.size());
     };
-    mMasterMeta->setText(
-        p.masterPath.isEmpty()
-            ? QStringLiteral("未加载")
-            : QStringLiteral("已选择: %1").arg(metaText(p.masterPath)));
-    mSlaveMeta->setText(
-        p.slavePath.isEmpty()
-            ? QStringLiteral("未加载")
-            : QStringLiteral("已选择: %1").arg(metaText(p.slavePath)));
+    mMasterMeta->setText(metaText(true));
+    mSlaveMeta->setText(metaText(false));
 
     int idx = mCoarseMethod->findData(p.coarseMethod);
     if (idx >= 0) mCoarseMethod->setCurrentIndex(idx);

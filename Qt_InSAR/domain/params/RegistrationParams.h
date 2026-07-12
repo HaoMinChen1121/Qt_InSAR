@@ -12,6 +12,10 @@ struct RegistrationParams
     QString   masterPath;
     QString   slavePath;
 
+    // 输入 — 显示名称
+    QString   masterDisplayName;
+    QString   slaveDisplayName;
+
     // 输入 — SLC 原始复数波段路径（用于读复数数据进行配准）
     QString   masterSlcBandPath;
     QString   slaveSlcBandPath;
