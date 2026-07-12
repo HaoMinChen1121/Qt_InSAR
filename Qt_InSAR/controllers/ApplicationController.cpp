@@ -19,6 +19,8 @@
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/ISarProduct.h"
 
+#include <gdal_priv.h>
+
 #include <qgsrasterlayer.h>
 #include <qgslayertree.h>
 #include <qgslayertreegroup.h>
@@ -117,7 +119,19 @@ void ApplicationController::wireConnections()
             if (name.isEmpty() || path.startsWith("/vsi"))
                 name = path.section('/', -1);
 
-            if (path.startsWith("/vsi")) {
+            // 检测复数数据 — 复数 TIFF 需先转幅度才能渲染
+            bool isComplex = false;
+            {
+                GDALDatasetH hDS = GDALOpen(path.toUtf8().constData(), GA_ReadOnly);
+                if (hDS) {
+                    GDALDataType dt = GDALGetRasterDataType(GDALGetRasterBand(hDS, 1));
+                    isComplex = (dt == GDT_CFloat32 || dt == GDT_CFloat64
+                              || dt == GDT_CInt16  || dt == GDT_CInt32);
+                    GDALClose(hDS);
+                }
+            }
+
+            if (path.startsWith("/vsi") || isComplex) {
                 QString basePath = QDir::tempPath() + "/insar_" + fi.completeBaseName();
                 vsiEntries.append({path, basePath, name});
             } else {
