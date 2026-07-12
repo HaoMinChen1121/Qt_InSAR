@@ -506,6 +506,26 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
         mSensorInfo.incidenceAngleFar   = inc + 5.0;
     }
 
+    // ── Burst 边界 (TOPSAR ESD 所需) ──
+    nl = root.elementsByTagName("linesPerBurst");
+    if (!nl.isEmpty())
+        mParsedLinesPerBurst = nl.at(0).toElement().text().toInt();
+    nl = root.elementsByTagName("samplesPerBurst");
+    if (!nl.isEmpty())
+        mParsedRangeSamples = nl.at(0).toElement().text().toInt();
+    mParsedBurstStarts.clear();
+
+    // 查找 burstList
+    QDomNodeList blList = root.elementsByTagName("burstList");
+    if (!blList.isEmpty()) {
+        QDomNodeList bursts = blList.at(0).toElement().elementsByTagName("burst");
+        for (int i = 0; i < bursts.size(); ++i) {
+            QDomElement be = bursts.at(i).toElement();
+            int firstLine = be.firstChildElement("firstLine").text().toInt();
+            mParsedBurstStarts.append(firstLine);
+        }
+    }
+
     // 采样数 (SLC: samplesPerBurst/linesPerBurst; GRD: numberOfSamples/numberOfLines)
     nl = root.elementsByTagName("samplesPerBurst");
     if (!nl.isEmpty())
@@ -586,6 +606,11 @@ void Sentinel1Product::discoverMeasurementFiles(const QString& measurementDir) {
             else if (l.contains("-hh"))   b.polarization = "HH";
             else if (l.contains("-hv"))   b.polarization = "HV";
         }
+
+        // 传入 burst 信息
+        b.linesPerBurst = mParsedLinesPerBurst;
+        b.burstCount = mParsedBurstStarts.size();
+        b.burstStartLines = mParsedBurstStarts;
 
         mBands.append(b);
     }

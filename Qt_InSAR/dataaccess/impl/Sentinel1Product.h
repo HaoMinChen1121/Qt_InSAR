@@ -79,6 +79,11 @@ private:
     QStringList mPolarizations;
     int mOrbitNumberAbs = 0;
     int mOrbitNumberRel = 0;
+
+    // Burst 解析暂存 (每次 parseAnnotation 更新，供 discoverMeasurementFiles 使用)
+    int mParsedLinesPerBurst = 0;
+    int mParsedRangeSamples = 0;
+    QVector<int> mParsedBurstStarts;
 };
 
 #endif // SENTINEL1PRODUCT_H

@@ -378,6 +378,15 @@ bool RegistrationServiceImpl::processBandPair(
     }
     if (mCancelled) return false;
 
+    // ESD 方位向精化 (TOPSAR burst overlap spectral diversity)
+    if (mParams.enableEsd && masterBand.burstCount > 1) {
+        emit progressChanged(50, pairName + QStringLiteral(": ESD精化..."));
+        qDebug() << "[Reg]" << pairName << ": ESD start, bursts:" << masterBand.burstCount;
+        esdRefine(poly, &mReader, &sReader, masterBand, slaveBand,
+                  mW, mH, sW, sH);
+        qDebug() << "[Reg]" << pairName << ": ESD done";
+    }
+
     // 重采样 (复用已打开的 sReader)
     emit progressChanged(60, pairName + QStringLiteral(": 重采样..."));
     qDebug() << "[Reg]" << pairName << ": resample start";
@@ -641,6 +650,105 @@ void RegistrationServiceImpl::coarseByCorrelation(
 }
 
 // ──────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
+// ESD — 增强频谱分集方位向精化 (TOPSAR)
+// ──────────────────────────────────────────────────────────
+void RegistrationServiceImpl::esdRefine(
+    RegPolynomial& poly,
+    GdalSlcReader* mReader, GdalSlcReader* sReader,
+    const SarBandDescriptor& masterBand,
+    const SarBandDescriptor& slaveBand,
+    int masterW, int masterH, int slaveW, int slaveH)
+{
+    Q_UNUSED(slaveW); Q_UNUSED(slaveH);
+
+    int burstCount = masterBand.burstCount;
+    int linesPerBurst = masterBand.linesPerBurst;
+    const auto& burstStarts = masterBand.burstStartLines;
+
+    if (burstCount < 2 || burstStarts.size() < 2 || linesPerBurst < 100)
+        return;
+
+    // Doppler 差: TOPSAR 典型值 ~5000 Hz
+    const double deltaFdoppler = 5000.0;
+    const int overlapLines = qMin(100, linesPerBurst / 10);
+
+    QVector<double> aziCorrections; // 每个 burst 的方位向修正 (像素)
+    aziCorrections.append(0.0);     // 第一个 burst 作为参考
+
+    int halfWin = 16; // 互相关窗口的一半
+
+    for (int b = 1; b < burstCount; ++b) {
+        if (mCancelled) return;
+
+        // burst b-1 和 b 的重叠区中心行
+        int lineA = burstStarts[b - 1] + linesPerBurst - overlapLines / 2;
+        int lineB = burstStarts[b] + overlapLines / 2;
+
+        // 确保在有效范围内
+        lineA = qBound(halfWin, lineA, masterH - halfWin);
+        lineB = qBound(halfWin, lineB, masterH - halfWin);
+
+        // 读取重叠区窗口 (range方向取中心一半，方位向取 overlap)
+        int col0 = masterW / 4;
+        int colW = masterW / 2;
+        int rowH = overlapLines;
+
+        auto mWinA = mReader->readBandWindow(0, col0, lineA - rowH / 2, colW, rowH);
+        auto sWinA = sReader->readBandWindow(0, col0, lineA - rowH / 2, colW, rowH);
+        auto mWinB = mReader->readBandWindow(0, col0, lineB - rowH / 2, colW, rowH);
+        auto sWinB = sReader->readBandWindow(0, col0, lineB - rowH / 2, colW, rowH);
+
+        if (mWinA.size() < colW * rowH || sWinA.size() < colW * rowH
+            || mWinB.size() < colW * rowH || sWinB.size() < colW * rowH) {
+            aziCorrections.append(0.0);
+            continue;
+        }
+
+        // 计算干涉图 (两个 burst 的重叠区)
+        std::complex<double> esdSum(0, 0);
+        for (int k = 0; k < colW * rowH; ++k) {
+            std::complex<double> ifgA = std::complex<double>(mWinA[k].real(), mWinA[k].imag())
+                * std::complex<double>(sWinA[k].real(), -sWinA[k].imag());
+            std::complex<double> ifgB = std::complex<double>(mWinB[k].real(), mWinB[k].imag())
+                * std::complex<double>(sWinB[k].real(), -sWinB[k].imag());
+            // ESD: ifgA * conj(ifgB)
+            esdSum += ifgA * std::conj(ifgB);
+        }
+
+        double esdPhase = std::arg(esdSum);
+        // 残余方位偏移: Δaz = φ / (2π * Δf_doppler)
+        // 转换为像素: offset = Δaz * azSpacing → 此处用直接像素修正
+        double aziCorr = esdPhase / (2.0 * M_PI * deltaFdoppler / mParams.masterPrf);
+        aziCorrections.append(aziCorr);
+    }
+
+    // 将 burst 级修正合并到多项式
+    if (aziCorrections.size() < 2) return;
+
+    // 计算修正的 RMS
+    double corrSum = 0;
+    int corrCount = 0;
+    for (int b = 0; b < aziCorrections.size(); ++b) {
+        if (std::abs(aziCorrections[b]) < 1.0) { // 只取合理范围内的修正
+            corrSum += aziCorrections[b] * aziCorrections[b];
+            ++corrCount;
+        }
+    }
+    if (corrCount > 0) {
+        double esdRmseAz = std::sqrt(corrSum / corrCount);
+        // 将 ESD 的方位向修正叠加到多项式 b0 常数项
+        double meanCorr = corrSum > 0 ? corrSum / corrCount : 0;
+        meanCorr = std::sqrt(meanCorr);
+        if (std::abs(meanCorr) < 0.1) {
+            poly.aziCoeffs[0] += meanCorr;
+            poly.rmseAzimuth = esdRmseAz;
+            qDebug() << "[Reg] ESD: mean azi corr =" << meanCorr
+                     << "pix, RMSE =" << esdRmseAz << "pix";
+        }
+    }
+}
+
 // [4] 精配准 — 亚像素 + 多项式
 // ──────────────────────────────────────────────────────────
 

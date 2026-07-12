@@ -19,6 +19,11 @@ struct SarBandDescriptor {
     QSize   rasterSize;           // 像素尺寸 (cols × rows)
     QString dataType;             // GDAL 数据类型名称
     bool    isComplex = false;    // 复数数据
+
+    // TOPSAR burst 信息 (Sentinel-1 IW)
+    int     linesPerBurst = 0;    // 每个 burst 方位向行数
+    int     burstCount = 0;       // burst 数 (通常 9)
+    QVector<int> burstStartLines; // 每个 burst 在整体影像中的起行号
 };
 
 class ISarProduct {

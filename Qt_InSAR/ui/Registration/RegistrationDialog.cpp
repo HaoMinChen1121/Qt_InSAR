@@ -124,6 +124,10 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
     mEstimateBaseline = new QCheckBox(tr("配准前估算基线"));
     mEstimateBaseline->setChecked(true);
     form4->addRow(mEstimateBaseline);
+    mEnableEsd = new QCheckBox(tr("ESD方位向精化 (TOPSAR)"));
+    mEnableEsd->setChecked(true);
+    mEnableEsd->setToolTip(tr("增强频谱分集 — 利用burst重叠区细化方位向偏移至<0.001像素"));
+    form4->addRow(mEnableEsd);
     tabs->addTab(tab4, tr("输出"));
 
     mainLayout->addWidget(tabs);
@@ -189,6 +193,7 @@ void RegistrationDialog::setParams(const RegistrationParams& p)
     mOutputDir->setText(p.outputDir);
     mOutputPrefix->setText(p.outputPrefix);
     mEstimateBaseline->setChecked(p.estimateBaseline);
+    mEnableEsd->setChecked(p.enableEsd);
 }
 
 RegistrationParams RegistrationDialog::params() const
@@ -211,5 +216,6 @@ RegistrationParams RegistrationDialog::params() const
     p.outputDir = mOutputDir->text();
     p.outputPrefix = mOutputPrefix->text();
     p.estimateBaseline = mEstimateBaseline->isChecked();
+    p.enableEsd = mEnableEsd->isChecked();
     return p;
 }

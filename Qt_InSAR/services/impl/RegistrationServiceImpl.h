@@ -75,6 +75,13 @@ private:
         const QString& interpMethod, int sincWindow, double sincBeta,
         const QString& outputPath);
 
+    // ── ESD 方位向精化 ──
+    void esdRefine(RegPolynomial& poly,
+        GdalSlcReader* mReader, GdalSlcReader* sReader,
+        const SarBandDescriptor& masterBand,
+        const SarBandDescriptor& slaveBand,
+        int masterW, int masterH, int slaveW, int slaveH);
+
     // ── 波段对配准 ──
     bool processBandPair(
         const SarBandDescriptor& masterBand,

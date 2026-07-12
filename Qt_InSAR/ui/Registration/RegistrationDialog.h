@@ -49,6 +49,7 @@ private:
     QLineEdit* mOutputDir;
     QLineEdit* mOutputPrefix;
     QCheckBox* mEstimateBaseline;
+    QCheckBox* mEnableEsd;
 };
 
 #endif // REGISTRATIONDIALOG_H

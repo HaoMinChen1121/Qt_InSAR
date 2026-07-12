@@ -45,6 +45,7 @@ struct RegistrationParams
     QString   outputDir;
     QString   outputPrefix = "registered";
     bool      estimateBaseline = true;
+    bool      enableEsd = true;      // TOPSAR ESD 方位向精化
 
     // ── 兼容旧UI路径字段 ──
     QString   masterPath;   // 用于对话框显示
