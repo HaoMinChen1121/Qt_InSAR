@@ -3,6 +3,8 @@
 #include "dataaccess/impl/GdalSlcWriter.h"
 #include "dataaccess/SarProductFactory.h"
 
+#include <gdal_priv.h>
+
 #include <QtMath>
 #include <QDebug>
 #include <QFileInfo>
@@ -211,6 +213,9 @@ void RegistrationServiceImpl::execute() {
     mRunning = true;
     mCancelled = false;
     mCorrelation = 0.0;
+
+    // 在 WorkerManager 子线程中重新初始化 GDAL 驱动
+    GDALAllRegister();
 
     QString mProd = mParams.masterProductPath;
     QString sProd = mParams.slaveProductPath;
