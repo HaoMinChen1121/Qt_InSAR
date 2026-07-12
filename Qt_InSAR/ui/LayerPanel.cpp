@@ -276,7 +276,7 @@ void LayerPanel::onLayerLoaded(const QString& id, const QString& name,
         mTree->insertTopLevelItem(0, item);
     } else {
         QTreeWidgetItem* group = ensureGroup(groupName);
-        group->insertChild(0, item);
+        group->addChild(item);  // 加到底部，与QGIS图层树顺序一致
 
         connect(mTree, &QTreeWidget::itemChanged, this,
             [this, group](QTreeWidgetItem* changed, int col) {
