@@ -189,8 +189,7 @@ bool InterferogramServiceImpl::stageInterferogram(
 
     QVector<std::complex<float>> output(outW * outH);
     QVector<float> coherence(outW * outH);
-
-    int cohWindow = 5; // 相干性计算窗口
+    int cohWindow = 5;
 
     for (int row = 0; row < outH; ++row) {
         if (mCancelled) return false;
@@ -198,12 +197,10 @@ bool InterferogramServiceImpl::stageInterferogram(
         int readH = azLooks + cohWindow * 2;
         int row0 = srcRow - cohWindow;
 
-        // 读窗口 (允许边界裁剪)
         auto mData = mReader.readBandWindow(0, 0, row0, width, readH);
         auto sData = sReader.readBandWindow(0, 0, row0, width, readH);
         int actualH = std::min(mData.size() / width, sData.size() / width);
         if (actualH == 0) {
-            // 填充零
             for (int col = 0; col < outW; ++col) {
                 output[row * outW + col] = std::complex<float>(0, 0);
                 coherence[row * outW + col] = 0.0f;
@@ -211,13 +208,11 @@ bool InterferogramServiceImpl::stageInterferogram(
             continue;
         }
 
-        // mData 中当前处理行的 offset (相对于读取窗口)
         int rowOff = cohWindow + (row0 < 0 ? row0 : 0);
 
         for (int col = 0; col < outW; ++col) {
             int srcCol = col * rgLooks;
 
-            // 多视平均
             std::complex<double> mAvg(0, 0), sAvg(0, 0);
             for (int ar = 0; ar < azLooks; ++ar) {
                 for (int ac = 0; ac < rgLooks; ++ac) {
@@ -232,11 +227,9 @@ bool InterferogramServiceImpl::stageInterferogram(
             mAvg /= nPix;
             sAvg /= nPix;
 
-            // 干涉图
             std::complex<double> ifg = mAvg * std::conj(sAvg);
             output[row * outW + col] = std::complex<float>(ifg.real(), ifg.imag());
 
-            // 相干性
             std::complex<double> crossSum(0, 0);
             double magM = 0, magS = 0;
             for (int wr = -cohWindow/2; wr <= cohWindow/2; ++wr) {
@@ -258,9 +251,7 @@ bool InterferogramServiceImpl::stageInterferogram(
         }
     }
 
-    // 确保输出目录存在
     QDir().mkpath(QFileInfo(outPath).absolutePath());
-
     GdalInterferogramWriter writer;
     if (!writer.create(outPath, outW, outH, true)) {
         qWarning() << "[Ifg] writer.create failed:" << outPath;
@@ -269,7 +260,6 @@ bool InterferogramServiceImpl::stageInterferogram(
     writer.writeComplex(output);
     writer.writeCoherence(coherence);
 
-    // 计算相位 (rad)
     QVector<float> phase(outW * outH);
     for (int i = 0; i < outW * outH; ++i)
         phase[i] = std::atan2(output[i].imag(), output[i].real());
