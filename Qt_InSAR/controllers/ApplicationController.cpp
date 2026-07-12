@@ -534,7 +534,6 @@ void ApplicationController::rebuildCanvasLayers()
             if (layer) visible.append(layer);
         }
     }
-    std::reverse(visible.begin(), visible.end());
     canvas->setLayers(visible);
     canvas->refresh();
 
