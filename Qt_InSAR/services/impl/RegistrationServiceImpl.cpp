@@ -380,8 +380,11 @@ bool RegistrationServiceImpl::processBandPair(
     // 重采样 (复用已打开的 sReader)
     emit progressChanged(60, pairName + QStringLiteral(": 重采样..."));
     qDebug() << "[Reg]" << pairName << ": resample start";
+    if (outputDir.isEmpty()) {
+        qWarning() << "[Reg] outputDir not set, using temp path";
+    }
     QString outPath = outputDir.isEmpty()
-        ? QFileInfo(mPath).absolutePath() + "/" + prefix + "_" + pairName + "_reg.tif"
+        ? QDir::tempPath() + "/" + prefix + "_" + pairName + "_reg.tif"
         : outputDir + "/" + prefix + "_" + pairName + "_reg.tif";
 
     GdalSlcWriter writer;
