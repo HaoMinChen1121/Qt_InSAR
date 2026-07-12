@@ -24,6 +24,9 @@
 
 #include <qgsrasterlayer.h>
 #include <qgslayertree.h>
+#include <qgsrastershader.h>
+#include <qgssinglebandpseudocolorrenderer.h>
+#include <qgscolorrampshader.h>
 #include <qgslayertreegroup.h>
 
 #include <qgsproject.h>
@@ -188,8 +191,41 @@ void ApplicationController::wireConnections()
                         QgsProject::instance()->addMapLayer(layer);
                     }
                     newLayers.append(layer);
+                    QString layerType = QStringLiteral("Raster");
+                    // 自动彩色渲染: 相位用cyclic色带, 相干性用灰度
+                    if (name.contains("_phase")) {
+                        QgsColorRampShader::ColorRampItemList items;
+                        for (int i = 0; i <= 256; ++i) {
+                            double v = -M_PI + 2.0 * M_PI * i / 256.0;
+                            double h = (i % 256) / 256.0;
+                            QColor c = QColor::fromHsvF(h, 0.8, 0.9);
+                            items << QgsColorRampShader::ColorRampItem(v, c, QString::number(v, 'f', 2));
+                        }
+                        auto* shader = new QgsColorRampShader(-M_PI, M_PI);
+                        shader->setColorRampItemList(items);
+                        shader->setColorRampType(QgsColorRampShader::Interpolated);
+                        shader->classifyColorRamp();
+                        auto* renderer = new QgsSingleBandPseudoColorRenderer(
+                            layer->dataProvider(), 1, shader);
+                        layer->setRenderer(renderer);
+                        layerType = QStringLiteral("相位");
+                    } else if (name.contains("_coh")) {
+                        QgsColorRampShader::ColorRampItemList items;
+                        items << QgsColorRampShader::ColorRampItem(0.0, QColor(0,0,0), "0");
+                        items << QgsColorRampShader::ColorRampItem(0.3, QColor(200,0,0), "0.3");
+                        items << QgsColorRampShader::ColorRampItem(0.6, QColor(255,255,0), "0.6");
+                        items << QgsColorRampShader::ColorRampItem(1.0, QColor(255,255,255), "1");
+                        auto* shader = new QgsColorRampShader(0.0, 1.0);
+                        shader->setColorRampItemList(items);
+                        shader->setColorRampType(QgsColorRampShader::Interpolated);
+                        shader->classifyColorRamp();
+                        auto* renderer = new QgsSingleBandPseudoColorRenderer(
+                            layer->dataProvider(), 1, shader);
+                        layer->setRenderer(renderer);
+                        layerType = QStringLiteral("相干性");
+                    }
                     layerPanel->onLayerLoaded(layer->id(), name,
-                        QStringLiteral("Raster"), groupName);
+                        layerType, groupName);
                 } else {
                     layerPanel->onLayerError(QStringLiteral("无法加载: %1").arg(name));
                     delete layer;
@@ -248,8 +284,11 @@ void ApplicationController::wireConnections()
                         QgsProject::instance()->layerTreeRoot()->addLayer(layer);
                     }
                     newLayers.append(layer);
+                    QString lt2 = QStringLiteral("Raster");
+                    if (names[i].contains("_phase")) lt2 = QStringLiteral("相位");
+                    else if (names[i].contains("_coh")) lt2 = QStringLiteral("相干性");
                     layerPanel->onLayerLoaded(layer->id(), names[i],
-                        QStringLiteral("Raster"), groupName);
+                        lt2, groupName);
                     qDebug() << "[InSAR] Layer loaded:" << names[i];
                 } else {
                     layerPanel->onLayerError(QStringLiteral("无法加载: %1").arg(names[i]));
