@@ -188,18 +188,31 @@ bool InterferogramServiceImpl::stageInterferogram(
     int realH = mReader.height();
     int outW = realW / rgLooks;
     int outH = realH / azLooks;
-    qDebug() << "[Ifg-CK2] outW=" << outW << "outH=" << outH;
-    if (outW < 1 || outH < 1) { qDebug() << "[Ifg-CK2] FAIL dims"; return false; }
-    qDebug() << "[Ifg-CK3] allocating" << outW << "x" << outH;
+    if (outW < 1 || outH < 1) return false;
 
-    QVector<std::complex<float>> output(outW * outH);
-    QVector<float> coherence(outW * outH);
-    qDebug() << "[Ifg] allocated, entering loop";
+    // 先创建输出文件
+    QDir().mkpath(QFileInfo(outPath).absolutePath());
+    GdalInterferogramWriter writer;
+    if (!writer.create(outPath, outW, outH, true)) {
+        qWarning() << "[Ifg] writer.create failed:" << outPath;
+        return false;
+    }
+    writer.close(); // 先关闭，后续用 GDAL 直接写入
 
+    // 用 GDAL 直接逐行写入（避免 2GB 全图缓冲）
+    GDALDatasetH hDS = GDALOpen(outPath.toUtf8().constData(), GA_Update);
+    if (!hDS) { qWarning() << "[Ifg] cannot reopen for update"; return false; }
+    GDALRasterBandH bandComplex = GDALGetRasterBand(hDS, 1);
+    GDALRasterBandH bandPhase    = GDALGetRasterBand(hDS, 2);
+    GDALRasterBandH bandCoh      = GDALGetRasterBand(hDS, 3);
+
+    QVector<std::complex<float>> rowComplex(outW);
+    QVector<float> rowPhase(outW);
+    QVector<float> rowCoh(outW);
     int cohWindow = 5;
 
     for (int row = 0; row < outH; ++row) {
-        if (mCancelled) return false;
+        if (mCancelled) { GDALClose(hDS); return false; }
         int srcRow = row * azLooks;
         int readH = azLooks + cohWindow * 2;
         int row0 = srcRow - cohWindow;
@@ -208,10 +221,11 @@ bool InterferogramServiceImpl::stageInterferogram(
         auto sData = sReader.readBandWindow(0, 0, row0, realW, readH);
         int actualH = std::min(mData.size() / realW, sData.size() / realW);
         if (actualH == 0) {
-            for (int col = 0; col < outW; ++col) {
-                output[row * outW + col] = std::complex<float>(0, 0);
-                coherence[row * outW + col] = 0.0f;
-            }
+            rowComplex.fill(std::complex<float>(0,0));
+            rowPhase.fill(0); rowCoh.fill(0);
+            GDALRasterIO(bandComplex, GF_Write, 0, row, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
+            GDALRasterIO(bandPhase,    GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32, 0, 0);
+            GDALRasterIO(bandCoh,      GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32, 0, 0);
             continue;
         }
 
@@ -235,7 +249,8 @@ bool InterferogramServiceImpl::stageInterferogram(
             sAvg /= nPix;
 
             std::complex<double> ifg = mAvg * std::conj(sAvg);
-            output[row * outW + col] = std::complex<float>(ifg.real(), ifg.imag());
+            rowComplex[col] = std::complex<float>(ifg.real(), ifg.imag());
+            rowPhase[col] = std::atan2(ifg.imag(), ifg.real());
 
             std::complex<double> crossSum(0, 0);
             double magM = 0, magS = 0;
@@ -254,37 +269,15 @@ bool InterferogramServiceImpl::stageInterferogram(
                 }
             }
             double denom = std::sqrt(std::max(1e-15, magM * magS));
-            coherence[row * outW + col] = static_cast<float>(std::abs(crossSum) / denom);
+            rowCoh[col] = static_cast<float>(std::abs(crossSum) / denom);
         }
+
+        GDALRasterIO(bandComplex, GF_Write, 0, row, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
+        GDALRasterIO(bandPhase,    GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
+        GDALRasterIO(bandCoh,      GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
     }
 
-    QDir().mkpath(QFileInfo(outPath).absolutePath());
-    GdalInterferogramWriter writer;
-    if (!writer.create(outPath, outW, outH, true)) {
-        qWarning() << "[Ifg] writer.create failed:" << outPath;
-        return false;
-    }
-    qDebug() << "[Ifg] writer created OK, writing complex...";
-
-    if (!writer.writeComplex(output)) {
-        qWarning() << "[Ifg] writeComplex failed";
-        return false;
-    }
-    qDebug() << "[Ifg] complex written, writing coherence...";
-    if (!writer.writeCoherence(coherence)) {
-        qWarning() << "[Ifg] writeCoherence failed";
-        return false;
-    }
-
-    qDebug() << "[Ifg] coherence written, computing phase...";
-    QVector<float> phase(outW * outH);
-    for (int i = 0; i < outW * outH; ++i)
-        phase[i] = std::atan2(output[i].imag(), output[i].real());
-    if (!writer.writePhase(phase)) {
-        qWarning() << "[Ifg] writePhase failed";
-        return false;
-    }
-
+    GDALClose(hDS);
     qDebug() << "[Ifg] stageInterferogram SUCCESS";
     return true;
 }
