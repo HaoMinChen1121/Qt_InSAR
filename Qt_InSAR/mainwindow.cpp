@@ -35,6 +35,8 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QCheckBox>
+#include <QFormLayout>
+#include <QPushButton>
 #include <QGridLayout>
 #include <QVBoxLayout>
 
@@ -292,10 +294,10 @@ void MainWindow::createRightButtonGroup()
 // ========================================================================
 void MainWindow::createCategoryRegistration(SARibbonCategory* page)
 {
-    // ── Panel 1: 主辅影像 ──
-    SARibbonPanel* pnlIO = page->addPanel(QStringLiteral("主辅影像"));
+    // ── Panel 1: 影像选择 (宽, 2个大按钮并排) ──
+    SARibbonPanel* pnlIO = page->addPanel(QStringLiteral("影像选择"));
 
-    QAction* actMaster = createAction(QStringLiteral("主影像"),
+    QAction* actMaster = createAction(QStringLiteral("主影像\n(点击选择)"),
                                        ":/icon/icon/save.svg", "actMaster");
     pnlIO->addLargeAction(actMaster);
     connect(actMaster, &QAction::triggered, this, [this]() {
@@ -311,12 +313,12 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
         menu->deleteLater();
     });
 
-    mLblMasterInfo = new QLabel(QStringLiteral("未选择"), this);
+    mLblMasterInfo = new QLabel(QStringLiteral("主: 未选择"), this);
     mLblMasterInfo->setWordWrap(true);
-    mLblMasterInfo->setMaximumHeight(28);
+    mLblMasterInfo->setMaximumHeight(20);
     pnlIO->addSmallWidget(mLblMasterInfo);
 
-    QAction* actSlave = createAction(QStringLiteral("辅影像"),
+    QAction* actSlave = createAction(QStringLiteral("辅影像\n(点击选择)"),
                                       ":/icon/icon/Align-Left.svg", "actSlave");
     pnlIO->addLargeAction(actSlave);
     connect(actSlave, &QAction::triggered, this, [this]() {
@@ -332,63 +334,73 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
         menu->deleteLater();
     });
 
-    mLblSlaveInfo = new QLabel(QStringLiteral("未选择"), this);
+    mLblSlaveInfo = new QLabel(QStringLiteral("辅: 未选择"), this);
     mLblSlaveInfo->setWordWrap(true);
-    mLblSlaveInfo->setMaximumHeight(28);
+    mLblSlaveInfo->setMaximumHeight(20);
     pnlIO->addSmallWidget(mLblSlaveInfo);
 
-    // ── Panel 2: 配准方法 ──
-    SARibbonPanel* pnlMethod = page->addPanel(QStringLiteral("配准方法"));
+    // ── Panel 2: 配准参数 (表单布局, 宽) ──
+    SARibbonPanel* pnlMethod = page->addPanel(QStringLiteral("配准参数"));
+
+    QWidget* paramContainer = new QWidget(this);
+    QFormLayout* paramForm = new QFormLayout(paramContainer);
+    paramForm->setContentsMargins(6, 2, 6, 2);
+    paramForm->setVerticalSpacing(3);
+    paramForm->setHorizontalSpacing(6);
 
     mCoarseMethodCombo = new QComboBox(this);
     mCoarseMethodCombo->addItem(QStringLiteral("轨道法"), "Orbit");
     mCoarseMethodCombo->addItem(QStringLiteral("互相关"), "CrossCorrelation");
-    pnlMethod->addSmallWidget(mCoarseMethodCombo);
+    paramForm->addRow(QStringLiteral("粗配准:"), mCoarseMethodCombo);
 
     mFineMethodCombo = new QComboBox(this);
     mFineMethodCombo->addItem(QStringLiteral("亚像素"), "SubPixel");
     mFineMethodCombo->addItem(QStringLiteral("过采样"), "Oversample");
-    pnlMethod->addSmallWidget(mFineMethodCombo);
+    paramForm->addRow(QStringLiteral("精配准:"), mFineMethodCombo);
 
     mGcpSpin = new QSpinBox(this);
     mGcpSpin->setRange(16, 1024);
     mGcpSpin->setValue(64);
-    mGcpSpin->setPrefix(QStringLiteral("GCPs: "));
-    pnlMethod->addSmallWidget(mGcpSpin);
+    paramForm->addRow(QStringLiteral("GCP数:"), mGcpSpin);
 
     mSearchWinSpin = new QSpinBox(this);
     mSearchWinSpin->setRange(8, 256);
     mSearchWinSpin->setValue(64);
-    mSearchWinSpin->setPrefix(QStringLiteral("搜索窗: "));
-    pnlMethod->addSmallWidget(mSearchWinSpin);
+    paramForm->addRow(QStringLiteral("搜索窗:"), mSearchWinSpin);
 
     mCorrThreshSpin = new QDoubleSpinBox(this);
     mCorrThreshSpin->setRange(0.05, 1.0);
     mCorrThreshSpin->setSingleStep(0.05);
     mCorrThreshSpin->setValue(0.3);
-    mCorrThreshSpin->setPrefix(QStringLiteral("阈值: "));
-    pnlMethod->addSmallWidget(mCorrThreshSpin);
+    paramForm->addRow(QStringLiteral("相关阈值:"), mCorrThreshSpin);
 
-    // ── Panel 3: 重采样 ──
-    SARibbonPanel* pnlRes = page->addPanel(QStringLiteral("重采样"));
+    pnlMethod->addSmallWidget(paramContainer);
+
+    // ── Panel 3: 重采样与输出 ──
+    SARibbonPanel* pnlRes = page->addPanel(QStringLiteral("重采样与输出"));
+
+    QWidget* resContainer = new QWidget(this);
+    QFormLayout* resForm = new QFormLayout(resContainer);
+    resForm->setContentsMargins(6, 2, 6, 2);
+    resForm->setVerticalSpacing(3);
+    resForm->setHorizontalSpacing(6);
 
     mResampleCombo = new QComboBox(this);
     mResampleCombo->addItem(QStringLiteral("Sinc"), "Sinc");
     mResampleCombo->addItem(QStringLiteral("双线性"), "Bilinear");
     mResampleCombo->addItem(QStringLiteral("双三次"), "Bicubic");
-    pnlRes->addSmallWidget(mResampleCombo);
+    resForm->addRow(QStringLiteral("插值方法:"), mResampleCombo);
 
     mKeepResCheck = new QCheckBox(QStringLiteral("保持原始分辨率"), this);
     mKeepResCheck->setChecked(true);
-    pnlRes->addSmallWidget(mKeepResCheck);
+    resForm->addRow(mKeepResCheck);
 
-    QAction* actOutDirReg = createAction(QStringLiteral("输出目录"),
-                                          ":/icon/icon/folder-stats.svg", "actOutDirReg");
+    QPushButton* btnOutDir = new QPushButton(QStringLiteral("选择输出目录..."), this);
     mOutputDirLabel = new QLabel(QStringLiteral("未设置"), this);
+    mOutputDirLabel->setWordWrap(true);
     mOutputDirLabel->setMaximumHeight(20);
-    pnlRes->addSmallAction(actOutDirReg);
-    pnlRes->addSmallWidget(mOutputDirLabel);
-    connect(actOutDirReg, &QAction::triggered, this, [this]() {
+    resForm->addRow(btnOutDir, mOutputDirLabel);
+    connect(btnOutDir, &QPushButton::clicked, this, [this]() {
         QString d = QFileDialog::getExistingDirectory(this,
             QStringLiteral("选择输出目录"));
         if (!d.isEmpty()) {
@@ -396,6 +408,8 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
             mRegParams.outputDir = d;
         }
     });
+
+    pnlRes->addSmallWidget(resContainer);
 
     // ── Panel 4: 执行 ──
     SARibbonPanel* pnlExec = page->addPanel(QStringLiteral("执行"));
