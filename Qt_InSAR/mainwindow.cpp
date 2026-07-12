@@ -98,9 +98,10 @@ void MainWindow::initUI()
     createQuickAccessBar();
     createRightButtonGroup();
 
-    setMinimumWidth(900);
+    setMinimumWidth(1100);
     setRibbonTheme(SARibbonTheme::RibbonThemeOffice2021Blue);
     ribbonBar->setRibbonStyle(SARibbonBar::RibbonStyleLooseThreeRow);
+    resize(1400, 900);
     showMaximized();
 }
 
@@ -351,29 +352,36 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mCoarseMethodCombo = new QComboBox(this);
     mCoarseMethodCombo->addItem(QStringLiteral("轨道法"), "Orbit");
     mCoarseMethodCombo->addItem(QStringLiteral("互相关"), "CrossCorrelation");
+    mCoarseMethodCombo->setMinimumWidth(130);
     paramForm->addRow(QStringLiteral("粗配准:"), mCoarseMethodCombo);
 
     mFineMethodCombo = new QComboBox(this);
     mFineMethodCombo->addItem(QStringLiteral("亚像素"), "SubPixel");
     mFineMethodCombo->addItem(QStringLiteral("过采样"), "Oversample");
+    mFineMethodCombo->setMinimumWidth(130);
     paramForm->addRow(QStringLiteral("精配准:"), mFineMethodCombo);
 
     mGcpSpin = new QSpinBox(this);
     mGcpSpin->setRange(16, 1024);
     mGcpSpin->setValue(64);
+    mGcpSpin->setMinimumWidth(130);
     paramForm->addRow(QStringLiteral("GCP数:"), mGcpSpin);
 
     mSearchWinSpin = new QSpinBox(this);
     mSearchWinSpin->setRange(8, 256);
     mSearchWinSpin->setValue(64);
+    mSearchWinSpin->setMinimumWidth(130);
     paramForm->addRow(QStringLiteral("搜索窗:"), mSearchWinSpin);
 
     mCorrThreshSpin = new QDoubleSpinBox(this);
     mCorrThreshSpin->setRange(0.05, 1.0);
     mCorrThreshSpin->setSingleStep(0.05);
     mCorrThreshSpin->setValue(0.3);
+    mCorrThreshSpin->setMinimumWidth(130);
     paramForm->addRow(QStringLiteral("相关阈值:"), mCorrThreshSpin);
 
+    paramContainer->setMinimumWidth(300);
+    paramContainer->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
     pnlMethod->addSmallWidget(paramContainer);
 
     // ── Panel 3: 重采样与输出 ──
@@ -389,6 +397,7 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mResampleCombo->addItem(QStringLiteral("Sinc"), "Sinc");
     mResampleCombo->addItem(QStringLiteral("双线性"), "Bilinear");
     mResampleCombo->addItem(QStringLiteral("双三次"), "Bicubic");
+    mResampleCombo->setMinimumWidth(130);
     resForm->addRow(QStringLiteral("插值方法:"), mResampleCombo);
 
     mKeepResCheck = new QCheckBox(QStringLiteral("保持原始分辨率"), this);
@@ -396,6 +405,7 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     resForm->addRow(mKeepResCheck);
 
     QPushButton* btnOutDir = new QPushButton(QStringLiteral("选择输出目录..."), this);
+    btnOutDir->setMinimumWidth(130);
     mOutputDirLabel = new QLabel(QStringLiteral("未设置"), this);
     mOutputDirLabel->setWordWrap(true);
     mOutputDirLabel->setMaximumHeight(20);
@@ -409,6 +419,8 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
         }
     });
 
+    resContainer->setMinimumWidth(280);
+    resContainer->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
     pnlRes->addSmallWidget(resContainer);
 
     // ── Panel 4: 执行 ──
