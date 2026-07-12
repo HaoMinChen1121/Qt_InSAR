@@ -306,6 +306,14 @@ void RegistrationServiceImpl::execute() {
         qsar.outputPrefix = mParams.outputPrefix;
         qsar.baseline.perpendicular = 0;
         qsar.baseline.temporal = 0;
+        // 提取辅影像日期作为前缀
+        QString slaveDate;
+        if (!mParams.slaveDisplayName.isEmpty()) {
+            QStringList dp = mParams.slaveDisplayName.split('_');
+            if (dp.size() >= 2) slaveDate = dp[1];
+        }
+        QString datePrefix = slaveDate.isEmpty() ? mParams.outputPrefix : slaveDate + "_" + mParams.outputPrefix;
+
         QString qsarDir;
         for (int i = 0; i < pairs.size(); ++i) {
             QsarBand b;
@@ -318,15 +326,15 @@ void RegistrationServiceImpl::execute() {
                 .arg(b.subSwath).arg(b.polarization);
             QString outPath;
             if (mParams.outputDir.isEmpty())
-                outPath = QDir::tempPath() + "/" + mParams.outputPrefix + "_" + pairName + "_reg.tif";
+                outPath = QDir::tempPath() + "/" + datePrefix + "_" + pairName + "_reg.tif";
             else
-                outPath = mParams.outputDir + "/" + mParams.outputPrefix + "_" + pairName + "_reg.tif";
+                outPath = mParams.outputDir + "/" + datePrefix + "_" + pairName + "_reg.tif";
             b.file = QFileInfo(outPath).fileName();
             qsar.bands.append(b);
             qsarDir = QFileInfo(outPath).absolutePath();
         }
         if (!qsarDir.isEmpty()) {
-            QString qsarPath = qsarDir + "/" + mParams.outputPrefix + ".qsar";
+            QString qsarPath = qsarDir + "/" + datePrefix + ".qsar";
             QsarIO::write(qsarPath, qsar);
             lastOutput = qsarPath;
         }
@@ -432,9 +440,16 @@ bool RegistrationServiceImpl::processBandPair(
     if (outputDir.isEmpty()) {
         qWarning() << "[Reg] outputDir not set, using temp path";
     }
+    // 从辅影像显示名提取日期 (如 "S1A_0617 Orbit83" → "0617")
+    QString slaveDate;
+    if (!mParams.slaveDisplayName.isEmpty()) {
+        QStringList parts = mParams.slaveDisplayName.split('_');
+        if (parts.size() >= 2) slaveDate = parts[1];
+    }
+    QString datePrefix = slaveDate.isEmpty() ? prefix : slaveDate + "_" + prefix;
     QString outPath = outputDir.isEmpty()
-        ? QDir::tempPath() + "/" + prefix + "_" + pairName + "_reg.tif"
-        : outputDir + "/" + prefix + "_" + pairName + "_reg.tif";
+        ? QDir::tempPath() + "/" + datePrefix + "_" + pairName + "_reg.tif"
+        : outputDir + "/" + datePrefix + "_" + pairName + "_reg.tif";
 
     GdalSlcWriter writer;
     bool ok = resampleImage(poly, &sReader, &writer,
