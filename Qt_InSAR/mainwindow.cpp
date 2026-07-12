@@ -123,8 +123,8 @@ void MainWindow::initLayerPanel()
     mLayerDock = new QDockWidget(QStringLiteral("图层"), this);
     mLayerDock->setObjectName("LayerDock");
     mLayerDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    mLayerDock->setMinimumWidth(260);
-    mLayerDock->resize(300, 600);
+    mLayerDock->setMinimumWidth(280);
+    mLayerDock->resize(320, 600);
     mLayerPanel = new LayerPanel(mLayerDock);
     mLayerDock->setWidget(mLayerPanel);
     addDockWidget(Qt::LeftDockWidgetArea, mLayerDock);

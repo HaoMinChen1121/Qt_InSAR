@@ -22,7 +22,7 @@ void LayerPanel::setupUI()
 
     // ── 工具栏 ──
     mToolbar = new QToolBar(this);
-    mToolbar->setIconSize(QSize(20, 20));
+    mToolbar->setIconSize(QSize(24, 24));
     mToolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     mToolbar->setMovable(false);
     mToolbar->setStyleSheet(
@@ -51,13 +51,16 @@ void LayerPanel::setupUI()
     mTree->header()->setSectionResizeMode(0, QHeaderView::Fixed);
     mTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     mTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    mTree->setColumnWidth(0, 36);
+    mTree->setColumnWidth(0, 44);
+    mTree->setHeaderHidden(true);
     mTree->setSelectionMode(QAbstractItemView::SingleSelection);
     mTree->setDragDropMode(QAbstractItemView::InternalMove);
     mTree->setContextMenuPolicy(Qt::CustomContextMenu);
     mTree->setAlternatingRowColors(true);
     mTree->setRootIsDecorated(true);
-    mTree->setIndentation(18);
+    mTree->setIndentation(20);
+    mTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    mTree->setTextElideMode(Qt::ElideMiddle);
     layout->addWidget(mTree);
 
     // ── 透明度控制 ──
