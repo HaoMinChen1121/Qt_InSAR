@@ -565,17 +565,26 @@ void RegistrationServiceImpl::coarseByCorrelation(
 {
     Q_UNUSED(corrThreshold);
 
+    // 保持 GDAL 数据集打开，避免每个 GCP 重新解析 VSI（128次 → 2次）
+    GdalSlcReader mReader, sReader;
+    if (!mReader.open(masterPath)) {
+        qWarning() << "[Reg] coarseByCorrelation: cannot open master";
+        return;
+    }
+    if (!sReader.open(slavePath)) {
+        qWarning() << "[Reg] coarseByCorrelation: cannot open slave";
+        return;
+    }
+
     for (auto& gcp : gcps) {
-        if (mCancelled) return;
+        if (mCancelled) break;
 
         // 在主影像上提取幅度窗口
         int halfWin = windowSize / 2;
         int mX0 = gcp.col - halfWin;
         int mY0 = gcp.row - halfWin;
 
-        reader->open(masterPath);
-        auto mData = reader->readBandWindow(0, mX0, mY0, windowSize, windowSize);
-        reader->close();
+        auto mData = mReader.readBandWindow(0, mX0, mY0, windowSize, windowSize);
 
         if (mData.size() < windowSize * windowSize)
             continue;
@@ -600,9 +609,7 @@ void RegistrationServiceImpl::coarseByCorrelation(
         int sW = searchWindow + windowSize;
         int sH = sW;
 
-        reader->open(slavePath);
-        auto sData = reader->readBandWindow(0, sX0, sY0, sW, sH);
-        reader->close();
+        auto sData = sReader.readBandWindow(0, sX0, sY0, sW, sH);
 
         if (sData.size() < sW * sH) continue;
 
@@ -666,6 +673,10 @@ RegistrationServiceImpl::fineRegister(
     Q_UNUSED(slaveW);
     Q_UNUSED(slaveH);
 
+    // 保持 GDAL 数据集打开
+    GdalSlcReader mReader2, sReader2;
+    bool hasReaders = mReader2.open(masterPath) && sReader2.open(slavePath);
+
     int halfWin = windowSize / 2;
 
     // 亚像素细化：用抛物线插值 NCC 峰值
@@ -676,9 +687,9 @@ RegistrationServiceImpl::fineRegister(
         int mX0 = gcp.col - halfWin;
         int mY0 = gcp.row - halfWin;
 
-        reader->open(masterPath);
-        auto mData = reader->readBandWindow(0, mX0, mY0, windowSize, windowSize);
-        reader->close();
+        auto mData = hasReaders
+            ? mReader2.readBandWindow(0, mX0, mY0, windowSize, windowSize)
+            : QVector<std::complex<float>>();
         if (mData.size() < windowSize * windowSize) continue;
 
         QVector<double> mAmp(windowSize * windowSize);
@@ -697,9 +708,9 @@ RegistrationServiceImpl::fineRegister(
         int sX0 = sCenterX - halfWin - subSearch;
         int sY0 = sCenterY - halfWin - subSearch;
 
-        reader->open(slavePath);
-        auto sData = reader->readBandWindow(0, sX0, sY0, sW, sW);
-        reader->close();
+        auto sData = hasReaders
+            ? sReader2.readBandWindow(0, sX0, sY0, sW, sW)
+            : QVector<std::complex<float>>();
         if (sData.size() < sW * sW) continue;
 
         QVector<double> corrMap((2 * subSearch + 1) * (2 * subSearch + 1));
@@ -841,6 +852,13 @@ bool RegistrationServiceImpl::resampleImage(
     QVector<std::complex<float>> output(masterW * masterH);
     int step = qMax(1, masterH / 100);
 
+    // 保持 GDAL 数据集打开
+    GdalSlcReader resReader;
+    if (!resReader.open(slavePath)) {
+        qWarning() << "[Reg] resample: cannot open slave";
+        return false;
+    }
+
     for (int row = 0; row < masterH; ++row) {
         if (mCancelled) return false;
 
@@ -850,7 +868,7 @@ bool RegistrationServiceImpl::resampleImage(
         }
 
         // 当前行需要的辅影像窗口（y方向）
-        double rNorm = 0.5; // 用归一化坐标中心近似
+        double rNorm = 0.5;
         double aNorm = static_cast<double>(row) / masterH;
         double rowOff = poly.aziCoeffs[0] + poly.aziCoeffs[1]*rNorm + poly.aziCoeffs[2]*aNorm
             + poly.aziCoeffs[3]*rNorm*aNorm + poly.aziCoeffs[4]*rNorm*rNorm + poly.aziCoeffs[5]*aNorm*aNorm;
@@ -864,9 +882,7 @@ bool RegistrationServiceImpl::resampleImage(
         if (sYH <= 0) continue;
 
         // 读取当前行窗口
-        reader->open(slavePath);
-        auto sWindow = reader->readBandWindow(0, 0, sY0, slaveW, sYH);
-        reader->close();
+        auto sWindow = resReader.readBandWindow(0, 0, sY0, slaveW, sYH);
         if (sWindow.size() < slaveW * sYH) continue;
 
         for (int col = 0; col < masterW; ++col) {
