@@ -57,23 +57,20 @@ private:
 
     void coarseByCorrelation(
         QVector<CoarseGcp>& gcps,
-        GdalSlcReader* reader,
-        const QString& masterPath, const QString& slavePath,
+        GdalSlcReader* mReader, GdalSlcReader* sReader,
         int masterW, int masterH, int slaveW, int slaveH,
         int windowSize, int searchWindow, double corrThreshold);
 
     RegPolynomial fineRegister(
         QVector<CoarseGcp>& gcps,
-        GdalSlcReader* reader,
-        const QString& masterPath, const QString& slavePath,
+        GdalSlcReader* mReader, GdalSlcReader* sReader,
         int masterW, int masterH, int slaveW, int slaveH,
         int oversampleFactor, int polyDegree, double corrThreshold,
         int windowSize);
 
     bool resampleImage(
         const RegPolynomial& poly,
-        GdalSlcReader* reader, GdalSlcWriter* writer,
-        const QString& masterPath, const QString& slavePath,
+        GdalSlcReader* sReader, GdalSlcWriter* writer,
         int masterW, int masterH, int slaveW, int slaveH,
         const QString& interpMethod, int sincWindow, double sincBeta,
         const QString& outputPath);

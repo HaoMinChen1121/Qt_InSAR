@@ -315,29 +315,21 @@ bool RegistrationServiceImpl::processBandPair(
         .arg(pairIndex + 1).arg(totalPairs)
         .arg(masterBand.subSwath).arg(masterBand.polarization);
 
-    emit progressChanged(0, pairName + QStringLiteral(": 打开主波段..."));
-    qDebug() << "[Reg]" << pairName << ": opening master" << mPath.left(80);
-
-    GdalSlcReader reader;
-    if (!reader.open(mPath)) {
+    // 全程保持 GDAL 数据集打开，避免重复 VSI open/close
+    emit progressChanged(0, pairName + QStringLiteral(": 打开数据..."));
+    GdalSlcReader mReader, sReader;
+    if (!mReader.open(mPath)) {
         qWarning() << "[Reg]" << pairName << ": FAIL master open";
-        emit progressChanged(0, pairName + QStringLiteral(": 打开失败"));
         return false;
     }
-    int mW = reader.width(), mH = reader.height();
-    reader.close();
-    qDebug() << "[Reg]" << pairName << ": master" << mW << "x" << mH;
-
-    emit progressChanged(5, pairName + QStringLiteral(": 打开辅波段..."));
-    qDebug() << "[Reg]" << pairName << ": opening slave" << sPath.left(80);
-    if (!reader.open(sPath)) {
+    int mW = mReader.width(), mH = mReader.height();
+    if (!sReader.open(sPath)) {
         qWarning() << "[Reg]" << pairName << ": FAIL slave open";
-        emit progressChanged(0, pairName + QStringLiteral(": 打开失败"));
         return false;
     }
-    int sW = reader.width(), sH = reader.height();
-    reader.close();
-    qDebug() << "[Reg]" << pairName << ": slave" << sW << "x" << sH;
+    int sW = sReader.width(), sH = sReader.height();
+    qDebug() << "[Reg]" << pairName << ": master" << mW << "x" << mH
+             << "slave" << sW << "x" << sH;
 
     // 轨道粗配准
     emit progressChanged(10, pairName + QStringLiteral(": 轨道粗配准..."));
@@ -350,11 +342,11 @@ bool RegistrationServiceImpl::processBandPair(
 
     if (mCancelled) return false;
 
-    // 互相关精化
+    // 互相关精化 (复用已打开的 mReader/sReader)
     emit progressChanged(20, pairName + QStringLiteral(": 互相关..."));
     qDebug() << "[Reg]" << pairName << ": cross-correlation start,"
              << gcps.size() << "GCPs";
-    coarseByCorrelation(gcps, &reader, mPath, sPath, mW, mH, sW, sH,
+    coarseByCorrelation(gcps, &mReader, &sReader, mW, mH, sW, sH,
         mParams.fineWindowSize, mParams.coarseSearchWindow,
         mParams.correlationThreshold);
     qDebug() << "[Reg]" << pairName << ": cross-correlation done";
@@ -366,16 +358,15 @@ bool RegistrationServiceImpl::processBandPair(
             validGcps.append(g);
     if (validGcps.size() < 6) {
         qWarning() << "[Reg]" << pairName << ": GCP不足:" << validGcps.size();
-        emit progressChanged(0, pairName + QStringLiteral(": GCP不足(%1)").arg(validGcps.size()));
         return false;
     }
 
-    // 精配准
+    // 精配准 (复用已打开的 mReader/sReader)
     emit progressChanged(40, pairName + QStringLiteral(": 精配准..."));
     qDebug() << "[Reg]" << pairName << ": fine reg start";
     int oversample = (mParams.fineMethod == "Oversample") ? 16 : 64;
-    RegPolynomial poly = fineRegister(validGcps, &reader,
-        mPath, sPath, mW, mH, sW, sH,
+    RegPolynomial poly = fineRegister(validGcps, &mReader, &sReader,
+        mW, mH, sW, sH,
         oversample, mParams.polynomialDegree, mParams.correlationThreshold,
         mParams.fineWindowSize);
 
@@ -386,7 +377,7 @@ bool RegistrationServiceImpl::processBandPair(
     }
     if (mCancelled) return false;
 
-    // 重采样
+    // 重采样 (复用已打开的 sReader)
     emit progressChanged(60, pairName + QStringLiteral(": 重采样..."));
     qDebug() << "[Reg]" << pairName << ": resample start";
     QString outPath = outputDir.isEmpty()
@@ -394,8 +385,8 @@ bool RegistrationServiceImpl::processBandPair(
         : outputDir + "/" + prefix + "_" + pairName + "_reg.tif";
 
     GdalSlcWriter writer;
-    bool ok = resampleImage(poly, &reader, &writer,
-        mPath, sPath, mW, mH, sW, sH,
+    bool ok = resampleImage(poly, &sReader, &writer,
+        mW, mH, sW, sH,
         mParams.resamplingMethod, mParams.sincWindowSize, mParams.sincBeta,
         outPath);
 
@@ -558,33 +549,22 @@ RegistrationServiceImpl::coarseByOrbit(
 
 void RegistrationServiceImpl::coarseByCorrelation(
     QVector<CoarseGcp>& gcps,
-    GdalSlcReader* reader,
-    const QString& masterPath, const QString& slavePath,
+    GdalSlcReader* mReader, GdalSlcReader* sReader,
     int masterW, int masterH, int slaveW, int slaveH,
     int windowSize, int searchWindow, double corrThreshold)
 {
     Q_UNUSED(corrThreshold);
-
-    // 保持 GDAL 数据集打开，避免每个 GCP 重新解析 VSI（128次 → 2次）
-    GdalSlcReader mReader, sReader;
-    if (!mReader.open(masterPath)) {
-        qWarning() << "[Reg] coarseByCorrelation: cannot open master";
-        return;
-    }
-    if (!sReader.open(slavePath)) {
-        qWarning() << "[Reg] coarseByCorrelation: cannot open slave";
-        return;
-    }
+    Q_UNUSED(masterW); Q_UNUSED(masterH);
+    Q_UNUSED(slaveW); Q_UNUSED(slaveH);
 
     for (auto& gcp : gcps) {
         if (mCancelled) break;
 
-        // 在主影像上提取幅度窗口
         int halfWin = windowSize / 2;
         int mX0 = gcp.col - halfWin;
         int mY0 = gcp.row - halfWin;
 
-        auto mData = mReader.readBandWindow(0, mX0, mY0, windowSize, windowSize);
+        auto mData = mReader->readBandWindow(0, mX0, mY0, windowSize, windowSize);
 
         if (mData.size() < windowSize * windowSize)
             continue;
@@ -609,7 +589,7 @@ void RegistrationServiceImpl::coarseByCorrelation(
         int sW = searchWindow + windowSize;
         int sH = sW;
 
-        auto sData = sReader.readBandWindow(0, sX0, sY0, sW, sH);
+        auto sData = sReader->readBandWindow(0, sX0, sY0, sW, sH);
 
         if (sData.size() < sW * sH) continue;
 
@@ -663,23 +643,16 @@ void RegistrationServiceImpl::coarseByCorrelation(
 RegistrationServiceImpl::RegPolynomial
 RegistrationServiceImpl::fineRegister(
     QVector<CoarseGcp>& gcps,
-    GdalSlcReader* reader,
-    const QString& masterPath, const QString& slavePath,
+    GdalSlcReader* mReader, GdalSlcReader* sReader,
     int masterW, int masterH, int slaveW, int slaveH,
     int oversampleFactor, int polyDegree, double corrThreshold,
     int windowSize)
 {
     Q_UNUSED(oversampleFactor);
-    Q_UNUSED(slaveW);
-    Q_UNUSED(slaveH);
-
-    // 保持 GDAL 数据集打开
-    GdalSlcReader mReader2, sReader2;
-    bool hasReaders = mReader2.open(masterPath) && sReader2.open(slavePath);
+    Q_UNUSED(slaveW); Q_UNUSED(slaveH);
 
     int halfWin = windowSize / 2;
 
-    // 亚像素细化：用抛物线插值 NCC 峰值
     for (auto& gcp : gcps) {
         if (mCancelled) break;
         if (gcp.correlation < corrThreshold) continue;
@@ -687,9 +660,7 @@ RegistrationServiceImpl::fineRegister(
         int mX0 = gcp.col - halfWin;
         int mY0 = gcp.row - halfWin;
 
-        auto mData = hasReaders
-            ? mReader2.readBandWindow(0, mX0, mY0, windowSize, windowSize)
-            : QVector<std::complex<float>>();
+        auto mData = mReader->readBandWindow(0, mX0, mY0, windowSize, windowSize);
         if (mData.size() < windowSize * windowSize) continue;
 
         QVector<double> mAmp(windowSize * windowSize);
@@ -708,9 +679,7 @@ RegistrationServiceImpl::fineRegister(
         int sX0 = sCenterX - halfWin - subSearch;
         int sY0 = sCenterY - halfWin - subSearch;
 
-        auto sData = hasReaders
-            ? sReader2.readBandWindow(0, sX0, sY0, sW, sW)
-            : QVector<std::complex<float>>();
+        auto sData = sReader->readBandWindow(0, sX0, sY0, sW, sW);
         if (sData.size() < sW * sW) continue;
 
         QVector<double> corrMap((2 * subSearch + 1) * (2 * subSearch + 1));
@@ -836,14 +805,11 @@ RegistrationServiceImpl::fineRegister(
 
 bool RegistrationServiceImpl::resampleImage(
     const RegPolynomial& poly,
-    GdalSlcReader* reader, GdalSlcWriter* writer,
-    const QString& masterPath, const QString& slavePath,
+    GdalSlcReader* sReader, GdalSlcWriter* writer,
     int masterW, int masterH, int slaveW, int slaveH,
     const QString& interpMethod, int sincWindow, double sincBeta,
     const QString& outputPath)
 {
-    Q_UNUSED(masterPath);
-
     if (!writer->create(outputPath, masterW, masterH, 1)) {
         qWarning() << "[Reg] 创建输出文件失败:" << writer->lastError();
         return false;
@@ -851,13 +817,6 @@ bool RegistrationServiceImpl::resampleImage(
 
     QVector<std::complex<float>> output(masterW * masterH);
     int step = qMax(1, masterH / 100);
-
-    // 保持 GDAL 数据集打开
-    GdalSlcReader resReader;
-    if (!resReader.open(slavePath)) {
-        qWarning() << "[Reg] resample: cannot open slave";
-        return false;
-    }
 
     for (int row = 0; row < masterH; ++row) {
         if (mCancelled) return false;
@@ -882,7 +841,7 @@ bool RegistrationServiceImpl::resampleImage(
         if (sYH <= 0) continue;
 
         // 读取当前行窗口
-        auto sWindow = resReader.readBandWindow(0, 0, sY0, slaveW, sYH);
+        auto sWindow = sReader->readBandWindow(0, 0, sY0, slaveW, sYH);
         if (sWindow.size() < slaveW * sYH) continue;
 
         for (int col = 0; col < masterW; ++col) {
