@@ -150,10 +150,12 @@ void ApplicationController::wireConnections()
             rebuildCanvasLayers();
             canvas->zoomToFullExtent();
             mPendingGroupName.clear();
+            if (mPendingLoadCount > 0) --mPendingLoadCount;
         };
 
         if (vsiEntries.isEmpty()) { finishLoading(); return; }
 
+        ++mPendingLoadCount;
         int total = vsiEntries.size();
         monitor->appendLog(QStringLiteral("正在处理 %1 个文件...").arg(total), "#FF9800");
 
@@ -403,7 +405,15 @@ void ApplicationController::onSlaveProductSelected(const QString& productPath)
 void ApplicationController::onRegistrationRunRequested(const RegistrationParams& params)
 {
     mRegistrationSvc->setParams(params);
-    // WorkerManager 的独立 QThread 中 GDAL VSI 会死锁，改用 QThreadPool
+    // 等待所有异步 VSI 加载完成，避免 GDAL VSI 并发死锁
+    if (mPendingLoadCount > 0) {
+        ProcessingMonitorPanel* m = mMainWindow->processingMonitorPanel();
+        if (m) m->appendLog(QStringLiteral("等待文件处理完成..."), "#FF9800");
+        QTimer::singleShot(500, this, [this, params]() {
+            onRegistrationRunRequested(params); // 轮询重试
+        });
+        return;
+    }
     QtConcurrent::run([this]() {
         mRegistrationSvc->execute();
     });

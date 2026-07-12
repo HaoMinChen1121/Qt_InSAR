@@ -97,6 +97,9 @@ private:
     // 待自动选择: -1=无, 0=辅, 1=主
     int mPendingAutoSelect = -1;
 
+    // 待完成的异步加载计数
+    int mPendingLoadCount = 0;
+
     // 临时文件追踪
     QStringList mTempFiles;
     bool mShuttingDown = false;
