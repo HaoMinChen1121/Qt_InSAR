@@ -311,7 +311,7 @@ bool RegistrationServiceImpl::processBandPair(
     Q_UNUSED(totalPairs);
     QString mPath = masterBand.rasterPath;
     QString sPath = slaveBand.rasterPath;
-    QString pairName = QStringLiteral("%1/%2 %3_%4")
+    QString pairName = QStringLiteral("%1of%2_%3_%4")
         .arg(pairIndex + 1).arg(totalPairs)
         .arg(masterBand.subSwath).arg(masterBand.polarization);
 
