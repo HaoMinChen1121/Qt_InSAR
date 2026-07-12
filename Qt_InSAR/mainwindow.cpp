@@ -35,6 +35,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QCheckBox>
+#include <QFont>
 #include <QFormLayout>
 #include <QPushButton>
 #include <QGridLayout>
@@ -101,6 +102,9 @@ void MainWindow::initUI()
     setMinimumWidth(1100);
     setRibbonTheme(SARibbonTheme::RibbonThemeOffice2021Blue);
     ribbonBar->setRibbonStyle(SARibbonBar::RibbonStyleLooseThreeRow);
+    QFont ribbonFont = ribbonBar->font();
+    ribbonFont.setPointSize(10);
+    ribbonBar->setFont(ribbonFont);
     resize(1400, 900);
     showMaximized();
 }
