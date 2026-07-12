@@ -446,12 +446,18 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
             mDoppler.centroid = coeff.text().toDouble();
     }
 
-    // 轨道状态向量 (Sentinel-1 实际格式: <orbit><time>...<position><x>...)
+    // 轨道状态向量 (Sentinel-1 实际格式: <orbit><time>ISO8601...<position><x>...)
     nl = root.elementsByTagName("orbit");
+    QDateTime refTime; // 相对秒数基准
     for (int i = 0; i < nl.size() && i < 50; ++i) {
         QDomElement orbel = nl.at(i).toElement();
+        QString timeStr = orbel.firstChildElement("time").text().trimmed();
+        QDateTime dt = QDateTime::fromString(timeStr, Qt::ISODate);
+        if (!dt.isValid()) continue;
+        if (i == 0) refTime = dt;
+
         OrbitStateVector sv;
-        sv.time = orbel.firstChildElement("time").text().toDouble();
+        sv.time = refTime.secsTo(dt); // 相对第一轨的秒数
         QDomElement pos = orbel.firstChildElement("position");
         sv.x  = pos.firstChildElement("x").text().toDouble();
         sv.y  = pos.firstChildElement("y").text().toDouble();
@@ -460,7 +466,7 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
         sv.vx = vel.firstChildElement("x").text().toDouble();
         sv.vy = vel.firstChildElement("y").text().toDouble();
         sv.vz = vel.firstChildElement("z").text().toDouble();
-        if (sv.time > 0) mOrbitVectors.append(sv);
+        mOrbitVectors.append(sv);
     }
 
     // 兼容旧格式: <orbitStateVector><osvTime>...<xPos>...
