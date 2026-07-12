@@ -302,37 +302,37 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     // ── Panel 1: 影像选择 ──
     SARibbonPanel* pnlIO = page->addPanel(QStringLiteral("影像选择"));
 
-    QAction* actMaster = createAction(QStringLiteral("主影像\n(点击选择)"),
+    QAction* actMaster = createAction(QStringLiteral("主产品\n(点击选择)"),
                                        ":/icon/icon/save.svg", "actMaster");
     pnlIO->addLargeAction(actMaster);
     connect(actMaster, &QAction::triggered, this, [this]() {
         if (!mAppController) return;
-        QMenu* menu = mAppController->buildSlcLayerMenu(true);
+        QMenu* menu = mAppController->buildProductMenu(true);
         menu->exec(mapToGlobal(QPoint(width() / 4, height() / 3)));
         menu->deleteLater();
     });
 
     mLblMasterInfo = new QLabel(QStringLiteral("主: 未选择"), this);
     mLblMasterInfo->setWordWrap(true);
-    mLblMasterInfo->setMaximumHeight(18);
+    mLblMasterInfo->setMaximumHeight(36);
     QFont infoFont = mLblMasterInfo->font();
     infoFont.setPointSize(8);
     mLblMasterInfo->setFont(infoFont);
     pnlIO->addSmallWidget(mLblMasterInfo);
 
-    QAction* actSlave = createAction(QStringLiteral("辅影像\n(点击选择)"),
+    QAction* actSlave = createAction(QStringLiteral("辅产品\n(点击选择)"),
                                       ":/icon/icon/Align-Left.svg", "actSlave");
     pnlIO->addLargeAction(actSlave);
     connect(actSlave, &QAction::triggered, this, [this]() {
         if (!mAppController) return;
-        QMenu* menu = mAppController->buildSlcLayerMenu(false);
+        QMenu* menu = mAppController->buildProductMenu(false);
         menu->exec(mapToGlobal(QPoint(width() / 4, height() / 3)));
         menu->deleteLater();
     });
 
     mLblSlaveInfo = new QLabel(QStringLiteral("辅: 未选择"), this);
     mLblSlaveInfo->setWordWrap(true);
-    mLblSlaveInfo->setMaximumHeight(18);
+    mLblSlaveInfo->setMaximumHeight(36);
     QFont slaveInfoFont = mLblSlaveInfo->font();
     slaveInfoFont.setPointSize(8);
     mLblSlaveInfo->setFont(slaveInfoFont);
@@ -357,24 +357,17 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
                                         ":/icon/icon/folder-cog.svg", "actExecReg");
     pnlExec->addLargeAction(actExecReg);
     connect(actExecReg, &QAction::triggered, this, [this]() {
-        if (mRegParams.masterPath.isEmpty() || mRegParams.slavePath.isEmpty()) {
-            QMessageBox::warning(this,
-                QStringLiteral("提示"),
+        if (mRegParams.masterProductPath.isEmpty()
+            || mRegParams.slaveProductPath.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("提示"),
                 QStringLiteral("请先选择主影像和辅影像"));
-            return;
-        }
-        if (mRegParams.masterSlcBandPath.isEmpty()
-            || mRegParams.slaveSlcBandPath.isEmpty()) {
-            QMessageBox::warning(this,
-                QStringLiteral("提示"),
-                QStringLiteral("主辅影像的SLC源数据路径无效, 请重新选择"));
             return;
         }
         RegistrationParams p = collectRegParams();
         mMonitorPanel->appendLog(
             QStringLiteral("影像配准已启动...\n  主: %1\n  辅: %2")
-                .arg(QFileInfo(p.masterPath).fileName(),
-                     QFileInfo(p.slavePath).fileName()),
+                .arg(mRegParams.masterDisplayName,
+                     mRegParams.slaveDisplayName),
             "#4A90D9");
         emit registrationRunRequested(p);
     });
@@ -395,14 +388,13 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
                                          ":/icon/icon/redo.svg", "actBaseline");
     pnlExec->addSmallAction(actBaseline);
     connect(actBaseline, &QAction::triggered, this, [this]() {
-        if (mRegParams.masterPath.isEmpty() || mRegParams.slavePath.isEmpty()) {
-            QMessageBox::warning(this,
-                QStringLiteral("提示"),
-                QStringLiteral("请先选择主影像和辅影像"));
+        if (mRegParams.masterProductPath.isEmpty()
+            || mRegParams.slaveProductPath.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("提示"),
+                QStringLiteral("请先选择主产品和辅产品"));
             return;
         }
-        emit baselineEstimateRequested(
-            mRegParams.masterPath, mRegParams.slavePath);
+        emit baselineEstimateRequested();
     });
 
     // ── 初始参数 ──
@@ -415,13 +407,9 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
 // ── 配准参数收集 ──
 RegistrationParams MainWindow::collectRegParams() const
 {
-    RegistrationParams p = mRegParams; // 保留 master/slave 路径及元数据
-
-    // Ribbon 上的粗配准方法
+    RegistrationParams p = mRegParams;
     if (mCoarseMethodCombo)
         p.coarseMethod = mCoarseMethodCombo->currentData().toString();
-
-    // 其余参数由"高级参数"对话框或默认值维护
     return p;
 }
 
@@ -432,7 +420,18 @@ void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
         int idx = mCoarseMethodCombo->findData(p.coarseMethod);
         if (idx >= 0) mCoarseMethodCombo->setCurrentIndex(idx);
     }
+    // 保留产品路径和元数据
+    QString mp = mRegParams.masterProductPath;
+    QString sp = mRegParams.slaveProductPath;
+    QString md = mRegParams.masterDisplayName;
+    QString sd = mRegParams.slaveDisplayName;
     mRegParams = p;
+    mRegParams.masterProductPath = mp;
+    mRegParams.slaveProductPath = sp;
+    mRegParams.masterDisplayName = md;
+    mRegParams.slaveDisplayName = sd;
+    mRegParams.masterPath = mp;
+    mRegParams.slavePath = sp;
 }
 
 // ── 更新主/辅影像选择标签 ──

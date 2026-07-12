@@ -3,6 +3,7 @@
 
 #include "services/IRegistrationService.h"
 #include "domain/BaselineInfo.h"
+#include "dataaccess/ISarProduct.h"
 
 #include <QVector>
 #include <complex>
@@ -76,6 +77,13 @@ private:
         int masterW, int masterH, int slaveW, int slaveH,
         const QString& interpMethod, int sincWindow, double sincBeta,
         const QString& outputPath);
+
+    // ── 波段对配准 ──
+    bool processBandPair(
+        const SarBandDescriptor& masterBand,
+        const SarBandDescriptor& slaveBand,
+        const QString& outputDir, const QString& prefix,
+        int pairIndex, int totalPairs);
 
     // ── 辅助 ──
     std::complex<float> interp2D(

@@ -10,6 +10,7 @@
 #include "domain/SarSensorInfo.h"
 #include "domain/OrbitInfo.h"
 #include "domain/params/RegistrationParams.h"
+#include "dataaccess/ISarProduct.h"
 
 class MainWindow;
 class WorkerManager;
@@ -23,14 +24,12 @@ class IFilterService;
 class IUnwrappingService;
 class IGeocodingService;
 
-// 已加载 SLC 波段的来源信息
-struct SlcSourceInfo {
+// 已加载产品的来源信息
+struct ProductSourceInfo {
     QString   productPath;            // SAFE/zip 根路径
-    QString   bandPath;               // 原始复数 TIFF 路径
-    QString   displayName;            // 显示名 (如 "IW1_VV")
-    int       bandIndex = 0;
-    SlcImage  slcImage;               // 基础元数据
-    SarSensorInfo sensorInfo;         // 传感器全量元数据
+    QString   displayName;            // 显示名 (如 "S1A_0605 Orbit87")
+    QList<SarBandDescriptor> bands;   // 所有波段
+    SarSensorInfo sensorInfo;         // 传感器元数据
     QList<OrbitStateVector> orbitVectors;
     DopplerInfo doppler;
 };
@@ -54,9 +53,9 @@ public:
     IUnwrappingService* unwrappingService() const;
     IGeocodingService* geocodingService() const;
 
-    // ── SLC 图层注册与查询 ──
-    QMap<QString, SlcSourceInfo> loadedSlcImages() const { return mSlcRegistry; }
-    QMenu* buildSlcLayerMenu(bool isMaster);
+    // ── 产品注册与查询 ──
+    QMap<QString, ProductSourceInfo> loadedProducts() const { return mProductRegistry; }
+    QMenu* buildProductMenu(bool isMaster);
 
 private:
     void createServices();
@@ -66,10 +65,9 @@ private:
 private slots:
     void onSarProductOpenRequested(const QString& path);
     void onRegistrationRunRequested(const RegistrationParams& params);
-    void onBaselineEstimateRequested(const QString& masterPath,
-                                     const QString& slavePath);
-    void onMasterImageSelected(const QString& layerId);
-    void onSlaveImageSelected(const QString& layerId);
+    void onBaselineEstimateRequested();
+    void onMasterProductSelected(const QString& productPath);
+    void onSlaveProductSelected(const QString& productPath);
 
 private:
     MainWindow* mMainWindow;
@@ -83,21 +81,21 @@ private:
     std::unique_ptr<IUnwrappingService> mUnwrappingSvc;
     std::unique_ptr<IGeocodingService> mGeocodingSvc;
 
-    // SLC 图层注册表: layerId → 来源信息
-    QMap<QString, SlcSourceInfo> mSlcRegistry;
+    // 产品注册表: productPath → ProductSourceInfo
+    QMap<QString, ProductSourceInfo> mProductRegistry;
 
-    // 待关联: 波段路径 → 来源信息 (等待 QGIS 分配 layer ID)
-    QMap<QString, SlcSourceInfo> mPendingSlcRegistry;
+    // 待关联: 波段路径 → 产品路径 (等待 QGIS 分配 layer ID)
+    QMap<QString, QString> mPendingProductRegistry;
+
+    // 主/辅产品选择
+    QString mSelectedMasterPath;
+    QString mSelectedSlavePath;
 
     // 当前正在加载的产品分组名
     QString mPendingGroupName;
 
-    // 待自动选择: -1=无, 0=辅影像, 1=主影像
+    // 待自动选择: -1=无, 0=辅, 1=主
     int mPendingAutoSelect = -1;
-
-    // 主/辅影像选择
-    QString mSelectedMasterLayerId;
-    QString mSelectedSlaveLayerId;
 
     // 临时文件追踪
     QStringList mTempFiles;

@@ -133,7 +133,7 @@ signals:
     /// 用户触发配准执行 (携带打包好的参数)
     void registrationRunRequested(const RegistrationParams& params);
     /// 用户触发基线快速估算
-    void baselineEstimateRequested(const QString& masterPath, const QString& slavePath);
+    void baselineEstimateRequested();
 };
 
 #endif // MAINWINDOW_H

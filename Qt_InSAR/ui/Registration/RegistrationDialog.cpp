@@ -159,15 +159,15 @@ void RegistrationDialog::setParams(const RegistrationParams& p)
     // 更新元数据标签
     auto metaText = [&p](bool isMaster) -> QString {
         const QString& displayName = isMaster ? p.masterDisplayName : p.slaveDisplayName;
-        const QString& slcPath = isMaster ? p.masterSlcBandPath : p.slaveSlcBandPath;
+        const QString& prodPath = isMaster ? p.masterProductPath : p.slaveProductPath;
         const auto& orbits = isMaster ? p.masterOrbitVectors : p.slaveOrbitVectors;
-        if (slcPath.isEmpty()) return QStringLiteral("未加载");
-        return QStringLiteral("%1 (轨道点:%2)")
+        if (prodPath.isEmpty() && orbits.isEmpty()) return QStringLiteral("未加载");
+        return QStringLiteral("%1 (%2轨道点)")
             .arg(displayName.isEmpty() ? QStringLiteral("已选择") : displayName)
             .arg(orbits.size());
     };
-    mMasterMeta->setText(metaText(true));
-    mSlaveMeta->setText(metaText(false));
+    mMasterMeta->setText(QStringLiteral("主: %1").arg(metaText(true)));
+    mSlaveMeta->setText(QStringLiteral("辅: %1").arg(metaText(false)));
 
     int idx = mCoarseMethod->findData(p.coarseMethod);
     if (idx >= 0) mCoarseMethod->setCurrentIndex(idx);

@@ -1,11 +1,13 @@
 #include "RegistrationServiceImpl.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/GdalSlcWriter.h"
+#include "dataaccess/SarProductFactory.h"
 
 #include <QtMath>
 #include <QDebug>
 #include <QFileInfo>
 #include <QDir>
+#include <QScopedPointer>
 #include <algorithm>
 #include <numeric>
 #include <cmath>
@@ -210,50 +212,116 @@ void RegistrationServiceImpl::execute() {
     mCancelled = false;
     mCorrelation = 0.0;
 
-    QString masterBandPath = mParams.masterSlcBandPath.isEmpty()
-        ? mParams.masterPath : mParams.masterSlcBandPath;
-    QString slaveBandPath  = mParams.slaveSlcBandPath.isEmpty()
-        ? mParams.slavePath : mParams.slaveSlcBandPath;
+    QString mProd = mParams.masterProductPath;
+    QString sProd = mParams.slaveProductPath;
+    if (mProd.isEmpty()) mProd = mParams.masterPath;
+    if (sProd.isEmpty()) sProd = mParams.slavePath;
 
-    // 0. 打开 SLC 文件获取尺寸
-    emit progressChanged(0, QStringLiteral("打开SLC影像..."));
-    GdalSlcReader reader;
-    if (!reader.open(masterBandPath)) {
-        emit errorOccurred(QStringLiteral("无法打开主影像: %1").arg(masterBandPath));
+    // 1. 打开主辅产品，发现波段
+    emit progressChanged(0, QStringLiteral("打开产品..."));
+    QScopedPointer<ISarProduct> masterProduct(createSarProduct(mProd));
+    QScopedPointer<ISarProduct> slaveProduct(createSarProduct(sProd));
+    if (!masterProduct || !masterProduct->open(mProd)) {
+        emit errorOccurred(QStringLiteral("无法打开主产品: %1").arg(mProd));
+        emit finished(false, QString()); mRunning = false; return;
+    }
+    if (!slaveProduct || !slaveProduct->open(sProd)) {
+        emit errorOccurred(QStringLiteral("无法打开辅产品: %1").arg(sProd));
+        emit finished(false, QString()); mRunning = false; return;
+    }
+
+    const auto& mBands = masterProduct->bands();
+    const auto& sBands = slaveProduct->bands();
+
+    // 2. 按 subSwath + polarization 配对
+    struct BandPair {
+        SarBandDescriptor master, slave;
+    };
+    QVector<BandPair> pairs;
+    for (const auto& mb : mBands) {
+        for (const auto& sb : sBands) {
+            if (mb.subSwath == sb.subSwath && mb.polarization == sb.polarization) {
+                pairs.append({mb, sb});
+                break;
+            }
+        }
+    }
+
+    if (pairs.isEmpty()) {
+        emit errorOccurred(QStringLiteral("未找到可配对的波段"));
+        emit finished(false, QString()); mRunning = false; return;
+    }
+
+    qDebug() << "[Reg] 波段配对:" << pairs.size() << "对";
+
+    // 3. 基线估算 (仅一次，共用)
+    if (mParams.estimateBaseline && !mParams.masterOrbitVectors.isEmpty()) {
+        BaselineInfo bl = estimateBaseline(
+            mParams.masterOrbitVectors, mParams.slaveOrbitVectors,
+            mParams.wavelength, mParams.masterNearRange,
+            mParams.masterRangeSpacing,
+            pairs.first().master.rasterSize.width());
+        qDebug() << QStringLiteral("[Reg] 基线 — Bperp:%1m Bpar:%2m ΔT:%3d")
+            .arg(bl.perpendicular, 0, 'f', 1)
+            .arg(bl.parallel, 0, 'f', 1)
+            .arg(bl.temporal, 0, 'f', 1);
+    }
+
+    // 4. 逐波段对配准
+    int succeeded = 0;
+    QString lastOutput;
+    for (int i = 0; i < pairs.size(); ++i) {
+        if (mCancelled) break;
+        int basePct = i * 100 / pairs.size();
+        emit progressChanged(basePct,
+            QStringLiteral("%1/%2: %3 %4")
+                .arg(i + 1).arg(pairs.size())
+                .arg(pairs[i].master.subSwath)
+                .arg(pairs[i].master.polarization));
+
+        if (processBandPair(pairs[i].master, pairs[i].slave,
+                mParams.outputDir, mParams.outputPrefix, i, pairs.size())) {
+            ++succeeded;
+        }
+    }
+
+    if (succeeded > 0) {
+        emit progressChanged(100, QStringLiteral("配准完成 (%1/%2对)")
+            .arg(succeeded).arg(pairs.size()));
+        emit finished(true, lastOutput);
+    } else {
+        emit errorOccurred(QStringLiteral("所有波段对配准失败"));
         emit finished(false, QString());
-        mRunning = false;
-        return;
+    }
+    mRunning = false;
+}
+
+// ── 单波段对配准 ──
+bool RegistrationServiceImpl::processBandPair(
+    const SarBandDescriptor& masterBand,
+    const SarBandDescriptor& slaveBand,
+    const QString& outputDir, const QString& prefix,
+    int pairIndex, int totalPairs)
+{
+    Q_UNUSED(totalPairs);
+    QString mPath = masterBand.rasterPath;
+    QString sPath = slaveBand.rasterPath;
+
+    GdalSlcReader reader;
+    if (!reader.open(mPath)) {
+        qWarning() << "[Reg] 无法打开主波段:" << mPath;
+        return false;
     }
     int mW = reader.width(), mH = reader.height();
     reader.close();
-
-    if (!reader.open(slaveBandPath)) {
-        emit errorOccurred(QStringLiteral("无法打开辅影像: %1").arg(slaveBandPath));
-        emit finished(false, QString());
-        mRunning = false;
-        return;
+    if (!reader.open(sPath)) {
+        qWarning() << "[Reg] 无法打开辅波段:" << sPath;
+        return false;
     }
     int sW = reader.width(), sH = reader.height();
     reader.close();
 
-    // 1. 基线估算
-    if (mParams.estimateBaseline
-        && !mParams.masterOrbitVectors.isEmpty()
-        && !mParams.slaveOrbitVectors.isEmpty()) {
-        emit progressChanged(5, QStringLiteral("估算基线..."));
-        BaselineInfo bl = estimateBaseline(
-            mParams.masterOrbitVectors, mParams.slaveOrbitVectors,
-            mParams.wavelength, mParams.masterNearRange,
-            mParams.masterRangeSpacing, mW);
-        qDebug() << QStringLiteral("[Reg] 垂直基线:%1m 平行基线:%2m 时间基线:%3天 模糊高程:%4m")
-            .arg(bl.perpendicular, 0, 'f', 1)
-            .arg(bl.parallel, 0, 'f', 1)
-            .arg(bl.temporal, 0, 'f', 1)
-            .arg(bl.ambiguityHeight, 0, 'f', 1);
-    }
-
-    // 2. 粗配准 — 轨道法
-    emit progressChanged(10, QStringLiteral("轨道法粗配准..."));
+    // 轨道粗配准
     auto gcps = coarseByOrbit(
         mParams.masterOrbitVectors, mParams.slaveOrbitVectors,
         mParams.masterDoppler, mParams.slaveDoppler,
@@ -261,85 +329,54 @@ void RegistrationServiceImpl::execute() {
         mParams.masterAzimuthSpacing, mParams.masterPrf,
         mW, mH, mParams.coarseControlPoints);
 
-    if (mCancelled) { emit finished(false, QString()); mRunning = false; return; }
+    if (mCancelled) return false;
 
-    // 3. 互相关精化
-    if (mParams.coarseMethod == "CrossCorrelation") {
-        emit progressChanged(20, QStringLiteral("互相关精化偏移..."));
-        coarseByCorrelation(gcps, &reader,
-            masterBandPath, slaveBandPath, mW, mH, sW, sH,
-            mParams.fineWindowSize, mParams.coarseSearchWindow,
-            mParams.correlationThreshold);
-    } else {
-        // 轨道法后也用互相关做初始精化
-        emit progressChanged(20, QStringLiteral("互相关验证..."));
-        coarseByCorrelation(gcps, &reader,
-            masterBandPath, slaveBandPath, mW, mH, sW, sH,
-            mParams.fineWindowSize, mParams.coarseSearchWindow,
-            mParams.correlationThreshold);
-    }
+    // 互相关精化
+    coarseByCorrelation(gcps, &reader, mPath, sPath, mW, mH, sW, sH,
+        mParams.fineWindowSize, mParams.coarseSearchWindow,
+        mParams.correlationThreshold);
 
-    if (mCancelled) { emit finished(false, QString()); mRunning = false; return; }
-
-    // 过滤低相关 GCP
+    // 过滤
     QVector<CoarseGcp> validGcps;
     for (const auto& g : gcps)
         if (g.correlation >= mParams.correlationThreshold)
             validGcps.append(g);
-
     if (validGcps.size() < 6) {
-        emit errorOccurred(QStringLiteral("有效控制点不足 (%1/%2)")
-            .arg(validGcps.size()).arg(gcps.size()));
-        emit finished(false, QString());
-        mRunning = false;
-        return;
+        qWarning() << "[Reg] GCP不足:" << validGcps.size();
+        return false;
     }
 
-    // 4. 精配准
-    emit progressChanged(40, QStringLiteral("亚像素精配准+多项式拟合..."));
+    // 精配准
     int oversample = (mParams.fineMethod == "Oversample") ? 16 : 64;
     RegPolynomial poly = fineRegister(validGcps, &reader,
-        masterBandPath, slaveBandPath, mW, mH, sW, sH,
+        mPath, sPath, mW, mH, sW, sH,
         oversample, mParams.polynomialDegree, mParams.correlationThreshold,
         mParams.fineWindowSize);
 
     mCorrelation = meanCorrelation(validGcps);
+    if (poly.validGcps < 6) return false;
+    if (mCancelled) return false;
 
-    if (poly.validGcps < 6) {
-        emit errorOccurred(QStringLiteral("多项式拟合失败, 有效GCP仅%1").arg(poly.validGcps));
-        emit finished(false, QString());
-        mRunning = false;
-        return;
-    }
-
-    if (mCancelled) { emit finished(false, QString()); mRunning = false; return; }
-
-    // 5. 重采样
-    emit progressChanged(60, QStringLiteral("重采样中..."));
-    QString outputPath = mParams.outputDir.isEmpty()
-        ? QFileInfo(masterBandPath).absolutePath() + "/" + mParams.outputPrefix + "_reg.tif"
-        : mParams.outputDir + "/" + mParams.outputPrefix + "_reg.tif";
+    // 重采样
+    QString pairName = QStringLiteral("%1_%2")
+        .arg(masterBand.subSwath).arg(masterBand.polarization);
+    QString outPath = outputDir.isEmpty()
+        ? QFileInfo(mPath).absolutePath() + "/" + prefix + "_" + pairName + "_reg.tif"
+        : outputDir + "/" + prefix + "_" + pairName + "_reg.tif";
 
     GdalSlcWriter writer;
     bool ok = resampleImage(poly, &reader, &writer,
-        masterBandPath, slaveBandPath, mW, mH, sW, sH,
+        mPath, sPath, mW, mH, sW, sH,
         mParams.resamplingMethod, mParams.sincWindowSize, mParams.sincBeta,
-        outputPath);
-
-    if (mCancelled) { emit finished(false, QString()); mRunning = false; return; }
+        outPath);
 
     if (ok) {
-        emit progressChanged(100, QStringLiteral("配准完成"));
-        emit finished(true, outputPath);
-        qDebug() << QStringLiteral("[Reg] 配准完成 — RMSE range:%1 azi:%2 GCPs:%3")
-            .arg(poly.rmseRange, 0, 'f', 3).arg(poly.rmseAzimuth, 0, 'f', 3)
-            .arg(poly.validGcps);
-    } else {
-        emit errorOccurred(QStringLiteral("重采样失败"));
-        emit finished(false, QString());
+        qDebug() << "[Reg]" << pairName
+                 << QStringLiteral("RMSE r:%1 a:%2")
+                    .arg(poly.rmseRange, 0, 'f', 3)
+                    .arg(poly.rmseAzimuth, 0, 'f', 3);
     }
-
-    mRunning = false;
+    return ok;
 }
 
 // ──────────────────────────────────────────────────────────
