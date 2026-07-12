@@ -400,7 +400,7 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     // ── 初始参数 ──
     mRegParams.coarseMethod = "Orbit";
     mRegParams.fineMethod = "SubPixel";
-    mRegParams.resamplingMethod = "Sinc";
+    mRegParams.resamplingMethod = "Bilinear";
     mRegParams.outputPrefix = "registered";
 }
 

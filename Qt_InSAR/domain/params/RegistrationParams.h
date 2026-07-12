@@ -35,7 +35,7 @@ struct RegistrationParams
     int       polynomialDegree = 2;
 
     // ── 重采样 ──
-    QString   resamplingMethod = "Sinc";    // "Sinc" / "Bilinear" / "Bicubic"
+    QString   resamplingMethod = "Bilinear";// "Sinc" / "Bilinear" / "Bicubic"
     double    outputResolutionRange = 0;    // 0=保持原始
     double    outputResolutionAzimuth = 0;
     int       sincWindowSize = 16;

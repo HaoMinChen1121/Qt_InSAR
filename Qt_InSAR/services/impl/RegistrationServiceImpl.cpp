@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QScopedPointer>
+#include <QApplication>
 #include <algorithm>
 #include <numeric>
 #include <cmath>
@@ -822,6 +823,9 @@ bool RegistrationServiceImpl::resampleImage(
     // 逐行重采样 + 写入，避免分配 2GB 全图缓冲
     QVector<std::complex<float>> rowBuf(masterW);
     int step = qMax(1, masterH / 100);
+    // 每行共用的多项式值
+    double aNormRow, rowOffRow, syBase;
+    int slaveRowBase;
 
     for (int row = 0; row < masterH; ++row) {
         if (mCancelled) return false;
@@ -829,16 +833,17 @@ bool RegistrationServiceImpl::resampleImage(
         if (row % step == 0) {
             int pct = 60 + (row * 40 / masterH);
             emit progressChanged(pct, QStringLiteral("重采样 %1/%2").arg(row).arg(masterH));
+            QApplication::processEvents(); // 保持 UI 响应
         }
 
-        double rNorm = 0.5;
-        double aNorm = static_cast<double>(row) / masterH;
-        double rowOff = poly.aziCoeffs[0] + poly.aziCoeffs[1]*rNorm + poly.aziCoeffs[2]*aNorm
-            + poly.aziCoeffs[3]*rNorm*aNorm + poly.aziCoeffs[4]*rNorm*rNorm + poly.aziCoeffs[5]*aNorm*aNorm;
-        int slaveRow = row + static_cast<int>(rowOff);
+        aNormRow = static_cast<double>(row) / masterH;
+        rowOffRow = poly.aziCoeffs[0] + poly.aziCoeffs[1]*0.5 + poly.aziCoeffs[2]*aNormRow
+            + poly.aziCoeffs[3]*0.5*aNormRow + poly.aziCoeffs[4]*0.25 + poly.aziCoeffs[5]*aNormRow*aNormRow;
+        slaveRowBase = row + static_cast<int>(rowOffRow);
+        syBase = rowOffRow - static_cast<int>(rowOffRow);
 
         int readRadius = (interpMethod == "Sinc") ? sincWindow : 2;
-        int sY0 = slaveRow - readRadius;
+        int sY0 = slaveRowBase - readRadius;
         int sYH = readRadius * 2 + 1;
         if (sY0 < 0) { sYH += sY0; sY0 = 0; }
         if (sY0 + sYH > slaveH) sYH = slaveH - sY0;
@@ -846,19 +851,21 @@ bool RegistrationServiceImpl::resampleImage(
             rowBuf.fill(std::complex<float>(0, 0));
         } else {
             auto sWindow = sReader->readBandWindow(0, 0, sY0, slaveW, sYH);
+
+            // 每列计算 col polynomial
             for (int col = 0; col < masterW; ++col) {
                 double rN = static_cast<double>(col) / masterW;
-                double aN = static_cast<double>(row) / masterH;
-                double colOff = poly.rangeCoeffs[0] + poly.rangeCoeffs[1]*rN + poly.rangeCoeffs[2]*aN
-                    + poly.rangeCoeffs[3]*rN*aN + poly.rangeCoeffs[4]*rN*rN + poly.rangeCoeffs[5]*aN*aN;
+                double colOff = poly.rangeCoeffs[0] + poly.rangeCoeffs[1]*rN + poly.rangeCoeffs[2]*aNormRow
+                    + poly.rangeCoeffs[3]*rN*aNormRow + poly.rangeCoeffs[4]*rN*rN + poly.rangeCoeffs[5]*aNormRow*aNormRow;
 
                 double sx = col + colOff;
-                double sy = static_cast<double>(row + static_cast<int>(rowOff) - sY0
-                    + (rowOff - static_cast<int>(rowOff)));
+                double sy = syBase;
+                int sYi = slaveRowBase - sY0;
 
-                if (sx >= 0 && sx < slaveW - 1 && sy >= 0 && sy < sYH - 1
+                if (sx >= 0 && sx < slaveW - 1 && sYi >= 0 && sYi < sYH - 1
                     && sWindow.size() >= slaveW * sYH) {
-                    rowBuf[col] = interp2D(sWindow, slaveW, sYH, sx, sy,
+                    rowBuf[col] = interp2D(sWindow, slaveW, sYH, sx,
+                        static_cast<double>(sYi) + syBase,
                         interpMethod, sincWindow, sincBeta);
                 } else {
                     rowBuf[col] = std::complex<float>(0, 0);
@@ -866,7 +873,6 @@ bool RegistrationServiceImpl::resampleImage(
             }
         }
 
-        // 逐行写入
         writer->writeRow(row, rowBuf);
     }
 
