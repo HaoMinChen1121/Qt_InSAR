@@ -95,6 +95,14 @@ bool GdalSlcWriter::writeRow(int row,
     return true;
 }
 
+void GdalSlcWriter::setGeoTransform(double x0, double dx, double rx,
+                                    double y0, double ry, double dy)
+{
+    if (!mDataset) return;
+    double gt[6] = {x0, dx, rx, y0, ry, dy};
+    GDALSetGeoTransform(static_cast<GDALDatasetH>(mDataset), gt);
+}
+
 void GdalSlcWriter::close()
 {
     if (mDataset) {

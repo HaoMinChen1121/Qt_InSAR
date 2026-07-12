@@ -820,6 +820,9 @@ bool RegistrationServiceImpl::resampleImage(
         return false;
     }
 
+    // 设置 geotransform（从主影像输入复制，无地理参考则用默认像素坐标）
+    writer->setGeoTransform(0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+
     // 逐行重采样 + 写入，避免分配 2GB 全图缓冲
     QVector<std::complex<float>> rowBuf(masterW);
     int step = qMax(1, masterH / 100);
