@@ -167,8 +167,21 @@ bool InterferogramServiceImpl::stageInterferogram(
     const QString& outPath, int width, int height,
     int rgLooks, int azLooks)
 {
+    qDebug() << "[Ifg] stageInterferogram: master=" << masterPath.left(80);
+    qDebug() << "[Ifg] stageInterferogram: slave=" << slavePath;
+
     GdalSlcReader mReader, sReader;
-    if (!mReader.open(masterPath) || !sReader.open(slavePath)) return false;
+    if (!mReader.open(masterPath)) {
+        qWarning() << "[Ifg] cannot open master:" << masterPath;
+        return false;
+    }
+    if (!sReader.open(slavePath)) {
+        qWarning() << "[Ifg] cannot open slave:" << slavePath;
+        return false;
+    }
+
+    qDebug() << "[Ifg] master" << mReader.width() << "x" << mReader.height()
+             << "slave" << sReader.width() << "x" << sReader.height();
 
     int outW = width  / rgLooks;
     int outH = height / azLooks;
