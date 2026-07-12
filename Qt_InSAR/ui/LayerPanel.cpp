@@ -54,9 +54,6 @@ void LayerPanel::setupUI()
     mTree->setAlternatingRowColors(true);
     mTree->setRootIsDecorated(true);
     mTree->setIndentation(18);
-    QFont treeFont = mTree->font();
-    treeFont.setPointSize(9);
-    mTree->setFont(treeFont);
     layout->addWidget(mTree);
 
     // ── 透明度控制 ──

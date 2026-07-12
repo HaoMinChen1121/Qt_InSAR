@@ -35,7 +35,6 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QCheckBox>
-#include <QFont>
 #include <QFormLayout>
 #include <QPushButton>
 #include <QGridLayout>
@@ -99,13 +98,9 @@ void MainWindow::initUI()
     createQuickAccessBar();
     createRightButtonGroup();
 
-    setMinimumWidth(1100);
+    setMinimumWidth(900);
     setRibbonTheme(SARibbonTheme::RibbonThemeOffice2021Blue);
     ribbonBar->setRibbonStyle(SARibbonBar::RibbonStyleLooseThreeRow);
-    QFont ribbonFont = ribbonBar->font();
-    ribbonFont.setPointSize(10);
-    ribbonBar->setFont(ribbonFont);
-    resize(1400, 900);
     showMaximized();
 }
 
@@ -316,9 +311,6 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mLblMasterInfo = new QLabel(QStringLiteral("主: 未选择"), this);
     mLblMasterInfo->setWordWrap(true);
     mLblMasterInfo->setMaximumHeight(36);
-    QFont infoFont = mLblMasterInfo->font();
-    infoFont.setPointSize(8);
-    mLblMasterInfo->setFont(infoFont);
     pnlIO->addSmallWidget(mLblMasterInfo);
 
     QAction* actSlave = createAction(QStringLiteral("辅产品\n(点击选择)"),
@@ -334,9 +326,6 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mLblSlaveInfo = new QLabel(QStringLiteral("辅: 未选择"), this);
     mLblSlaveInfo->setWordWrap(true);
     mLblSlaveInfo->setMaximumHeight(36);
-    QFont slaveInfoFont = mLblSlaveInfo->font();
-    slaveInfoFont.setPointSize(8);
-    mLblSlaveInfo->setFont(slaveInfoFont);
     pnlIO->addSmallWidget(mLblSlaveInfo);
 
     // ── Panel 2: 配准策略 ──
@@ -346,9 +335,6 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mCoarseMethodCombo->addItem(QStringLiteral("轨道法"), "Orbit");
     mCoarseMethodCombo->addItem(QStringLiteral("互相关"), "CrossCorrelation");
     mCoarseMethodCombo->setMinimumWidth(140);
-    QFont comboFont = mCoarseMethodCombo->font();
-    comboFont.setPointSize(8);
-    mCoarseMethodCombo->setFont(comboFont);
     pnlMethod->addSmallWidget(mCoarseMethodCombo);
 
     // ── Panel 3: 执行 ──
