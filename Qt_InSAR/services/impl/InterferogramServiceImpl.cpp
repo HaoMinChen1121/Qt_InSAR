@@ -105,9 +105,9 @@ void InterferogramServiceImpl::execute()
 
         // === Stage 1: 干涉图  ===
         emit progressChanged(basePct + 5, pairName + QStringLiteral(": 干涉图生成..."));
-        QString ifgPath = outputDir + "/" + prefix + "_" + pairName + "_ifg.tif";
+        QString ifgBase = outputDir + "/" + prefix + "_" + pairName;
         if (!stageInterferogram(pairs[i].master.file, pairs[i].slave.file,
-                ifgPath, w, h, mParams.rangeLooks, mParams.azimuthLooks)) {
+                ifgBase, w, h, mParams.rangeLooks, mParams.azimuthLooks)) {
             qWarning() << "[Ifg] Stage 1 failed:" << pairName;
             continue;
         }
@@ -164,7 +164,7 @@ void InterferogramServiceImpl::execute()
 // ── Stage 1: 多视 + 干涉图 + 相干性 ──
 bool InterferogramServiceImpl::stageInterferogram(
     const QString& masterPath, const QString& slavePath,
-    const QString& outPath, int width, int height,
+    const QString& outBase, int width, int height,
     int rgLooks, int azLooks)
 {
     qDebug() << "[Ifg] stageInterferogram: master=" << masterPath.left(80);
@@ -190,21 +190,17 @@ bool InterferogramServiceImpl::stageInterferogram(
     int outH = realH / azLooks;
     if (outW < 1 || outH < 1) return false;
 
-    // 先创建输出文件
-    QDir().mkpath(QFileInfo(outPath).absolutePath());
-    GdalInterferogramWriter writer;
-    if (!writer.create(outPath, outW, outH, true)) {
-        qWarning() << "[Ifg] writer.create failed:" << outPath;
-        return false;
-    }
-    writer.close(); // 先关闭，后续用 GDAL 直接写入
+    QDir().mkpath(QFileInfo(outBase).absolutePath());
+    QString ifgPath  = outBase + "_ifg.tif";
+    QString cohPath  = outBase + "_coh.tif";
+    QString phasePath = outBase + "_phase.tif";
 
-    // 用 GDAL 直接逐行写入（避免 2GB 全图缓冲）
-    GDALDatasetH hDS = GDALOpen(outPath.toUtf8().constData(), GA_Update);
-    if (!hDS) { qWarning() << "[Ifg] cannot reopen for update"; return false; }
-    GDALRasterBandH bandComplex = GDALGetRasterBand(hDS, 1);
-    GDALRasterBandH bandPhase    = GDALGetRasterBand(hDS, 2);
-    GDALRasterBandH bandCoh      = GDALGetRasterBand(hDS, 3);
+    // 创建三个独立文件
+    GDALDriverH driver = GDALGetDriverByName("GTiff");
+    GDALDatasetH hIfg = GDALCreate(driver, ifgPath.toUtf8().constData(), outW, outH, 1, GDT_CFloat32, nullptr);
+    GDALDatasetH hCoh = GDALCreate(driver, cohPath.toUtf8().constData(), outW, outH, 1, GDT_Float32, nullptr);
+    GDALDatasetH hPh  = GDALCreate(driver, phasePath.toUtf8().constData(), outW, outH, 1, GDT_Float32, nullptr);
+    if (!hIfg || !hCoh || !hPh) { qWarning() << "[Ifg] cannot create output"; return false; }
 
     QVector<std::complex<float>> rowComplex(outW);
     QVector<float> rowPhase(outW);
@@ -212,7 +208,7 @@ bool InterferogramServiceImpl::stageInterferogram(
     int cohWindow = 5;
 
     for (int row = 0; row < outH; ++row) {
-        if (mCancelled) { GDALClose(hDS); return false; }
+        if (mCancelled) { GDALClose(hIfg); GDALClose(hCoh); GDALClose(hPh); return false; }
         int srcRow = row * azLooks;
         int readH = azLooks + cohWindow * 2;
         int row0 = srcRow - cohWindow;
@@ -223,9 +219,9 @@ bool InterferogramServiceImpl::stageInterferogram(
         if (actualH == 0) {
             rowComplex.fill(std::complex<float>(0,0));
             rowPhase.fill(0); rowCoh.fill(0);
-            GDALRasterIO(bandComplex, GF_Write, 0, row, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
-            GDALRasterIO(bandPhase,    GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32, 0, 0);
-            GDALRasterIO(bandCoh,      GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32, 0, 0);
+            GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, row, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
+            GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
+            GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
             continue;
         }
 
@@ -272,12 +268,12 @@ bool InterferogramServiceImpl::stageInterferogram(
             rowCoh[col] = static_cast<float>(std::abs(crossSum) / denom);
         }
 
-        GDALRasterIO(bandComplex, GF_Write, 0, row, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
-        GDALRasterIO(bandPhase,    GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
-        GDALRasterIO(bandCoh,      GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
+        GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, row, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
+        GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
+        GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
     }
 
-    GDALClose(hDS);
+    GDALClose(hIfg); GDALClose(hCoh); GDALClose(hPh);
     qDebug() << "[Ifg] stageInterferogram SUCCESS";
     return true;
 }

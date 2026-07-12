@@ -22,7 +22,7 @@ private:
     // Stage 1: 多视+干涉+相干性
     bool stageInterferogram(
         const QString& masterPath, const QString& slavePath,
-        const QString& outPath, int width, int height,
+        const QString& outBase, int width, int height,
         int rgLooks, int azLooks);
 
     // Stage 2: 平地相位去除 (椭球面)
