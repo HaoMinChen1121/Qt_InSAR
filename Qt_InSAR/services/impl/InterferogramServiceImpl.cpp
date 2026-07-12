@@ -3,12 +3,14 @@
 #include "dataaccess/impl/GdalInterferogramWriter.h"
 #include "dataaccess/impl/GdalDemReader.h"
 #include "dataaccess/impl/QsarIO.h"
+#include "dataaccess/SarProductFactory.h"
 
 #include <QtMath>
 #include <QDebug>
 #include <QFileInfo>
 #include <QDir>
 #include <QDateTime>
+#include <QScopedPointer>
 #include <algorithm>
 
 #ifndef M_PI
@@ -28,22 +30,47 @@ void InterferogramServiceImpl::execute()
     mRunning = true;
     mCancelled = false;
 
-    // 读取 QSAR 产品获取波段列表
     if (mParams.masterQsarPath.isEmpty() || mParams.slaveQsarPath.isEmpty()) {
-        emit errorOccurred(QStringLiteral("请先选择主辅QSAR产品"));
+        emit errorOccurred(QStringLiteral("请先选择主影像和辅影像产品"));
         emit finished(false, QString());
         mRunning = false;
         return;
     }
 
-    QsarProduct masterQsar = QsarIO::read(mParams.masterQsarPath);
-    QsarProduct slaveQsar  = QsarIO::read(mParams.slaveQsarPath);
+    // 辅影像: 读取 QSAR (registered.qsar)
+    QsarProduct slaveQsar = QsarIO::read(mParams.slaveQsarPath);
+    if (slaveQsar.bands.isEmpty()) {
+        emit errorOccurred(QStringLiteral("辅影像QSAR无波段数据"));
+        emit finished(false, QString()); mRunning = false; return;
+    }
 
-    if (masterQsar.bands.isEmpty() || slaveQsar.bands.isEmpty()) {
-        emit errorOccurred(QStringLiteral("QSAR产品无波段数据"));
-        emit finished(false, QString());
-        mRunning = false;
-        return;
+    // 主影像: 支持 .zip/.SAFE (原始SLC) 或 .qsar
+    QsarProduct masterQsar;
+    QScopedPointer<ISarProduct> masterProduct;
+    if (mParams.masterQsarPath.endsWith(".qsar", Qt::CaseInsensitive)) {
+        masterQsar = QsarIO::read(mParams.masterQsarPath);
+    } else {
+        // .zip / .SAFE → 打开 Sentinel1Product 获取波段信息
+        masterProduct.reset(createSarProduct(mParams.masterQsarPath));
+        if (!masterProduct || !masterProduct->open(mParams.masterQsarPath)) {
+            emit errorOccurred(QStringLiteral("无法打开主影像产品"));
+            emit finished(false, QString()); mRunning = false; return;
+        }
+        masterQsar.sourceMaster = masterProduct->sensorInfo().missionId;
+        for (const auto& b : masterProduct->bands()) {
+            QsarBand qb;
+            qb.subSwath = b.subSwath;
+            qb.polarization = b.polarization;
+            qb.file = b.rasterPath;
+            qb.width  = b.rasterSize.width();
+            qb.height = b.rasterSize.height();
+            masterQsar.bands.append(qb);
+        }
+    }
+
+    if (masterQsar.bands.isEmpty()) {
+        emit errorOccurred(QStringLiteral("主影像无波段数据"));
+        emit finished(false, QString()); mRunning = false; return;
     }
 
     // 按 subSwath + polarization 配对波段

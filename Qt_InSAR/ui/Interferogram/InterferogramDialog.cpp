@@ -27,10 +27,10 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     QPushButton* masterBrowse = new QPushButton(tr("浏览..."));
     QHBoxLayout* masterLayout = new QHBoxLayout;
     masterLayout->addWidget(mMasterQsar, 1); masterLayout->addWidget(masterBrowse);
-    f0->addRow(tr("主影像(.qsar):"), masterLayout);
+    f0->addRow(tr("主影像(zip/SAFE):"), masterLayout);
     connect(masterBrowse, &QPushButton::clicked, this, [this]() {
-        QString f = QFileDialog::getOpenFileName(this, tr("选择主影像QSAR"),
-            QString(), tr("QSAR (*.qsar);;所有 (*.*)"));
+        QString f = QFileDialog::getOpenFileName(this, tr("选择主影像产品"),
+            QString(), tr("Sentinel-1 (*.zip *.SAFE);;所有 (*.*)"));
         if (!f.isEmpty()) mMasterQsar->setText(f);
     });
     mSlaveQsar = new QLineEdit;
