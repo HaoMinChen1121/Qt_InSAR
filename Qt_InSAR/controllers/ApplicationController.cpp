@@ -209,8 +209,7 @@ void ApplicationController::wireConnections()
             if (!newLayers.isEmpty()) {
                 QgsMapLayer* first = newLayers.first();
                 QgsCoordinateReferenceSystem crs = first->crs();
-                if (crs.isValid())
-                    canvas->setDestinationCrs(crs);
+                canvas->setDestinationCrs(crs);
                 else
                     canvas->setDestinationCrs(QgsCoordinateReferenceSystem());
             }
