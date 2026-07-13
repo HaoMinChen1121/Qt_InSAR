@@ -472,10 +472,10 @@ void MainWindow::updateImageSelectionLabel(QLabel* label, const QString& path)
 void MainWindow::createCategoryInterferogram(SARibbonCategory* page)
 {
     SARibbonPanel* pnlIfg = page->addPanel(QStringLiteral("干涉参数"));
-    QSpinBox* rgSpin = new QSpinBox(this); rgSpin->setRange(1, 32); rgSpin->setValue(1);
+    QSpinBox* rgSpin = new QSpinBox(this); rgSpin->setRange(1, 32); rgSpin->setValue(4);
     rgSpin->setPrefix(QStringLiteral("Rg: "));
     pnlIfg->addSmallWidget(rgSpin);
-    QSpinBox* azSpin = new QSpinBox(this); azSpin->setRange(1, 32); azSpin->setValue(1);
+    QSpinBox* azSpin = new QSpinBox(this); azSpin->setRange(1, 32); azSpin->setValue(4);
     azSpin->setPrefix(QStringLiteral("Az: "));
     pnlIfg->addSmallWidget(azSpin);
 

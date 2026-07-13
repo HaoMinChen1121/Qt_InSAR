@@ -48,7 +48,7 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     // ===== Tab 1: 干涉图 =====
     QWidget* tab1 = new QWidget;
     QFormLayout* f1 = new QFormLayout(tab1);
-    mRangeLooks = new QSpinBox; mRangeLooks->setRange(1, 32); mRangeLooks->setValue(1);
+    mRangeLooks = new QSpinBox; mRangeLooks->setRange(1, 32); mRangeLooks->setValue(4);
     f1->addRow(tr("距离向多视比:"), mRangeLooks);
     mAzimuthLooks = new QSpinBox; mAzimuthLooks->setRange(1, 32); mAzimuthLooks->setValue(1);
     f1->addRow(tr("方位向多视比:"), mAzimuthLooks);

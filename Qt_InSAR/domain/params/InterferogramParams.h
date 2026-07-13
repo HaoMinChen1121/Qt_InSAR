@@ -12,8 +12,8 @@ struct InterferogramParams
     QString   slaveProductDisplay;        // 辅产品显示名
 
     // 干涉图生成
-    int       rangeLooks = 1;            // 距离向多视比
-    int       azimuthLooks = 1;           // 方位向多视比
+    int       rangeLooks = 4;            // 距离向多视比 (4→16x缩小)
+    int       azimuthLooks = 4;           // 方位向多视比
     QString   outputType = "Complex";     // "Complex" / "Phase" / "Coherence"
     bool      spectralFilter = true;      // 频谱偏移滤波
 
