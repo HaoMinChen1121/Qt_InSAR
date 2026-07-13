@@ -1,8 +1,10 @@
 #include "ColorRampDialog.h"
 
 #include <qgsrasterlayer.h>
+#include <qgsrasterlayer.h>
 #include <qgsrastershader.h>
 #include <qgssinglebandpseudocolorrenderer.h>
+#include <qgsrastershaderfunction.h>
 #include <qgscolorrampshader.h>
 
 #include <QVBoxLayout>
@@ -131,13 +133,16 @@ void ColorRampDialog::applyRamp(double minVal, double maxVal,
     for (const auto& s : stops)
         items.append(QgsColorRampShader::ColorRampItem(s.first, s.second, QString()));
 
-    auto* shader = new QgsColorRampShader(minVal, maxVal);
-    shader->setColorRampItemList(items);
-    shader->setColorRampType(QgsColorRampShader::Interpolated);
-    shader->classifyColorRamp();
+    auto* colorFn = new QgsColorRampShader(minVal, maxVal);
+    colorFn->setColorRampItemList(items);
+    colorFn->setColorRampType(QgsColorRampShader::INTERPOLATED);
+    colorFn->classifyColorRamp();
+
+    auto* rasterShader = new QgsRasterShader();
+    rasterShader->setRasterShaderFunction(colorFn);
 
     auto* renderer = new QgsSingleBandPseudoColorRenderer(
-        mLayer->dataProvider(), 1, shader);
+        mLayer->dataProvider(), 1, rasterShader);
     mLayer->setRenderer(renderer);
     mLayer->triggerRepaint();
 }
