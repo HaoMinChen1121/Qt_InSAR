@@ -201,8 +201,7 @@ void LayerPanel::onContextMenu(const QPoint& pos)
     QString id = item->data(0, Qt::UserRole).toString();
 
     QMenu menu(this);
-    QAction* actZoom  = menu.addAction(QStringLiteral("缩放到图层"));
-    QAction* actColor = menu.addAction(QStringLiteral("彩色渲染"));
+    QAction* actZoom = menu.addAction(QStringLiteral("缩放到图层"));
     menu.addSeparator();
     QAction* actRemove = nullptr;
     QAction* actUp     = menu.addAction(QStringLiteral("上移"));
@@ -219,8 +218,6 @@ void LayerPanel::onContextMenu(const QPoint& pos)
 
     if (selected == actZoom)
         onZoomToLayer();
-    else if (selected == actColor)
-        emit colorRampRequested(id);
     else if (selected == actUp)
         onMoveUp();
     else if (selected == actDown)

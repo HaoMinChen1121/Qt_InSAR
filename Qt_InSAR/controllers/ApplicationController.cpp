@@ -5,7 +5,6 @@
 #include "ui/ProcessingMonitorPanel.h"
 #include "ui/MapCanvasWidget.h"
 #include "ui/SarMetadataPanel.h"
-#include "ui/ColorRampDialog.h"
 
 #include "services/impl/RegistrationServiceImpl.h"
 #include "services/impl/InterferogramServiceImpl.h"
@@ -305,19 +304,6 @@ void ApplicationController::wireConnections()
     connect(layerPanel, &LayerPanel::fullExtentRequested, this,
         [canvas]() {
             canvas->zoomToFullExtent();
-        });
-
-    connect(layerPanel, &LayerPanel::colorRampRequested, this,
-        [this, canvas](const QString& layerId) {
-            QgsMapLayer* layer = QgsProject::instance()->mapLayer(layerId);
-            QgsRasterLayer* rl = qobject_cast<QgsRasterLayer*>(layer);
-            if (rl) {
-                ColorRampDialog dlg(rl, mMainWindow);
-                if (dlg.exec() == QDialog::Accepted) {
-                    rebuildCanvasLayers();
-                    canvas->refresh();
-                }
-            }
         });
 
     connect(layerPanel, &LayerPanel::zoomToLayerRequested, this,

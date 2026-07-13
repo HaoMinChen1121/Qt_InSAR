@@ -144,7 +144,6 @@
     <ClCompile Include="ui\Deformation\DeformationDialog.cpp" />
     <ClCompile Include="ui\OverviewWidget.cpp" />
     <ClCompile Include="ui\SarMetadataPanel.cpp" />
-    <ClCompile Include="ui\ColorRampDialog.cpp" />
     <!-- QtMoc (headers with Q_OBJECT) -->
     <QtMoc Include="mainwindow.h" />
     <QtMoc Include="ApplicationWidget.h" />
@@ -176,7 +175,6 @@
     <QtMoc Include="ui\Deformation\DeformationDialog.h" />
     <QtMoc Include="ui\OverviewWidget.h" />
     <QtMoc Include="ui\SarMetadataPanel.h" />
-    <QtMoc Include="ui\ColorRampDialog.h" />
     <ClInclude Include="dataaccess\ISarProduct.h" />
     <ClInclude Include="dataaccess\SarProductFactory.h" />
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h" />
