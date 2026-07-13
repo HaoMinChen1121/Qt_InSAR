@@ -61,6 +61,7 @@ void InterferogramServiceImpl::execute()
             emit finished(false, QString()); mRunning = false; return;
         }
         masterQsar.sourceMaster = masterProduct->sensorInfo().missionId;
+        mParams.incidenceAngle = masterProduct->sensorInfo().incidenceAngleMid;
         for (const auto& b : masterProduct->bands()) {
             QsarBand qb;
             qb.subSwath = b.subSwath;
@@ -144,7 +145,8 @@ void InterferogramServiceImpl::execute()
             emit progressChanged(basePct + 35, pairName + QStringLiteral(": 平地效应去除..."));
             QString flatBase = flatDir + "/" + pairName;
             double wl = 0.0555;
-            if (stageFlatEarth(ifgBase + "_ifg.tif", flatDir + "/" + pairName, w, h, wl, 800000.0, 2.33, 1680.0)) {
+            double incRad = mParams.incidenceAngle * M_PI / 180.0;
+            if (stageFlatEarth(ifgBase + "_ifg.tif", flatDir + "/" + pairName, w, h, wl, 800000.0, 2.33, 1680.0, incRad)) {
                 if (qsar.stages.isEmpty() || qsar.stages.last() != "flat")
                     qsar.stages << "flat";
                 qb.flatFile = QStringLiteral("flat/%1_flat.tif").arg(pairName);
@@ -158,7 +160,8 @@ void InterferogramServiceImpl::execute()
             double wl = 0.0555;
             QString flatSrc = qb.flatFile.isEmpty() ? ifgBase + "_ifg.tif"
                 : flatDir + "/" + pairName + "_flat.tif";
-            if (stageDifferential(flatSrc, mParams.demPath, diffDir + "/" + pairName, w, h, wl, 800000.0, 2.33)) {
+            double incRad = mParams.incidenceAngle * M_PI / 180.0;
+            if (stageDifferential(flatSrc, mParams.demPath, diffDir + "/" + pairName, w, h, wl, 800000.0, 2.33, incRad)) {
                 if (qsar.stages.isEmpty() || qsar.stages.last() != "diff")
                     qsar.stages << "diff";
                 qb.diffFile = QStringLiteral("diff/%1_diff.tif").arg(pairName);
@@ -303,7 +306,8 @@ bool InterferogramServiceImpl::stageInterferogram(
 bool InterferogramServiceImpl::stageFlatEarth(
     const QString& ifgPath, const QString& outBase,
     int width, int height, double wavelength,
-    double nearRange, double rangeSpacing, double prf)
+    double nearRange, double rangeSpacing, double prf,
+    double incidenceAngleRad)
 {
     Q_UNUSED(height);
     Q_UNUSED(prf);
@@ -332,7 +336,7 @@ bool InterferogramServiceImpl::stageFlatEarth(
         auto rowData = reader.readBandWindow(0, 0, row, w, 1);
         for (int col = 0; col < w; ++col) {
             double R = nearRange + col * rangeSpacing;
-            double theta = std::acos((Re + H) / (Re * 1.001));
+            double theta = incidenceAngleRad;  // 从主产品标注XML读取
             double phiFlat = 0;
             if (R > 0) {
                 double Bpar = 20.0;
@@ -358,7 +362,8 @@ bool InterferogramServiceImpl::stageFlatEarth(
 bool InterferogramServiceImpl::stageDifferential(
     const QString& flatPath, const QString& demPath, const QString& outBase,
     int width, int height, double wavelength,
-    double nearRange, double rangeSpacing)
+    double nearRange, double rangeSpacing,
+    double incidenceAngleRad)
 {
     Q_UNUSED(width); Q_UNUSED(height);
 
@@ -392,7 +397,7 @@ bool InterferogramServiceImpl::stageDifferential(
 
         for (int col = 0; col < w; ++col) {
             double R = nearRange + col * rangeSpacing;
-            double theta = 35.0 * M_PI / 180.0;
+            double theta = incidenceAngleRad;  // 从主产品标注XML读取
             int demCol = col * demW / w;
             demCol = qBound(0, demCol, demW - 1);
             double hDem = dem.readElevationWindow(demCol, demRow, 1, 1).value(0, 0.0);

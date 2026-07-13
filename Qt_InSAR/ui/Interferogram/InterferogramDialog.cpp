@@ -85,6 +85,8 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     });
     mPreciseOrbit = new QCheckBox(tr("使用精密轨道")); mPreciseOrbit->setChecked(true);
     f2->addWidget(mPreciseOrbit);
+    mIncAngleLabel = new QLabel(tr("入射角: 35.0° (从主产品自动获取)"), this);
+    f2->addWidget(mIncAngleLabel);
     tabs->addTab(tab2, tr("去平地"));
 
     // ===== Tab 3: 差分 =====
@@ -148,6 +150,7 @@ void InterferogramDialog::setParams(const InterferogramParams& p)
     mDiffDemPath->setText(p.demPath);
     mDispDirection->setCurrentText(p.displacementDirection);
     mAtmCorr->setChecked(p.atmosphericCorrection);
+    mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从主产品自动获取)").arg(p.incidenceAngle, 0, 'f', 1));
     mOutputDir->setText(p.outputDir);
     mOutputPrefix->setText(p.outputPrefix);
 }

@@ -44,6 +44,7 @@ private:
     QLineEdit* mOrbitFile;
     QLineEdit* mFlatDemPath;
     QCheckBox* mPreciseOrbit;
+    QLabel*    mIncAngleLabel;
 
     // Tab 3: 差分
     QLineEdit* mDiffDemPath;

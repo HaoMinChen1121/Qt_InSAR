@@ -19,22 +19,22 @@ public:
     bool isRunning() const override;
 
 private:
-    // Stage 1: 多视+干涉+相干性
     bool stageInterferogram(
         const QString& masterPath, const QString& slavePath,
         const QString& outBase, int width, int height,
         int rgLooks, int azLooks);
 
-    // Stage 2: 平地相位去除 (椭球面)
     bool stageFlatEarth(
         const QString& ifgPath, const QString& outBase,
         int width, int height, double wavelength,
-        double nearRange, double rangeSpacing, double prf);
+        double nearRange, double rangeSpacing, double prf,
+        double incidenceAngleRad);
 
     bool stageDifferential(
         const QString& flatPath, const QString& demPath, const QString& outBase,
         int width, int height, double wavelength,
-        double nearRange, double rangeSpacing);
+        double nearRange, double rangeSpacing,
+        double incidenceAngleRad);
 
     InterferogramParams mParams;
     bool mRunning = false;
