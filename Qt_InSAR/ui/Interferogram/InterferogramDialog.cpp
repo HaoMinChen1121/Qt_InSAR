@@ -82,7 +82,7 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
         mCachedIncAngle = readIncFromXml(path);
         if (mCachedIncAngle < 1.0) mCachedIncAngle = 35.0;
 
-        mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从产品读取)").arg(mCachedIncAngle, 0, 'f', 1));
+        mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从产品读取)").arg(mCachedIncAngle, 0, 'f', 2));
         mIncAngleLabel->setStyleSheet("color: #27AE60; font-weight: bold;");
     };
 
@@ -218,7 +218,7 @@ void InterferogramDialog::setParams(const InterferogramParams& p)
     mDiffDemPath->setText(p.demPath);
     mDispDirection->setCurrentText(p.displacementDirection);
     mAtmCorr->setChecked(p.atmosphericCorrection);
-    mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从主产品自动获取)").arg(mCachedIncAngle, 0, 'f', 1));
+    mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从主产品自动获取)").arg(mCachedIncAngle, 0, 'f', 2));
     mOutputDir->setText(p.outputDir);
     mOutputPrefix->setText(p.outputPrefix);
 }
