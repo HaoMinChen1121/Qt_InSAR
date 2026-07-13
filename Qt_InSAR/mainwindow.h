@@ -128,6 +128,9 @@ private:
     QCheckBox*       mKeepResCheck = nullptr;
     RegistrationParams mRegParams;
     InterferogramParams mIfgParams;
+    QSpinBox* mIfgRgSpin = nullptr;
+    QSpinBox* mIfgAzSpin = nullptr;
+    void applyIfgParamsToRibbon(const InterferogramParams& p);
 
     QMenu* buildSlcLayerMenu(bool isMaster);
 

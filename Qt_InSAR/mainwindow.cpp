@@ -453,6 +453,13 @@ void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
     mRegParams.slavePath = sp;
 }
 
+// ── 干涉图参数回写Ribbon ──
+void MainWindow::applyIfgParamsToRibbon(const InterferogramParams& p)
+{
+    if (mIfgRgSpin) mIfgRgSpin->setValue(p.rangeLooks);
+    if (mIfgAzSpin) mIfgAzSpin->setValue(p.azimuthLooks);
+}
+
 // ── 更新主/辅影像选择标签 ──
 void MainWindow::updateImageSelectionLabel(QLabel* label, const QString& path)
 {
@@ -472,12 +479,12 @@ void MainWindow::updateImageSelectionLabel(QLabel* label, const QString& path)
 void MainWindow::createCategoryInterferogram(SARibbonCategory* page)
 {
     SARibbonPanel* pnlIfg = page->addPanel(QStringLiteral("干涉参数"));
-    QSpinBox* rgSpin = new QSpinBox(this); rgSpin->setRange(1, 32); rgSpin->setValue(4);
-    rgSpin->setPrefix(QStringLiteral("Rg: "));
-    pnlIfg->addSmallWidget(rgSpin);
-    QSpinBox* azSpin = new QSpinBox(this); azSpin->setRange(1, 32); azSpin->setValue(4);
-    azSpin->setPrefix(QStringLiteral("Az: "));
-    pnlIfg->addSmallWidget(azSpin);
+    mIfgRgSpin = new QSpinBox(this); mIfgRgSpin->setRange(1, 32); mIfgRgSpin->setValue(4);
+    mIfgRgSpin->setPrefix(QStringLiteral("Rg: "));
+    pnlIfg->addSmallWidget(mIfgRgSpin);
+    mIfgAzSpin = new QSpinBox(this); mIfgAzSpin->setRange(1, 32); mIfgAzSpin->setValue(4);
+    mIfgAzSpin->setPrefix(QStringLiteral("Az: "));
+    pnlIfg->addSmallWidget(mIfgAzSpin);
 
     SARibbonPanel* pnlFlat = page->addPanel(QStringLiteral("平地效应"));
     QComboBox* refCombo = new QComboBox(this);
@@ -499,8 +506,8 @@ void MainWindow::createCategoryInterferogram(SARibbonCategory* page)
                                         ":/icon/icon/folder-cog.svg", "actExecIfg");
     pnlExec->addLargeAction(actExecIfg);
     connect(actExecIfg, &QAction::triggered, this, [this]() {
-        mIfgParams.rangeLooks = 1;
-        mIfgParams.azimuthLooks = 1;
+        mIfgParams.rangeLooks = mIfgRgSpin->value();
+        mIfgParams.azimuthLooks = mIfgAzSpin->value();
         mIfgParams.referenceSource = "Orbit";
         if (mIfgParams.masterQsarPath.isEmpty() || mIfgParams.slaveQsarPath.isEmpty()) {
             QMessageBox::warning(this, QStringLiteral("提示"),
@@ -514,9 +521,12 @@ void MainWindow::createCategoryInterferogram(SARibbonCategory* page)
     pnlExec->addSmallAction(actAdvIfg);
     connect(actAdvIfg, &QAction::triggered, this, [this]() {
         InterferogramDialog dlg(this);
+        mIfgParams.rangeLooks = mIfgRgSpin->value();
+        mIfgParams.azimuthLooks = mIfgAzSpin->value();
         dlg.setParams(mIfgParams);
         if (dlg.exec() == QDialog::Accepted) {
             mIfgParams = dlg.params();
+            applyIfgParamsToRibbon(mIfgParams);
         }
     });
 }
