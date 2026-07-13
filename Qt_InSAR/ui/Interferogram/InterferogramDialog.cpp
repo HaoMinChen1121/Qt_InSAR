@@ -201,13 +201,6 @@ void InterferogramDialog::setParams(const InterferogramParams& p)
 {
     mCachedIncAngle = p.incidenceAngle;
 
-    // 从主产品读取真实入射角
-    if (!p.masterQsarPath.isEmpty()) {
-        QScopedPointer<ISarProduct> prod(createSarProduct(p.masterQsarPath));
-        if (prod && prod->open(p.masterQsarPath))
-            mCachedIncAngle = prod->sensorInfo().incidenceAngleMid;
-    }
-
     mMasterQsar->setText(p.masterQsarPath);
     mSlaveQsar->setText(p.slaveQsarPath);
     mRangeLooks->setValue(p.rangeLooks);
@@ -218,9 +211,13 @@ void InterferogramDialog::setParams(const InterferogramParams& p)
     mDiffDemPath->setText(p.demPath);
     mDispDirection->setCurrentText(p.displacementDirection);
     mAtmCorr->setChecked(p.atmosphericCorrection);
-    mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从主产品自动获取)").arg(mCachedIncAngle, 0, 'f', 2));
     mOutputDir->setText(p.outputDir);
     mOutputPrefix->setText(p.outputPrefix);
+
+    // 入射角显示由 updateIncAngle 回调处理 (editingFinished / browse)
+    if (p.masterQsarPath.isEmpty())
+        mIncAngleLabel->setText(QStringLiteral("入射角: (未加载产品)"));
+    // 非空时 mMasterQsar->setText 会触发 editingFinished → updateIncAngle
 }
 
 InterferogramParams InterferogramDialog::params() const
@@ -243,44 +240,3 @@ InterferogramParams InterferogramDialog::params() const
     return p;
 }
 
-void InterferogramDialog::setFlatEarthParams(const FlatEarthParams& p)
-{
-    mRefSource->setCurrentText(p.method);
-    mSemiMajor->setValue(p.semiMajorAxis);
-    mEccentricity->setValue(p.eccentricity);
-    mOrbitFile->setText(p.orbitFilePath);
-    mFlatDemPath->setText(p.demPath);
-    mPreciseOrbit->setChecked(p.usePreciseOrbit);
-}
-
-FlatEarthParams InterferogramDialog::flatEarthParams() const
-{
-    FlatEarthParams p;
-    p.method = mRefSource->currentText();
-    p.semiMajorAxis = mSemiMajor->value();
-    p.eccentricity = mEccentricity->value();
-    p.orbitFilePath = mOrbitFile->text();
-    p.demPath = mFlatDemPath->text();
-    p.usePreciseOrbit = mPreciseOrbit->isChecked();
-    return p;
-}
-
-void InterferogramDialog::setDifferentialParams(const DifferentialParams& p)
-{
-    mDiffDemPath->setText(p.demPath);
-    mDispDirection->setCurrentText(p.displacementDirection);
-    mAtmCorr->setChecked(p.atmosphericCorrection);
-    mAtmModel->setCurrentText(p.atmosphericModel);
-    mTopoCorr->setChecked(p.topographicCorrection);
-}
-
-DifferentialParams InterferogramDialog::differentialParams() const
-{
-    DifferentialParams p;
-    p.demPath = mDiffDemPath->text();
-    p.displacementDirection = mDispDirection->currentText();
-    p.atmosphericCorrection = mAtmCorr->isChecked();
-    p.atmosphericModel = mAtmModel->currentText();
-    p.topographicCorrection = mTopoCorr->isChecked();
-    return p;
-}

@@ -3,8 +3,6 @@
 
 #include <QDialog>
 #include "domain/params/InterferogramParams.h"
-#include "domain/params/FlatEarthParams.h"
-#include "domain/params/DifferentialParams.h"
 
 class QSpinBox;
 class QComboBox;
@@ -20,12 +18,6 @@ public:
     explicit InterferogramDialog(QWidget* parent = nullptr);
     void setParams(const InterferogramParams& p);
     InterferogramParams params() const;
-
-    void setFlatEarthParams(const FlatEarthParams& p);
-    FlatEarthParams flatEarthParams() const;
-
-    void setDifferentialParams(const DifferentialParams& p);
-    DifferentialParams differentialParams() const;
 
 private:
     // Tab 0: 输入
