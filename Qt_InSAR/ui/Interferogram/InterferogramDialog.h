@@ -46,6 +46,7 @@ private:
     QLineEdit* mFlatDemPath;
     QCheckBox* mPreciseOrbit;
     QLabel*    mIncAngleLabel;
+    double     mCachedIncAngle = 35.0;
 
     // Tab 3: 差分
     QLineEdit* mDiffDemPath;

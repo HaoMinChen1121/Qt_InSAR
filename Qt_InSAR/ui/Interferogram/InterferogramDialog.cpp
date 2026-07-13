@@ -1,4 +1,6 @@
 #include "InterferogramDialog.h"
+#include "dataaccess/SarProductFactory.h"
+
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QTabWidget>
@@ -11,6 +13,7 @@
 #include <QPushButton>
 #include <QDialogButtonBox>
 #include <QFileDialog>
+#include <QScopedPointer>
 #include <QHBoxLayout>
 
 InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
@@ -141,6 +144,15 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
 
 void InterferogramDialog::setParams(const InterferogramParams& p)
 {
+    mCachedIncAngle = p.incidenceAngle;
+
+    // 从主产品读取真实入射角
+    if (!p.masterQsarPath.isEmpty()) {
+        QScopedPointer<ISarProduct> prod(createSarProduct(p.masterQsarPath));
+        if (prod && prod->open(p.masterQsarPath))
+            mCachedIncAngle = prod->sensorInfo().incidenceAngleMid;
+    }
+
     mMasterQsar->setText(p.masterQsarPath);
     mSlaveQsar->setText(p.slaveQsarPath);
     mRangeLooks->setValue(p.rangeLooks);
@@ -151,7 +163,7 @@ void InterferogramDialog::setParams(const InterferogramParams& p)
     mDiffDemPath->setText(p.demPath);
     mDispDirection->setCurrentText(p.displacementDirection);
     mAtmCorr->setChecked(p.atmosphericCorrection);
-    mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从主产品自动获取)").arg(p.incidenceAngle, 0, 'f', 1));
+    mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从主产品自动获取)").arg(mCachedIncAngle, 0, 'f', 1));
     mOutputDir->setText(p.outputDir);
     mOutputPrefix->setText(p.outputPrefix);
 }
@@ -170,6 +182,7 @@ InterferogramParams InterferogramDialog::params() const
     p.displacementDirection = mDispDirection->currentText();
     p.atmosphericCorrection = mAtmCorr->isChecked();
     p.enableDifferential = mTopoCorr->isChecked();
+    p.incidenceAngle = mCachedIncAngle;
     p.outputDir = mOutputDir->text();
     p.outputPrefix = mOutputPrefix->text();
     return p;
