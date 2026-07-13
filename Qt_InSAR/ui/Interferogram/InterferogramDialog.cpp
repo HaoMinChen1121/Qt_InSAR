@@ -1,6 +1,9 @@
 #include "InterferogramDialog.h"
 #include "dataaccess/SarProductFactory.h"
 
+#include <gdal_priv.h>
+#include <cpl_vsi.h>
+
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QTabWidget>
@@ -40,16 +43,45 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
             mIncAngleLabel->setStyleSheet("color: #888;");
             return;
         }
-        QScopedPointer<ISarProduct> prod(createSarProduct(path));
-        if (prod && prod->open(path)) {
-            mCachedIncAngle = prod->sensorInfo().incidenceAngleMid;
-            if (mCachedIncAngle < 1.0) mCachedIncAngle = 35.0; // XML未解析到则用默认
-            mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从产品读取)").arg(mCachedIncAngle, 0, 'f', 1));
-            mIncAngleLabel->setStyleSheet("color: #27AE60; font-weight: bold;");
-        } else {
-            mIncAngleLabel->setText(QStringLiteral("入射角: 无法读取产品"));
-            mIncAngleLabel->setStyleSheet("color: #E74C3C;");
-        }
+
+        auto readIncFromXml = [](const QString& prodPath) -> double {
+            QScopedPointer<ISarProduct> prod(createSarProduct(prodPath));
+            if (!prod || !prod->open(prodPath)) return 0;
+            const auto& bands = prod->bands();
+            if (bands.isEmpty()) return 0;
+            // 从波段 VSI 路径推导 annotation 目录
+            QString bandPath = bands.first().rasterPath;
+            int measIdx = bandPath.lastIndexOf("/measurement/");
+            if (measIdx < 0) return 0;
+            QString annDir = bandPath.left(measIdx) + "/annotation";
+            char** entries = VSIReadDir(annDir.toUtf8().constData());
+            if (!entries) return 0;
+            double result = 0;
+            for (int i = 0; entries[i] && result < 1.0; ++i) {
+                QString e = QString::fromUtf8(entries[i]);
+                if (!e.endsWith(".xml") || e.contains("calibration")) continue;
+                VSILFILE* fp = VSIFOpenExL((annDir + "/" + e).toUtf8().constData(), "rb", TRUE);
+                if (!fp) continue;
+                QByteArray xml; xml.resize(1024*1024);
+                vsi_l_offset n = VSIFReadL(xml.data(), 1, xml.size(), fp);
+                xml.resize(static_cast<int>(n)); VSIFCloseL(fp);
+                // 找 <incidenceAngleMidSwath>数字</incidenceAngleMidSwath>
+                int idx = xml.indexOf("<incidenceAngleMidSwath>");
+                if (idx >= 0) {
+                    idx += 26; // len of tag
+                    int end = xml.indexOf('<', idx);
+                    result = QString::fromUtf8(xml.mid(idx, end - idx)).toDouble();
+                }
+            }
+            CSLDestroy(entries);
+            return result;
+        };
+
+        mCachedIncAngle = readIncFromXml(path);
+        if (mCachedIncAngle < 1.0) mCachedIncAngle = 35.0;
+
+        mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从产品读取)").arg(mCachedIncAngle, 0, 'f', 1));
+        mIncAngleLabel->setStyleSheet("color: #27AE60; font-weight: bold;");
     };
 
     connect(masterBrowse, &QPushButton::clicked, this, [this, updateIncAngle]() {
