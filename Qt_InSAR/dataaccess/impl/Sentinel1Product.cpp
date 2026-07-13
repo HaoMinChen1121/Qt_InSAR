@@ -497,13 +497,24 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
     if (!nl.isEmpty())
         mSensorInfo.prf = nl.at(0).toElement().text().toDouble();
 
-    // 入射角
-    nl = root.elementsByTagName("incidenceAngle");
-    if (!nl.isEmpty()) {
-        double inc = nl.at(0).toElement().text().toDouble();
-        mSensorInfo.incidenceAngleMid   = inc;
-        mSensorInfo.incidenceAngleNear  = inc - 5.0;
-        mSensorInfo.incidenceAngleFar   = inc + 5.0;
+    // 入射角 (可能在 <imageInformation> 或直接 <incidenceAngle>)
+    {
+        nl = root.elementsByTagName("incidenceAngle");
+        if (nl.isEmpty()) nl = root.elementsByTagName("incidenceAngleMidSwath");
+        if (nl.isEmpty()) {
+            // 尝试 imageInformation 下的 incidenceAngle
+            QDomNodeList ii = root.elementsByTagName("imageInformation");
+            if (!ii.isEmpty())
+                nl = ii.at(0).toElement().elementsByTagName("incidenceAngle");
+        }
+        if (!nl.isEmpty()) {
+            double inc = nl.at(0).toElement().text().toDouble();
+            if (inc > 1.0) { // 有效值
+                mSensorInfo.incidenceAngleMid  = inc;
+                mSensorInfo.incidenceAngleNear = inc - 5.0;
+                mSensorInfo.incidenceAngleFar  = inc + 5.0;
+            }
+        }
     }
 
     // ── Burst 边界 (TOPSAR ESD 所需) ──
