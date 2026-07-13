@@ -17,6 +17,7 @@
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QScopedPointer>
+#include <QLocale>
 #include <QHBoxLayout>
 
 InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
@@ -70,7 +71,7 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
                 if (idx >= 0) {
                     idx += 26; // len of tag
                     int end = xml.indexOf('<', idx);
-                    result = QString::fromUtf8(xml.mid(idx, end - idx)).toDouble();
+                    result = QLocale::c().toDouble(QString::fromUtf8(xml.mid(idx, end - idx)));
                 }
             }
             CSLDestroy(entries);
