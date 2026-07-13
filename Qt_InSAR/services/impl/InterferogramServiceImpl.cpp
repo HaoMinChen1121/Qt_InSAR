@@ -294,6 +294,9 @@ bool InterferogramServiceImpl::stageInterferogram(
         GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
     }
 
+    GDALComputeRasterMinMax(GDALGetRasterBand(hIfg,1), FALSE, nullptr);
+    GDALComputeRasterMinMax(GDALGetRasterBand(hCoh,1), FALSE, nullptr);
+    GDALComputeRasterMinMax(GDALGetRasterBand(hPh, 1), FALSE, nullptr);
     GDALClose(hIfg); GDALClose(hCoh); GDALClose(hPh);
     qDebug() << "[Ifg] stageInterferogram SUCCESS";
     return true;
@@ -350,6 +353,8 @@ bool InterferogramServiceImpl::stageFlatEarth(
         GDALRasterIO(GDALGetRasterBand(hOut,1), GF_Write, 0, row, w, 1, rowBuf.data(), w, 1, GDT_CFloat32, 0, 0);
         GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, w, 1, rowPhase.data(), w, 1, GDT_Float32, 0, 0);
     }
+    GDALComputeRasterMinMax(GDALGetRasterBand(hOut,1), FALSE, nullptr);
+    GDALComputeRasterMinMax(GDALGetRasterBand(hPh, 1), FALSE, nullptr);
     GDALClose(hOut); GDALClose(hPh);
     return true;
 }
@@ -410,6 +415,8 @@ bool InterferogramServiceImpl::stageDifferential(
         GDALRasterIO(GDALGetRasterBand(hOut,1), GF_Write, 0, row, w, 1, rowBuf.data(), w, 1, GDT_CFloat32, 0, 0);
         GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, w, 1, rowPhase.data(), w, 1, GDT_Float32, 0, 0);
     }
+    GDALComputeRasterMinMax(GDALGetRasterBand(hOut,1), FALSE, nullptr);
+    GDALComputeRasterMinMax(GDALGetRasterBand(hPh, 1), FALSE, nullptr);
     GDALClose(hOut); GDALClose(hPh); reader.close(); dem.close();
     return true;
 }

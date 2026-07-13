@@ -500,7 +500,7 @@ void ApplicationController::onRegistrationRunRequested(const RegistrationParams&
 void ApplicationController::onInterferogramRunRequested(const InterferogramParams& params)
 {
     mInterferogramSvc->setParams(params);
-    mInterferogramSvc->execute();
+    QtConcurrent::run([this]() { mInterferogramSvc->execute(); });
 }
 
 void ApplicationController::onBaselineEstimateRequested()

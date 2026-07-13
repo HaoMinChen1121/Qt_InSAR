@@ -165,6 +165,7 @@ InterferogramParams InterferogramDialog::params() const
     p.demPath = mDiffDemPath->text();
     p.displacementDirection = mDispDirection->currentText();
     p.atmosphericCorrection = mAtmCorr->isChecked();
+    p.enableDifferential = mTopoCorr->isChecked();
     p.outputDir = mOutputDir->text();
     p.outputPrefix = mOutputPrefix->text();
     return p;
