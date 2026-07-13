@@ -63,6 +63,9 @@ void InterferogramServiceImpl::execute()
         masterQsar.sourceMaster = masterProduct->sensorInfo().missionId;
         mParams.incidenceAngle = masterProduct->sensorInfo().incidenceAngleMid;
         mParams.wavelength = masterProduct->sensorInfo().wavelength;
+        mParams.nearRange = masterProduct->sensorInfo().nearRange;
+        mParams.rangeSpacing = masterProduct->sensorInfo().rangeSpacing;
+        mParams.prf = masterProduct->sensorInfo().prf;
         for (const auto& b : masterProduct->bands()) {
             QsarBand qb;
             qb.subSwath = b.subSwath;
@@ -145,7 +148,7 @@ void InterferogramServiceImpl::execute()
         if (mParams.enableFlatEarth) {
             emit progressChanged(basePct + 35, pairName + QStringLiteral(": 平地效应去除..."));
             double incRad = mParams.incidenceAngle * M_PI / 180.0;
-            if (stageFlatEarth(ifgBase + "_ifg.tif", flatDir + "/" + pairName, w, h, mParams.wavelength, 800000.0, 2.33, 1680.0, incRad)) {
+            if (stageFlatEarth(ifgBase + "_ifg.tif", flatDir + "/" + pairName, w, h, mParams.wavelength, mParams.nearRange, mParams.rangeSpacing, mParams.prf, incRad, mParams.baselinePar)) {
                 if (qsar.stages.isEmpty() || qsar.stages.last() != "flat")
                     qsar.stages << "flat";
                 qb.flatFile = QStringLiteral("flat/%1_flat.tif").arg(pairName);
@@ -159,7 +162,7 @@ void InterferogramServiceImpl::execute()
             QString flatSrc = qb.flatFile.isEmpty() ? ifgBase + "_ifg.tif"
                 : flatDir + "/" + pairName + "_flat.tif";
             double incRad = mParams.incidenceAngle * M_PI / 180.0;
-            if (stageDifferential(flatSrc, mParams.demPath, diffDir + "/" + pairName, w, h, mParams.wavelength, 800000.0, 2.33, incRad)) {
+            if (stageDifferential(flatSrc, mParams.demPath, diffDir + "/" + pairName, w, h, mParams.wavelength, mParams.nearRange, mParams.rangeSpacing, incRad, mParams.baselinePerp)) {
                 if (qsar.stages.isEmpty() || qsar.stages.last() != "diff")
                     qsar.stages << "diff";
                 qb.diffFile = QStringLiteral("diff/%1_diff.tif").arg(pairName);
@@ -305,7 +308,7 @@ bool InterferogramServiceImpl::stageFlatEarth(
     const QString& ifgPath, const QString& outBase,
     int width, int height, double wavelength,
     double nearRange, double rangeSpacing, double prf,
-    double incidenceAngleRad)
+    double incidenceAngleRad, double Bpar)
 {
     Q_UNUSED(height);
     Q_UNUSED(prf);
@@ -337,7 +340,6 @@ bool InterferogramServiceImpl::stageFlatEarth(
             double theta = incidenceAngleRad;  // 从主产品标注XML读取
             double phiFlat = 0;
             if (R > 0) {
-                double Bpar = 20.0;
                 phiFlat = -4.0 * M_PI / wavelength * Bpar * std::sin(theta);
             }
             float c = std::cos(static_cast<float>(phiFlat));
@@ -361,7 +363,7 @@ bool InterferogramServiceImpl::stageDifferential(
     const QString& flatPath, const QString& demPath, const QString& outBase,
     int width, int height, double wavelength,
     double nearRange, double rangeSpacing,
-    double incidenceAngleRad)
+    double incidenceAngleRad, double Bperp)
 {
     Q_UNUSED(width); Q_UNUSED(height);
 

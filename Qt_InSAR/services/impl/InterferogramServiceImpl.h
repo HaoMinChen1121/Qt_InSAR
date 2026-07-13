@@ -28,13 +28,13 @@ private:
         const QString& ifgPath, const QString& outBase,
         int width, int height, double wavelength,
         double nearRange, double rangeSpacing, double prf,
-        double incidenceAngleRad);
+        double incidenceAngleRad, double Bpar);
 
     bool stageDifferential(
         const QString& flatPath, const QString& demPath, const QString& outBase,
         int width, int height, double wavelength,
         double nearRange, double rangeSpacing,
-        double incidenceAngleRad);
+        double incidenceAngleRad, double Bperp);
 
     InterferogramParams mParams;
     bool mRunning = false;
