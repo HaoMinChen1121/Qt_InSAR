@@ -497,52 +497,16 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
     if (!nl.isEmpty())
         mSensorInfo.prf = nl.at(0).toElement().text().toDouble();
 
-    // 入射角 (可能在 <imageInformation> 或直接 <incidenceAngle>)
+    // 入射角 (S1 标注: <incidenceAngleMidSwath>33.95</incidenceAngleMidSwath>)
     {
-        nl = root.elementsByTagName("incidenceAngle");
-        if (nl.isEmpty()) nl = root.elementsByTagName("incidenceAngleMidSwath");
-        if (nl.isEmpty()) {
-            // 尝试 imageInformation 下的 incidenceAngle
-            QDomNodeList ii = root.elementsByTagName("imageInformation");
-            if (!ii.isEmpty())
-                nl = ii.at(0).toElement().elementsByTagName("incidenceAngle");
-        }
+        nl = root.elementsByTagName("incidenceAngleMidSwath");
         if (!nl.isEmpty()) {
             QDomElement el = nl.at(0).toElement();
-            double inc = 0;
-            // 子元素列表 <incidenceAngle><value>35.2</value>... → 取中间值
-            QDomNodeList values = el.elementsByTagName("value");
-            if (!values.isEmpty()) {
-                int mid = values.size() / 2;
-                inc = values.at(mid).toElement().text().toDouble();
-            }
-            // 纯文本直接读
-            if (inc < 1.0)
-                inc = el.text().trimmed().section(' ', 0, 0).toDouble();
+            double inc = el.text().trimmed().toDouble();
             if (inc > 1.0) {
                 mSensorInfo.incidenceAngleMid  = inc;
                 mSensorInfo.incidenceAngleNear = inc - 5.0;
                 mSensorInfo.incidenceAngleFar  = inc + 5.0;
-            }
-        }
-        // 兜底: 从 elevationAngle 换算 (incidence ≈ 90° - elevation)
-        if (mSensorInfo.incidenceAngleMid < 1.0) {
-            nl = root.elementsByTagName("elevationAngle");
-            if (!nl.isEmpty()) {
-                QDomElement el = nl.at(0).toElement();
-                double elev = 0;
-                QDomNodeList values = el.elementsByTagName("value");
-                if (!values.isEmpty()) {
-                    int mid = values.size() / 2;
-                    elev = values.at(mid).toElement().text().toDouble();
-                }
-                if (elev < 1.0)
-                    elev = el.text().trimmed().section(' ', 0, 0).toDouble();
-                if (elev > 1.0) {
-                    mSensorInfo.incidenceAngleMid  = 90.0 - elev;
-                    mSensorInfo.incidenceAngleNear = mSensorInfo.incidenceAngleMid - 5.0;
-                    mSensorInfo.incidenceAngleFar  = mSensorInfo.incidenceAngleMid + 5.0;
-                }
             }
         }
     }
