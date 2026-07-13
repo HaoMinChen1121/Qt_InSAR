@@ -62,6 +62,7 @@ void InterferogramServiceImpl::execute()
         }
         masterQsar.sourceMaster = masterProduct->sensorInfo().missionId;
         mParams.incidenceAngle = masterProduct->sensorInfo().incidenceAngleMid;
+        mParams.wavelength = masterProduct->sensorInfo().wavelength;
         for (const auto& b : masterProduct->bands()) {
             QsarBand qb;
             qb.subSwath = b.subSwath;
@@ -143,10 +144,8 @@ void InterferogramServiceImpl::execute()
         // === Stage 2: 平地效应 ===
         if (mParams.enableFlatEarth) {
             emit progressChanged(basePct + 35, pairName + QStringLiteral(": 平地效应去除..."));
-            QString flatBase = flatDir + "/" + pairName;
-            double wl = 0.0555;
             double incRad = mParams.incidenceAngle * M_PI / 180.0;
-            if (stageFlatEarth(ifgBase + "_ifg.tif", flatDir + "/" + pairName, w, h, wl, 800000.0, 2.33, 1680.0, incRad)) {
+            if (stageFlatEarth(ifgBase + "_ifg.tif", flatDir + "/" + pairName, w, h, mParams.wavelength, 800000.0, 2.33, 1680.0, incRad)) {
                 if (qsar.stages.isEmpty() || qsar.stages.last() != "flat")
                     qsar.stages << "flat";
                 qb.flatFile = QStringLiteral("flat/%1_flat.tif").arg(pairName);
@@ -157,11 +156,10 @@ void InterferogramServiceImpl::execute()
         // === Stage 3: 差分 ===
         if (mParams.enableDifferential && !mParams.demPath.isEmpty()) {
             emit progressChanged(basePct + 65, pairName + QStringLiteral(": 差分干涉..."));
-            double wl = 0.0555;
             QString flatSrc = qb.flatFile.isEmpty() ? ifgBase + "_ifg.tif"
                 : flatDir + "/" + pairName + "_flat.tif";
             double incRad = mParams.incidenceAngle * M_PI / 180.0;
-            if (stageDifferential(flatSrc, mParams.demPath, diffDir + "/" + pairName, w, h, wl, 800000.0, 2.33, incRad)) {
+            if (stageDifferential(flatSrc, mParams.demPath, diffDir + "/" + pairName, w, h, mParams.wavelength, 800000.0, 2.33, incRad)) {
                 if (qsar.stages.isEmpty() || qsar.stages.last() != "diff")
                     qsar.stages << "diff";
                 qb.diffFile = QStringLiteral("diff/%1_diff.tif").arg(pairName);

@@ -31,6 +31,7 @@ struct InterferogramParams
     QString   outputDir;
     QString   outputPrefix = "interferogram";
     double    incidenceAngle = 35.0;    // 入射角(度), 从主产品获取
+    double    wavelength = 0.05546576;  // 波长(m), 从主产品获取
     bool      enableFlatEarth = true;
     bool      enableDifferential = false;
 };
