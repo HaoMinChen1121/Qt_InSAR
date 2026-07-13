@@ -11,6 +11,7 @@ class QComboBox;
 class QCheckBox;
 class QLineEdit;
 class QDoubleSpinBox;
+class QLabel;
 
 class InterferogramDialog : public QDialog
 {
