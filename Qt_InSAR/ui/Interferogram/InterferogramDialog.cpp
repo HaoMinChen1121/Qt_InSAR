@@ -66,12 +66,12 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
                 QByteArray xml; xml.resize(1024*1024);
                 vsi_l_offset n = VSIFReadL(xml.data(), 1, xml.size(), fp);
                 xml.resize(static_cast<int>(n)); VSIFCloseL(fp);
-                // 找 <incidenceAngleMidSwath>数字</incidenceAngleMidSwath>
-                int idx = xml.indexOf("<incidenceAngleMidSwath>");
-                if (idx >= 0) {
-                    idx += 26; // len of tag
-                    int end = xml.indexOf('<', idx);
-                    result = QLocale::c().toDouble(QString::fromUtf8(xml.mid(idx, end - idx)));
+                // 用 QDomDocument 正确解析（自动处理 UTF-8/16 编码）
+                QDomDocument doc;
+                if (!doc.setContent(xml)) continue;  // 自动检测编码
+                QDomNodeList nl2 = doc.elementsByTagName("incidenceAngleMidSwath");
+                if (!nl2.isEmpty()) {
+                    result = QLocale::c().toDouble(nl2.at(0).toElement().text().trimmed());
                 }
             }
             CSLDestroy(entries);
