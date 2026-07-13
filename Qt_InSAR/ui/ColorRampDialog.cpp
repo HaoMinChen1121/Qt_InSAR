@@ -133,10 +133,11 @@ void ColorRampDialog::applyRamp(double minVal, double maxVal,
     for (const auto& s : stops)
         items.append(QgsColorRampShader::ColorRampItem(s.first, s.second, QString()));
 
-    auto* colorFn = new QgsColorRampShader(minVal, maxVal);
+    auto* colorFn = new QgsColorRampShader(minVal, maxVal, nullptr,
+        Qgis::ShaderInterpolationMethod::Linear,
+        Qgis::ShaderClassificationMethod::Continuous);
     colorFn->setColorRampItemList(items);
-    colorFn->setColorRampType(QgsColorRampShader::INTERPOLATED);
-    colorFn->classifyColorRamp();
+    colorFn->classifyColorRamp(256);
 
     auto* rasterShader = new QgsRasterShader();
     rasterShader->setRasterShaderFunction(colorFn);
