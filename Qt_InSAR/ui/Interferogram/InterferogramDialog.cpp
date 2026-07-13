@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QCheckBox>
 #include <QLineEdit>
+#include <QLabel>
 #include <QPushButton>
 #include <QDialogButtonBox>
 #include <QFileDialog>
