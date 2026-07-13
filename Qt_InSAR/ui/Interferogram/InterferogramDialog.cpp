@@ -32,11 +32,31 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     QHBoxLayout* masterLayout = new QHBoxLayout;
     masterLayout->addWidget(mMasterQsar, 1); masterLayout->addWidget(masterBrowse);
     f0->addRow(tr("主影像(zip/SAFE):"), masterLayout);
-    connect(masterBrowse, &QPushButton::clicked, this, [this]() {
+    auto updateIncAngle = [this]() {
+        QString path = mMasterQsar->text().trimmed();
+        if (path.isEmpty()) {
+            mCachedIncAngle = 35.0;
+            mIncAngleLabel->setText(QStringLiteral("入射角: (未加载产品)"));
+            mIncAngleLabel->setStyleSheet("color: #888;");
+            return;
+        }
+        QScopedPointer<ISarProduct> prod(createSarProduct(path));
+        if (prod && prod->open(path)) {
+            mCachedIncAngle = prod->sensorInfo().incidenceAngleMid;
+            mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从产品读取)").arg(mCachedIncAngle, 0, 'f', 1));
+            mIncAngleLabel->setStyleSheet("color: #27AE60; font-weight: bold;");
+        } else {
+            mIncAngleLabel->setText(QStringLiteral("入射角: 无法读取产品"));
+            mIncAngleLabel->setStyleSheet("color: #E74C3C;");
+        }
+    };
+
+    connect(masterBrowse, &QPushButton::clicked, this, [this, updateIncAngle]() {
         QString f = QFileDialog::getOpenFileName(this, tr("选择主影像产品"),
             QString(), tr("Sentinel-1 (*.zip *.SAFE);;所有 (*.*)"));
-        if (!f.isEmpty()) mMasterQsar->setText(f);
+        if (!f.isEmpty()) { mMasterQsar->setText(f); updateIncAngle(); }
     });
+    connect(mMasterQsar, &QLineEdit::editingFinished, this, updateIncAngle);
     mSlaveQsar = new QLineEdit;
     QPushButton* slaveBrowse = new QPushButton(tr("浏览..."));
     QHBoxLayout* slaveLayout = new QHBoxLayout;
