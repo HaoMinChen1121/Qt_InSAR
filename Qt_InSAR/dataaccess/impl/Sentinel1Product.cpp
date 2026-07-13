@@ -508,8 +508,18 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
                 nl = ii.at(0).toElement().elementsByTagName("incidenceAngle");
         }
         if (!nl.isEmpty()) {
-            double inc = nl.at(0).toElement().text().toDouble();
-            if (inc > 1.0) { // 有效值
+            QDomElement el = nl.at(0).toElement();
+            double inc = 0;
+            // 子元素列表 <incidenceAngle><value>35.2</value>... → 取中间值
+            QDomNodeList values = el.elementsByTagName("value");
+            if (!values.isEmpty()) {
+                int mid = values.size() / 2;
+                inc = values.at(mid).toElement().text().toDouble();
+            }
+            // 纯文本直接读
+            if (inc < 1.0)
+                inc = el.text().trimmed().section(' ', 0, 0).toDouble();
+            if (inc > 1.0) {
                 mSensorInfo.incidenceAngleMid  = inc;
                 mSensorInfo.incidenceAngleNear = inc - 5.0;
                 mSensorInfo.incidenceAngleFar  = inc + 5.0;
