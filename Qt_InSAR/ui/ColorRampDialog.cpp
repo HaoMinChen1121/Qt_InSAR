@@ -1,7 +1,6 @@
 #include "ColorRampDialog.h"
 
 #include <qgsrasterlayer.h>
-#include <qgsrasterlayer.h>
 #include <qgsrastershader.h>
 #include <qgssinglebandpseudocolorrenderer.h>
 #include <qgsrastershaderfunction.h>
@@ -137,7 +136,7 @@ void ColorRampDialog::applyRamp(double minVal, double maxVal,
         Qgis::ShaderInterpolationMethod::Linear,
         Qgis::ShaderClassificationMethod::Continuous);
     colorFn->setColorRampItemList(items);
-    colorFn->classifyColorRamp(256);
+    colorFn->classifyColorRamp(256, -1, QgsRectangle(), mLayer->dataProvider());
 
     auto* rasterShader = new QgsRasterShader();
     rasterShader->setRasterShaderFunction(colorFn);
