@@ -308,12 +308,15 @@ void ApplicationController::wireConnections()
         });
 
     connect(layerPanel, &LayerPanel::colorRampRequested, this,
-        [this](const QString& layerId) {
+        [this, canvas](const QString& layerId) {
             QgsMapLayer* layer = QgsProject::instance()->mapLayer(layerId);
             QgsRasterLayer* rl = qobject_cast<QgsRasterLayer*>(layer);
             if (rl) {
                 ColorRampDialog dlg(rl, mMainWindow);
-                dlg.exec();
+                if (dlg.exec() == QDialog::Accepted) {
+                    rebuildCanvasLayers();
+                    canvas->refresh();
+                }
             }
         });
 
