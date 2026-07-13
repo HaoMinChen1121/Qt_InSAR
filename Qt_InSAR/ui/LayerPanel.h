@@ -24,6 +24,7 @@ signals:
     void layerSelectionChanged(const QString& id);
     void opacityChanged(const QString& id, double opacity);
     void fullExtentRequested();
+    void colorRampRequested(const QString& layerId);
 
 public slots:
     void onLayerLoaded(const QString& id, const QString& name, const QString& type,
