@@ -94,66 +94,85 @@ void InterferogramServiceImpl::execute()
     QString prefix = mParams.outputPrefix;
 
     int succeeded = 0;
-    for (int i = 0; i < pairs.size(); ++i) {
-        if (mCancelled) break;
-        QString pairName = QStringLiteral("%1_%2").arg(pairs[i].master.subSwath).arg(pairs[i].master.polarization);
-        int basePct = i * 100 / pairs.size();
-        emit progressChanged(basePct, QStringLiteral("处理 %1/%2: %3").arg(i+1).arg(pairs.size()).arg(pairName));
+    // 准备子目录
+    QString ifgDir  = outputDir + "/ifg";
+    QString flatDir = outputDir + "/flat";
+    QString diffDir = outputDir + "/diff";
+    QDir().mkpath(ifgDir);
+    QDir().mkpath(flatDir);
+    QDir().mkpath(diffDir);
 
-        int w = pairs[i].master.width;
-        int h = pairs[i].master.height;
-
-        // === Stage 1: 干涉图  ===
-        emit progressChanged(basePct + 5, pairName + QStringLiteral(": 干涉图生成..."));
-        QString ifgBase = outputDir + "/" + prefix + "_" + pairName;
-        if (!stageInterferogram(pairs[i].master.file, pairs[i].slave.file,
-                ifgBase, w, h, mParams.rangeLooks, mParams.azimuthLooks)) {
-            qWarning() << "[Ifg] Stage 1 failed:" << pairName;
-            continue;
-        }
-
-        if (mParams.referenceSource == "Orbit"
-            && !pairs[i].master.subSwath.isEmpty()) {
-            // === Stage 2: 平地效应 ===
-            emit progressChanged(basePct + 35, pairName + QStringLiteral(": 平地效应去除..."));
-            QString flatPath = outputDir + "/" + prefix + "_" + pairName + "_flat.tif";
-            double wl = 0.0555;  // Sentinel-1 C-band
-            if (!stageFlatEarth(ifgBase + "_ifg.tif", flatPath, w, h, wl, 800000.0, 2.33, 1680.0)) {
-                qWarning() << "[Ifg] Stage 2 failed:" << pairName;
-                // 继续使用原始干涉图
-            }
-        }
-
-        if (mParams.differential && !mParams.demPath.isEmpty()) {
-            // === Stage 3: 差分 ===
-            emit progressChanged(basePct + 65, pairName + QStringLiteral(": 差分干涉..."));
-            QString diffPath = outputDir + "/" + prefix + "_" + pairName + "_diff.tif";
-            double wl = 0.0555;
-            stageDifferential(ifgBase + "_ifg.tif", mParams.demPath, diffPath, w, h, wl, 800000.0, 2.33);
-        }
-
-        ++succeeded;
-        basePct = (i + 1) * 100 / pairs.size();
-        emit progressChanged(basePct, QStringLiteral("完成 %1/%2").arg(i+1).arg(pairs.size()));
-    }
-
-    // 写 QSAR
     QsarProduct qsar;
     qsar.productType = "Interferogram";
     qsar.created = QDateTime::currentDateTime().toString(Qt::ISODate);
     qsar.sourceMaster = mParams.masterProductDisplay;
     qsar.sourceSlave  = mParams.slaveProductDisplay;
     qsar.outputPrefix = mParams.outputPrefix;
+    qsar.stages << "ifg";
+
     for (int i = 0; i < pairs.size(); ++i) {
-        QsarBand b;
-        b.subSwath = pairs[i].master.subSwath;
-        b.polarization = pairs[i].master.polarization;
-        b.file = prefix + "_" + b.subSwath + "_" + b.polarization + "_ifg.tif";
-        b.width = pairs[i].master.width / mParams.rangeLooks;
-        b.height = pairs[i].master.height / mParams.azimuthLooks;
-        qsar.bands.append(b);
+        if (mCancelled) break;
+        QString sw = pairs[i].master.subSwath;
+        QString pol = pairs[i].master.polarization;
+        QString pairName = QStringLiteral("%1_%2").arg(sw).arg(pol);
+        int basePct = i * 100 / pairs.size();
+        emit progressChanged(basePct, QStringLiteral("处理 %1/%2: %3").arg(i+1).arg(pairs.size()).arg(pairName));
+
+        int w = pairs[i].master.width;
+        int h = pairs[i].master.height;
+
+        QsarBand qb;
+        qb.subSwath = sw; qb.polarization = pol;
+        qb.width = w / mParams.rangeLooks;
+        qb.height = h / mParams.azimuthLooks;
+
+        // === Stage 1: 干涉图 ===
+        emit progressChanged(basePct + 5, pairName + QStringLiteral(": 干涉图生成..."));
+        QString ifgBase = ifgDir + "/" + pairName;
+        if (!stageInterferogram(pairs[i].master.file, pairs[i].slave.file,
+                ifgBase, w, h, mParams.rangeLooks, mParams.azimuthLooks)) {
+            qWarning() << "[Ifg] Stage 1 failed:" << pairName;
+            continue;
+        }
+        qb.file = QStringLiteral("ifg/%1_ifg.tif").arg(pairName);
+        qb.ifgFile  = qb.file;
+        qb.cohFile  = QStringLiteral("ifg/%1_coh.tif").arg(pairName);
+        qb.phaseFile = QStringLiteral("ifg/%1_phase.tif").arg(pairName);
+
+        // === Stage 2: 平地效应 ===
+        if (mParams.enableFlatEarth) {
+            emit progressChanged(basePct + 35, pairName + QStringLiteral(": 平地效应去除..."));
+            QString flatBase = flatDir + "/" + pairName;
+            double wl = 0.0555;
+            if (stageFlatEarth(ifgBase + "_ifg.tif", flatDir + "/" + pairName, w, h, wl, 800000.0, 2.33, 1680.0)) {
+                if (qsar.stages.isEmpty() || qsar.stages.last() != "flat")
+                    qsar.stages << "flat";
+                qb.flatFile = QStringLiteral("flat/%1_flat.tif").arg(pairName);
+                qb.flatPhaseFile = QStringLiteral("flat/%1_flat_phase.tif").arg(pairName);
+            }
+        }
+
+        // === Stage 3: 差分 ===
+        if (mParams.enableDifferential && !mParams.demPath.isEmpty()) {
+            emit progressChanged(basePct + 65, pairName + QStringLiteral(": 差分干涉..."));
+            double wl = 0.0555;
+            QString flatSrc = qb.flatFile.isEmpty() ? ifgBase + "_ifg.tif"
+                : flatDir + "/" + pairName + "_flat.tif";
+            if (stageDifferential(flatSrc, mParams.demPath, diffDir + "/" + pairName, w, h, wl, 800000.0, 2.33)) {
+                if (qsar.stages.isEmpty() || qsar.stages.last() != "diff")
+                    qsar.stages << "diff";
+                qb.diffFile = QStringLiteral("diff/%1_diff.tif").arg(pairName);
+                qb.diffPhaseFile = QStringLiteral("diff/%1_diff_phase.tif").arg(pairName);
+            }
+        }
+
+        qsar.bands.append(qb);
+        ++succeeded;
+        basePct = (i + 1) * 100 / pairs.size();
+        emit progressChanged(basePct, QStringLiteral("完成 %1/%2").arg(i+1).arg(pairs.size()));
     }
-    QString qsarPath = outputDir + "/" + prefix + ".qsar";
+
+    QString qsarPath = outputDir + "/" + mParams.outputPrefix + ".qsar";
     QsarIO::write(qsarPath, qsar);
 
     emit progressChanged(100, QStringLiteral("干涉图生成完成 (%1/%2对)").arg(succeeded).arg(pairs.size()));
@@ -282,7 +301,7 @@ bool InterferogramServiceImpl::stageInterferogram(
 
 // ── Stage 2: 平地相位去除 (椭球面近似) ──
 bool InterferogramServiceImpl::stageFlatEarth(
-    const QString& ifgPath, const QString& outPath,
+    const QString& ifgPath, const QString& outBase,
     int width, int height, double wavelength,
     double nearRange, double rangeSpacing, double prf)
 {
@@ -293,18 +312,23 @@ bool InterferogramServiceImpl::stageFlatEarth(
     if (!reader.open(ifgPath)) return false;
     int w = reader.width(), h = reader.height();
 
-    QDir().mkpath(QFileInfo(outPath).absolutePath());
+    QDir().mkpath(QFileInfo(outBase).absolutePath());
     GDALDriverH drv = GDALGetDriverByName("GTiff");
     double gt[6] = {0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
-    GDALDatasetH hOut = GDALCreate(drv, outPath.toUtf8().constData(), w, h, 1, GDT_CFloat32, nullptr);
-    if (!hOut) return false;
-    GDALSetGeoTransform(hOut, gt);
+
+    QString flatPath = outBase + "_flat.tif";
+    QString phasePath = outBase + "_flat_phase.tif";
+    GDALDatasetH hOut = GDALCreate(drv, flatPath.toUtf8().constData(), w, h, 1, GDT_CFloat32, nullptr);
+    GDALDatasetH hPh  = GDALCreate(drv, phasePath.toUtf8().constData(), w, h, 1, GDT_Float32, nullptr);
+    if (!hOut || !hPh) return false;
+    GDALSetGeoTransform(hOut, gt); GDALSetGeoTransform(hPh, gt);
 
     QVector<std::complex<float>> rowBuf(w);
+    QVector<float> rowPhase(w);
     double Re = 6378137.0, H = 800000.0;
 
     for (int row = 0; row < h; ++row) {
-        if (mCancelled) { GDALClose(hOut); return false; }
+        if (mCancelled) { GDALClose(hOut); GDALClose(hPh); return false; }
         auto rowData = reader.readBandWindow(0, 0, row, w, 1);
         for (int col = 0; col < w; ++col) {
             double R = nearRange + col * rangeSpacing;
@@ -317,71 +341,75 @@ bool InterferogramServiceImpl::stageFlatEarth(
             float c = std::cos(static_cast<float>(phiFlat));
             float s = std::sin(static_cast<float>(phiFlat));
             auto v = rowData.size() > col ? rowData[col] : std::complex<float>(0,0);
-            rowBuf[col] = std::complex<float>(
+            auto flatVal = std::complex<float>(
                 v.real() * c + v.imag() * s,
                 v.imag() * c - v.real() * s);
+            rowBuf[col] = flatVal;
+            rowPhase[col] = std::atan2(flatVal.imag(), flatVal.real());
         }
         GDALRasterIO(GDALGetRasterBand(hOut,1), GF_Write, 0, row, w, 1, rowBuf.data(), w, 1, GDT_CFloat32, 0, 0);
+        GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, w, 1, rowPhase.data(), w, 1, GDT_Float32, 0, 0);
     }
-    GDALClose(hOut);
+    GDALClose(hOut); GDALClose(hPh);
     return true;
 }
 
 // ── Stage 3: 差分干涉 ──
 bool InterferogramServiceImpl::stageDifferential(
-    const QString& flatPath, const QString& demPath, const QString& outPath,
+    const QString& flatPath, const QString& demPath, const QString& outBase,
     int width, int height, double wavelength,
     double nearRange, double rangeSpacing)
 {
     Q_UNUSED(width); Q_UNUSED(height);
 
-    // 读干涉图
     GdalSlcReader reader;
     if (!reader.open(flatPath)) return false;
     int w = reader.width(), h = reader.height();
-    auto ifgData = reader.readBand(0);
-    reader.close();
-    if (ifgData.size() < w * h) return false;
 
-    // 读DEM
     GdalDemReader dem;
-    if (!dem.open(demPath)) return false;
-    auto demData = dem.readElevation();
+    if (!dem.open(demPath)) { reader.close(); return false; }
     int demW = dem.width(), demH = dem.height();
-    dem.close();
-    if (demData.size() < demW * demH) return false;
 
-    QVector<std::complex<float>> diff(w * h);
+    QDir().mkpath(QFileInfo(outBase).absolutePath());
+    GDALDriverH drv = GDALGetDriverByName("GTiff");
+    double gt[6] = {0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+    QString diffPath = outBase + "_diff.tif";
+    QString phasePath = outBase + "_diff_phase.tif";
+    GDALDatasetH hOut = GDALCreate(drv, diffPath.toUtf8().constData(), w, h, 1, GDT_CFloat32, nullptr);
+    GDALDatasetH hPh  = GDALCreate(drv, phasePath.toUtf8().constData(), w, h, 1, GDT_Float32, nullptr);
+    if (!hOut || !hPh) { reader.close(); dem.close(); return false; }
+    GDALSetGeoTransform(hOut, gt); GDALSetGeoTransform(hPh, gt);
+
+    QVector<std::complex<float>> rowBuf(w);
+    QVector<float> rowPhase(w);
+    double Bperp = 33.2;
 
     for (int row = 0; row < h; ++row) {
-        if (mCancelled) return false;
+        if (mCancelled) { GDALClose(hOut); GDALClose(hPh); reader.close(); dem.close(); return false; }
+        auto rowData = reader.readBandWindow(0, 0, row, w, 1);
+        int demRow = row * demH / h;
+        demRow = qBound(0, demRow, demH - 1);
+
         for (int col = 0; col < w; ++col) {
             double R = nearRange + col * rangeSpacing;
-            double theta = 35.0 * M_PI / 180.0; // Sentinel-1 IW 典型入射角
-
-            // 从DEM取高程 (最近邻采样)
+            double theta = 35.0 * M_PI / 180.0;
             int demCol = col * demW / w;
-            int demRow = row * demH / h;
             demCol = qBound(0, demCol, demW - 1);
-            demRow = qBound(0, demRow, demH - 1);
-            double hDem = demData[demRow * demW + demCol];
-
-            // 地形相位: φ_topo = -4π/λ * Bperp * h / (R * sinθ)
-            double Bperp = 33.2; // 竖直基线 (m)
+            double hDem = dem.readElevationWindow(demCol, demRow, 1, 1).value(0, 0.0);
             double phiTopo = -4.0 * M_PI / wavelength * Bperp * hDem / (R * std::sin(theta));
 
-            int idx = row * w + col;
             float c = std::cos(static_cast<float>(phiTopo));
             float s = std::sin(static_cast<float>(phiTopo));
-            auto v = ifgData[idx];
-            diff[idx] = std::complex<float>(
+            auto v = rowData.size() > col ? rowData[col] : std::complex<float>(0, 0);
+            auto diffVal = std::complex<float>(
                 v.real() * c + v.imag() * s,
                 v.imag() * c - v.real() * s);
+            rowBuf[col] = diffVal;
+            rowPhase[col] = std::atan2(diffVal.imag(), diffVal.real());
         }
+        GDALRasterIO(GDALGetRasterBand(hOut,1), GF_Write, 0, row, w, 1, rowBuf.data(), w, 1, GDT_CFloat32, 0, 0);
+        GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, w, 1, rowPhase.data(), w, 1, GDT_Float32, 0, 0);
     }
-
-    GdalInterferogramWriter writer;
-    if (!writer.create(outPath, w, h, true)) return false;
-    writer.writeComplex(diff);
+    GDALClose(hOut); GDALClose(hPh); reader.close(); dem.close();
     return true;
 }

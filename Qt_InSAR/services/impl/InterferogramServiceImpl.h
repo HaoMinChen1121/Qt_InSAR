@@ -27,13 +27,12 @@ private:
 
     // Stage 2: 平地相位去除 (椭球面)
     bool stageFlatEarth(
-        const QString& ifgPath, const QString& outPath,
+        const QString& ifgPath, const QString& outBase,
         int width, int height, double wavelength,
         double nearRange, double rangeSpacing, double prf);
 
-    // Stage 3: 差分干涉 (DEM)
     bool stageDifferential(
-        const QString& flatPath, const QString& demPath, const QString& outPath,
+        const QString& flatPath, const QString& demPath, const QString& outBase,
         int width, int height, double wavelength,
         double nearRange, double rangeSpacing);
 

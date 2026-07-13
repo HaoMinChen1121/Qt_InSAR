@@ -10,7 +10,14 @@
 struct QsarBand {
     QString subSwath;
     QString polarization;
-    QString file;           // 相对TIFF文件名
+    QString file;               // 默认指向 ifg (兼容旧版)
+    QString ifgFile;            // 干涉图 (ifg/IW1_VH_ifg.tif)
+    QString cohFile;            // 相干性
+    QString phaseFile;          // 原始相位
+    QString flatFile;           // 去平地复数
+    QString flatPhaseFile;      // 去平地相位
+    QString diffFile;           // 差分复数
+    QString diffPhaseFile;      // 差分相位
     int     width  = 0;
     int     height = 0;
 };
@@ -26,10 +33,11 @@ struct QsarBaseline {
 // 产品描述头 (.qsar JSON 文件)
 struct QsarProduct {
     QString  format = "QSAR-1.0";
-    QString  productType;           // "RegisteredSLC", "Interferogram", "Unwrapped", ...
-    QString  created;               // ISO datetime
-    QString  sourceMaster;          // 主产品来源
-    QString  sourceSlave;           // 辅产品来源
+    QString  productType;
+    QString  created;
+    QString  sourceMaster;
+    QString  sourceSlave;
+    QStringList stages;             // ["ifg", "flat", "diff"]
     QsarBaseline baseline;
     QString  coarseMethod;
     QString  resamplingMethod;

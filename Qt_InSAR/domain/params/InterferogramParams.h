@@ -30,6 +30,8 @@ struct InterferogramParams
     // 输出
     QString   outputDir;
     QString   outputPrefix = "interferogram";
+    bool      enableFlatEarth = true;
+    bool      enableDifferential = false;
 };
 
 #endif // INTERFEROGRAMPARAMS_H

@@ -136,8 +136,14 @@ void ApplicationController::wireConnections()
                     mPendingGroupName = qsar.productType + " " + qsar.sourceMaster;
                     groupName = mPendingGroupName;
                     QgsProject::instance()->layerTreeRoot()->addGroup(groupName);
-                    for (const auto& b : qsar.bands)
+                    for (const auto& b : qsar.bands) {
                         expandedFiles.append(b.file);
+                        // 扩展所有阶段文件
+                        if (!b.phaseFile.isEmpty()) expandedFiles.append(b.phaseFile);
+                        if (!b.cohFile.isEmpty()) expandedFiles.append(b.cohFile);
+                        if (!b.flatPhaseFile.isEmpty()) expandedFiles.append(b.flatPhaseFile);
+                        if (!b.diffPhaseFile.isEmpty()) expandedFiles.append(b.diffPhaseFile);
+                    }
                     monitor->appendLog(
                         QStringLiteral("加载QSAR产品: %1 (%2波段)")
                             .arg(QFileInfo(f).fileName()).arg(qsar.bands.size()),

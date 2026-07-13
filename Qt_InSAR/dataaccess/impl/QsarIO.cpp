@@ -29,14 +29,24 @@ bool QsarIO::write(const QString& filePath, const QsarProduct& product)
     bl["ambiguityHeight"] = product.baseline.ambiguityHeight;
     root["baseline"] = bl;
 
+    QJsonArray stages;
+    for (const auto& s : product.stages) stages.append(s);
+    root["stages"] = stages;
+
     QJsonArray bands;
     for (const auto& b : product.bands) {
         QJsonObject bo;
         bo["subSwath"] = b.subSwath;
         bo["polarization"] = b.polarization;
         bo["file"] = b.file;
-        bo["width"] = b.width;
-        bo["height"] = b.height;
+        bo["width"] = b.width; bo["height"] = b.height;
+        if (!b.ifgFile.isEmpty()) bo["ifg"] = b.ifgFile;
+        if (!b.cohFile.isEmpty()) bo["coh"] = b.cohFile;
+        if (!b.phaseFile.isEmpty()) bo["phase"] = b.phaseFile;
+        if (!b.flatFile.isEmpty()) bo["flat"] = b.flatFile;
+        if (!b.flatPhaseFile.isEmpty()) bo["flat_phase"] = b.flatPhaseFile;
+        if (!b.diffFile.isEmpty()) bo["diff"] = b.diffFile;
+        if (!b.diffPhaseFile.isEmpty()) bo["diff_phase"] = b.diffPhaseFile;
         bands.append(bo);
     }
     root["bands"] = bands;
@@ -88,6 +98,9 @@ QsarProduct QsarIO::read(const QString& filePath)
     p.baseline.temporal = bl["temporal"].toDouble();
     p.baseline.ambiguityHeight = bl["ambiguityHeight"].toDouble();
 
+    QJsonArray stages = root["stages"].toArray();
+    for (const auto& s : stages) p.stages.append(s.toString());
+
     QJsonArray bands = root["bands"].toArray();
     for (const auto& v : bands) {
         QJsonObject bo = v.toObject();
@@ -95,15 +108,29 @@ QsarProduct QsarIO::read(const QString& filePath)
         b.subSwath = bo["subSwath"].toString();
         b.polarization = bo["polarization"].toString();
         b.file = bo["file"].toString();
-        b.width = bo["width"].toInt();
-        b.height = bo["height"].toInt();
+        b.width = bo["width"].toInt(); b.height = bo["height"].toInt();
+        b.ifgFile = bo["ifg"].toString();
+        b.cohFile = bo["coh"].toString();
+        b.phaseFile = bo["phase"].toString();
+        b.flatFile = bo["flat"].toString();
+        b.flatPhaseFile = bo["flat_phase"].toString();
+        b.diffFile = bo["diff"].toString();
+        b.diffPhaseFile = bo["diff_phase"].toString();
         p.bands.append(b);
     }
 
     // 将相对路径补全为绝对路径
     QDir dir = QFileInfo(filePath).absoluteDir();
-    for (auto& b : p.bands)
+    for (auto& b : p.bands) {
         b.file = dir.absoluteFilePath(b.file);
+        if (!b.ifgFile.isEmpty()) b.ifgFile = dir.absoluteFilePath(b.ifgFile);
+        if (!b.cohFile.isEmpty()) b.cohFile = dir.absoluteFilePath(b.cohFile);
+        if (!b.phaseFile.isEmpty()) b.phaseFile = dir.absoluteFilePath(b.phaseFile);
+        if (!b.flatFile.isEmpty()) b.flatFile = dir.absoluteFilePath(b.flatFile);
+        if (!b.flatPhaseFile.isEmpty()) b.flatPhaseFile = dir.absoluteFilePath(b.flatPhaseFile);
+        if (!b.diffFile.isEmpty()) b.diffFile = dir.absoluteFilePath(b.diffFile);
+        if (!b.diffPhaseFile.isEmpty()) b.diffPhaseFile = dir.absoluteFilePath(b.diffPhaseFile);
+    }
 
     return p;
 }
