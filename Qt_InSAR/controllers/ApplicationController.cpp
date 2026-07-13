@@ -210,8 +210,6 @@ void ApplicationController::wireConnections()
                 QgsMapLayer* first = newLayers.first();
                 QgsCoordinateReferenceSystem crs = first->crs();
                 canvas->setDestinationCrs(crs);
-                else
-                    canvas->setDestinationCrs(QgsCoordinateReferenceSystem());
             }
             rebuildCanvasLayers();
             canvas->zoomToFullExtent();
