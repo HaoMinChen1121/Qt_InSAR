@@ -525,6 +525,26 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
                 mSensorInfo.incidenceAngleFar  = inc + 5.0;
             }
         }
+        // 兜底: 从 elevationAngle 换算 (incidence ≈ 90° - elevation)
+        if (mSensorInfo.incidenceAngleMid < 1.0) {
+            nl = root.elementsByTagName("elevationAngle");
+            if (!nl.isEmpty()) {
+                QDomElement el = nl.at(0).toElement();
+                double elev = 0;
+                QDomNodeList values = el.elementsByTagName("value");
+                if (!values.isEmpty()) {
+                    int mid = values.size() / 2;
+                    elev = values.at(mid).toElement().text().toDouble();
+                }
+                if (elev < 1.0)
+                    elev = el.text().trimmed().section(' ', 0, 0).toDouble();
+                if (elev > 1.0) {
+                    mSensorInfo.incidenceAngleMid  = 90.0 - elev;
+                    mSensorInfo.incidenceAngleNear = mSensorInfo.incidenceAngleMid - 5.0;
+                    mSensorInfo.incidenceAngleFar  = mSensorInfo.incidenceAngleMid + 5.0;
+                }
+            }
+        }
     }
 
     // ── Burst 边界 (TOPSAR ESD 所需) ──
