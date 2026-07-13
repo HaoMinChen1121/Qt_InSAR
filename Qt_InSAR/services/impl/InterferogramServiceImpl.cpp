@@ -389,18 +389,23 @@ bool InterferogramServiceImpl::stageDifferential(
     QVector<float> rowPhase(w);
     double Bperp = 33.2;
 
+    QVector<float> demRowData(demW);
     for (int row = 0; row < h; ++row) {
         if (mCancelled) { GDALClose(hOut); GDALClose(hPh); reader.close(); dem.close(); return false; }
         auto rowData = reader.readBandWindow(0, 0, row, w, 1);
         int demRow = row * demH / h;
         demRow = qBound(0, demRow, demH - 1);
+        // 逐行读DEM（避免逐像素读的性能灾难）
+        auto demLine = dem.readElevationWindow(0, demRow, demW, 1);
+        if (demLine.size() >= demW) demRowData = demLine;
 
         for (int col = 0; col < w; ++col) {
             double R = nearRange + col * rangeSpacing;
-            double theta = incidenceAngleRad;  // 从主产品标注XML读取
+            double theta = incidenceAngleRad;
             int demCol = col * demW / w;
             demCol = qBound(0, demCol, demW - 1);
-            double hDem = dem.readElevationWindow(demCol, demRow, 1, 1).value(0, 0.0);
+            double hDem = static_cast<double>(demRowData[demCol]);
+            if (hDem < -1000.0) hDem = 0.0;   // nodata → 海平面
             double phiTopo = -4.0 * M_PI / wavelength * Bperp * hDem / (R * std::sin(theta));
 
             float c = std::cos(static_cast<float>(phiTopo));
