@@ -43,6 +43,7 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
         QScopedPointer<ISarProduct> prod(createSarProduct(path));
         if (prod && prod->open(path)) {
             mCachedIncAngle = prod->sensorInfo().incidenceAngleMid;
+            if (mCachedIncAngle < 1.0) mCachedIncAngle = 35.0; // XML未解析到则用默认
             mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从产品读取)").arg(mCachedIncAngle, 0, 'f', 1));
             mIncAngleLabel->setStyleSheet("color: #27AE60; font-weight: bold;");
         } else {
