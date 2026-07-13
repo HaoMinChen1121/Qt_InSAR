@@ -18,6 +18,7 @@
 #include <QFileDialog>
 #include <QScopedPointer>
 #include <QLocale>
+#include <QDomDocument>
 #include <QHBoxLayout>
 
 InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
