@@ -387,8 +387,6 @@ bool InterferogramServiceImpl::stageDifferential(
 
     QVector<std::complex<float>> rowBuf(w);
     QVector<float> rowPhase(w);
-    double Bperp = 33.2;
-
     QVector<float> demRowData(demW);
     for (int row = 0; row < h; ++row) {
         if (mCancelled) { GDALClose(hOut); GDALClose(hPh); reader.close(); dem.close(); return false; }

@@ -39,6 +39,10 @@ private:
         double rmseRange;
         double rmseAzimuth;
         int    validGcps;
+        // ESD per-burst 方位向修正 (TOPSAR)
+        QVector<double> burstAziCorrections; // 每个 burst 的绝对修正量 (像素, 已中心化)
+        QVector<int>    burstStartLines;      // 每个 burst 在拼接影像中的起行号
+        int             linesPerBurst = 0;    // 每个 burst 的有效行数
     };
 
     // ── 算法模块 ──

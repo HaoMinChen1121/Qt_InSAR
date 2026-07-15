@@ -777,30 +777,48 @@ void RegistrationServiceImpl::esdRefine(
         aziCorrections.append(aziCorr);
     }
 
-    // 将 burst 级修正合并到多项式
+    // 将 burst 级修正保存到多项式 (不再压缩为均值)
     if (aziCorrections.size() < 2) return;
 
-    // 计算修正的 RMS
-    double corrSum = 0;
-    int corrCount = 0;
-    for (int b = 0; b < aziCorrections.size(); ++b) {
-        if (std::abs(aziCorrections[b]) < 1.0) { // 只取合理范围内的修正
-            corrSum += aziCorrections[b] * aziCorrections[b];
-            ++corrCount;
-        }
+    // 相对修正 → 累积绝对修正
+    QVector<double> absCorr(burstCount);
+    absCorr[0] = 0.0;
+    for (int b = 1; b < burstCount; ++b) {
+        absCorr[b] = absCorr[b - 1] + aziCorrections[b];
     }
-    if (corrCount > 0) {
-        double esdRmseAz = std::sqrt(corrSum / corrCount);
-        // 将 ESD 的方位向修正叠加到多项式 b0 常数项
-        double meanCorr = corrSum > 0 ? corrSum / corrCount : 0;
-        meanCorr = std::sqrt(meanCorr);
-        if (std::abs(meanCorr) < 0.1) {
-            poly.aziCoeffs[0] += meanCorr;
-            poly.rmseAzimuth = esdRmseAz;
-            qDebug() << "[Reg] ESD: mean azi corr =" << meanCorr
-                     << "pix, RMSE =" << esdRmseAz << "pix";
-        }
+
+    // 滤除异常值
+    for (int b = 0; b < burstCount; ++b) {
+        if (std::abs(absCorr[b]) >= 1.0)
+            absCorr[b] = 0.0;
     }
+
+    // 中心化: 分离均值 (归入多项式) 与逐 burst 残差
+    double sum = 0;
+    int validCount = 0;
+    for (int b = 0; b < burstCount; ++b) {
+        sum += absCorr[b];
+        ++validCount;
+    }
+    if (validCount > 0) {
+        double meanCorr = sum / validCount;
+        poly.aziCoeffs[0] += meanCorr;
+        for (int b = 0; b < burstCount; ++b)
+            absCorr[b] -= meanCorr;
+    }
+
+    poly.burstAziCorrections = absCorr;
+    poly.burstStartLines     = burstStarts;
+    poly.linesPerBurst       = linesPerBurst;
+
+    // 诊断 RMS
+    double sqSum = 0;
+    for (int b = 0; b < burstCount; ++b)
+        sqSum += absCorr[b] * absCorr[b];
+    poly.rmseAzimuth = std::sqrt(sqSum / burstCount);
+
+    qDebug() << "[Reg] ESD: per-burst corrections stored, RMSE ="
+             << poly.rmseAzimuth << "pix";
 }
 
 // [4] 精配准 — 亚像素 + 多项式
@@ -985,6 +1003,38 @@ bool RegistrationServiceImpl::resampleImage(
     // 设置 geotransform（从主影像输入复制，无地理参考则用默认像素坐标）
     writer->setGeoTransform(0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
 
+    // ── Burst 分段方位向修正 (TOPSAR ESD) ──
+    bool useBurstCorr = !poly.burstAziCorrections.isEmpty()
+                        && poly.burstStartLines.size() > 1
+                        && poly.linesPerBurst > 0;
+    int transLines = useBurstCorr ? qMin(10, poly.linesPerBurst / 10) : 0;
+
+    auto burstAziOffset = [&](int row) -> double {
+        if (!useBurstCorr) return 0.0;
+        const auto& starts = poly.burstStartLines;
+        const auto& corrs  = poly.burstAziCorrections;
+        int n = starts.size();
+
+        // 二分确定 burst 索引
+        int b = 0;
+        for (int lo = 0, hi = n - 1; lo <= hi; ) {
+            int mid = (lo + hi) / 2;
+            if (row >= starts[mid]) { b = mid; lo = mid + 1; }
+            else                    { hi = mid - 1; }
+        }
+
+        double corr = corrs[b];
+
+        // 在 burst 边界处线性过渡，避免引入新跳变
+        int endLine = starts[b] + poly.linesPerBurst;
+        int distToEnd = endLine - row;
+        if (b + 1 < n && distToEnd < transLines) {
+            double t = static_cast<double>(distToEnd) / transLines;
+            corr = corr * t + corrs[b + 1] * (1.0 - t);
+        }
+        return corr;
+    };
+
     // 逐行重采样 + 写入，避免分配 2GB 全图缓冲
     QVector<std::complex<float>> rowBuf(masterW);
     int step = qMax(1, masterH / 100);
@@ -1003,7 +1053,8 @@ bool RegistrationServiceImpl::resampleImage(
 
         aNormRow = static_cast<double>(row) / masterH;
         rowOffRow = poly.aziCoeffs[0] + poly.aziCoeffs[1]*0.5 + poly.aziCoeffs[2]*aNormRow
-            + poly.aziCoeffs[3]*0.5*aNormRow + poly.aziCoeffs[4]*0.25 + poly.aziCoeffs[5]*aNormRow*aNormRow;
+            + poly.aziCoeffs[3]*0.5*aNormRow + poly.aziCoeffs[4]*0.25 + poly.aziCoeffs[5]*aNormRow*aNormRow
+            + burstAziOffset(row);
         slaveRowBase = row + static_cast<int>(rowOffRow);
         syBase = rowOffRow - static_cast<int>(rowOffRow);
 

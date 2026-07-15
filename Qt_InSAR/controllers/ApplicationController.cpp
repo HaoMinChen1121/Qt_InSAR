@@ -143,6 +143,8 @@ void ApplicationController::wireConnections()
                         if (!b.cohFile.isEmpty()) expandedFiles.append(b.cohFile);
                         if (!b.flatPhaseFile.isEmpty()) expandedFiles.append(b.flatPhaseFile);
                         if (!b.diffPhaseFile.isEmpty()) expandedFiles.append(b.diffPhaseFile);
+                        if (!b.flatFile.isEmpty()) expandedFiles.append(b.flatFile);
+                        if (!b.diffFile.isEmpty()) expandedFiles.append(b.diffFile);
                     }
                     monitor->appendLog(
                         QStringLiteral("加载QSAR产品: %1 (%2波段)")
@@ -285,7 +287,16 @@ void ApplicationController::wireConnections()
     connect(layerPanel, &LayerPanel::layerVisibilityChanged, this,
         [this](const QString& id, bool visible) {
         QgsLayerTreeLayer* node = QgsProject::instance()->layerTreeRoot()->findLayer(id);
-        if (node) { node->setItemVisibilityChecked(visible); rebuildCanvasLayers(); }
+        if (node) {
+            node->setItemVisibilityChecked(visible);
+        } else {
+            QgsMapLayer* layer = QgsProject::instance()->mapLayer(id);
+            if (layer) {
+                QgsProject::instance()->layerTreeRoot()->addLayer(layer);
+                qWarning() << "[Layer] 图层在注册表但不在树中, 已恢复:" << layer->name();
+            }
+        }
+        rebuildCanvasLayers();
     });
 
     connect(layerPanel, &LayerPanel::layerRemoveRequested, this,
