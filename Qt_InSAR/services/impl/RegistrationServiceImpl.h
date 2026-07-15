@@ -45,6 +45,14 @@ private:
         int             linesPerBurst = 0;    // 每个 burst 的有效行数
     };
 
+    // 逐 burst 局部多项式 (TOPSAR per-burst independent registration)
+    struct BurstLocalPoly {
+        double rangeCoeffs[6];
+        double aziCoeffs[6];
+        int    masterStartLine = 0;  // burst 在主影像中的起始行
+        int    masterEndLine   = 0;  // burst 在主影像中的结束行 (不含)
+    };
+
     // ── 算法模块 ──
     BaselineInfo estimateBaseline(
         const QList<OrbitStateVector>& masterOrbits,
@@ -62,14 +70,12 @@ private:
     void coarseByCorrelation(
         QVector<CoarseGcp>& gcps,
         GdalSlcReader* mReader, GdalSlcReader* sReader,
-        int masterW, int masterH, int slaveW, int slaveH,
-        int windowSize, int searchWindow, double corrThreshold);
+        int windowSize, int searchWindow);
 
     RegPolynomial fineRegister(
         QVector<CoarseGcp>& gcps,
         GdalSlcReader* mReader, GdalSlcReader* sReader,
-        int masterW, int masterH, int slaveW, int slaveH,
-        int oversampleFactor, int polyDegree, double corrThreshold,
+        int masterW, int masterH, double corrThreshold,
         int windowSize);
 
     bool resampleImage(
@@ -84,14 +90,29 @@ private:
         GdalSlcReader* mReader, GdalSlcReader* sReader,
         const SarBandDescriptor& masterBand,
         const SarBandDescriptor& slaveBand,
-        int masterW, int masterH, int slaveW, int slaveH);
+        int masterW, int masterH);
+
+    // ── 逐 burst 局部多项式拟合 (TOPSAR) ──
+    QVector<BurstLocalPoly> fitBurstLocalPolynomials(
+        const QVector<CoarseGcp>& gcps,
+        const RegPolynomial& globalPoly,
+        const SarBandDescriptor& masterBand,
+        int masterW, int masterH);
+
+    // ── 逐 burst 独立重采样 + 拼接 ──
+    bool resampleImagePerBurst(
+        const QVector<BurstLocalPoly>& burstPolys,
+        GdalSlcReader* sReader, GdalSlcWriter* writer,
+        int masterW, int masterH, int slaveW, int slaveH,
+        const QString& interpMethod, int sincWindow, double sincBeta,
+        const QString& outputPath);
 
     // ── 波段对配准 ──
     bool processBandPair(
         const SarBandDescriptor& masterBand,
         const SarBandDescriptor& slaveBand,
         const QString& outputDir, const QString& prefix,
-        int pairIndex, int totalPairs);
+        int pairIndex);
 
     // ── 辅助 ──
     std::complex<float> interp2D(
@@ -100,6 +121,11 @@ private:
         const QString& method, int sincWindow, double sincBeta);
 
     double meanCorrelation(const QVector<CoarseGcp>& gcps) const;
+
+    // 从 GCP 集合拟合 2 阶多项式 (供逐 burst 局部拟合使用)
+    static bool fitPolynomial(const QVector<CoarseGcp>& gcps,
+                              int masterW, int masterH,
+                              double* rCoeffs, double* aCoeffs);
 
     RegistrationParams mParams;
     double mCorrelation = 0.0;

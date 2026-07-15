@@ -194,6 +194,28 @@ void subpixelPeak(const QVector<double>& corr, int corrW, int corrH,
     subR = qBound(0.0, subR, double(corrH - 1));
 }
 
+// 2 阶多项式求值: c0 + c1*r + c2*a + c3*r*a + c4*r² + c5*a²
+inline double evalPoly(const double c[6], double r, double a) {
+    return c[0] + c[1]*r + c[2]*a + c[3]*r*a + c[4]*r*r + c[5]*a*a;
+}
+
+// 从辅影像显示名提取日期前缀 (e.g. "S1A_0617 Orbit83" → "0617_<prefix>")
+inline QString makeDatePrefix(const QString& slaveDisplayName, const QString& outputPrefix) {
+    if (!slaveDisplayName.isEmpty()) {
+        QStringList parts = slaveDisplayName.split('_');
+        if (parts.size() >= 2)
+            return parts[1] + "_" + outputPrefix;
+    }
+    return outputPrefix;
+}
+
+// 构造配准输出路径
+inline QString makeOutputPath(const QString& outputDir, const QString& datePrefix,
+                               const QString& pairName) {
+    QString dir = outputDir.isEmpty() ? QDir::tempPath() : outputDir;
+    return dir + "/" + datePrefix + "_" + pairName + "_reg.tif";
+}
+
 } // anonymous namespace
 
 // ──────────────────────────────────────────────────────────
@@ -289,7 +311,7 @@ void RegistrationServiceImpl::execute() {
                 .arg(pairs[i].master.polarization));
 
         if (processBandPair(pairs[i].master, pairs[i].slave,
-                mParams.outputDir, mParams.outputPrefix, i, pairs.size())) {
+                mParams.outputDir, mParams.outputPrefix, i)) {
             ++succeeded;
         }
     }
@@ -306,13 +328,7 @@ void RegistrationServiceImpl::execute() {
         qsar.outputPrefix = mParams.outputPrefix;
         qsar.baseline.perpendicular = 0;
         qsar.baseline.temporal = 0;
-        // 提取辅影像日期作为前缀
-        QString slaveDate;
-        if (!mParams.slaveDisplayName.isEmpty()) {
-            QStringList dp = mParams.slaveDisplayName.split('_');
-            if (dp.size() >= 2) slaveDate = dp[1];
-        }
-        QString datePrefix = slaveDate.isEmpty() ? mParams.outputPrefix : slaveDate + "_" + mParams.outputPrefix;
+        QString datePrefix = makeDatePrefix(mParams.slaveDisplayName, mParams.outputPrefix);
 
         QString qsarDir;
         for (int i = 0; i < pairs.size(); ++i) {
@@ -321,14 +337,10 @@ void RegistrationServiceImpl::execute() {
             b.polarization = pairs[i].master.polarization;
             b.width = pairs[i].master.rasterSize.width();
             b.height = pairs[i].master.rasterSize.height();
-            QString pairName = QStringLiteral("%1of%2_%3_%4")
-                .arg(i + 1).arg(pairs.size())
+            QString pairName = QStringLiteral("%1_%2_%3")
+                .arg(i + 1)
                 .arg(b.subSwath).arg(b.polarization);
-            QString outPath;
-            if (mParams.outputDir.isEmpty())
-                outPath = QDir::tempPath() + "/" + datePrefix + "_" + pairName + "_reg.tif";
-            else
-                outPath = mParams.outputDir + "/" + datePrefix + "_" + pairName + "_reg.tif";
+            QString outPath = makeOutputPath(mParams.outputDir, datePrefix, pairName);
             b.file = QFileInfo(outPath).fileName();
             qsar.bands.append(b);
             qsarDir = QFileInfo(outPath).absolutePath();
@@ -354,13 +366,12 @@ bool RegistrationServiceImpl::processBandPair(
     const SarBandDescriptor& masterBand,
     const SarBandDescriptor& slaveBand,
     const QString& outputDir, const QString& prefix,
-    int pairIndex, int totalPairs)
+    int pairIndex)
 {
-    Q_UNUSED(totalPairs);
     QString mPath = masterBand.rasterPath;
     QString sPath = slaveBand.rasterPath;
-    QString pairName = QStringLiteral("%1of%2_%3_%4")
-        .arg(pairIndex + 1).arg(totalPairs)
+    QString pairName = QStringLiteral("%1_%2_%3")
+        .arg(pairIndex + 1)
         .arg(masterBand.subSwath).arg(masterBand.polarization);
 
     // 全程保持 GDAL 数据集打开，避免重复 VSI open/close
@@ -394,9 +405,8 @@ bool RegistrationServiceImpl::processBandPair(
     emit progressChanged(20, pairName + QStringLiteral(": 互相关..."));
     qDebug() << "[Reg]" << pairName << ": cross-correlation start,"
              << gcps.size() << "GCPs";
-    coarseByCorrelation(gcps, &mReader, &sReader, mW, mH, sW, sH,
-        mParams.fineWindowSize, mParams.coarseSearchWindow,
-        mParams.correlationThreshold);
+    coarseByCorrelation(gcps, &mReader, &sReader,
+        mParams.fineWindowSize, mParams.coarseSearchWindow);
     qDebug() << "[Reg]" << pairName << ": cross-correlation done";
 
     // 过滤
@@ -412,10 +422,8 @@ bool RegistrationServiceImpl::processBandPair(
     // 精配准 (复用已打开的 mReader/sReader)
     emit progressChanged(40, pairName + QStringLiteral(": 精配准..."));
     qDebug() << "[Reg]" << pairName << ": fine reg start";
-    int oversample = (mParams.fineMethod == "Oversample") ? 16 : 64;
     RegPolynomial poly = fineRegister(validGcps, &mReader, &sReader,
-        mW, mH, sW, sH,
-        oversample, mParams.polynomialDegree, mParams.correlationThreshold,
+        mW, mH, mParams.correlationThreshold,
         mParams.fineWindowSize);
 
     mCorrelation = meanCorrelation(validGcps);
@@ -430,7 +438,7 @@ bool RegistrationServiceImpl::processBandPair(
         emit progressChanged(50, pairName + QStringLiteral(": ESD精化..."));
         qDebug() << "[Reg]" << pairName << ": ESD start, bursts:" << masterBand.burstCount;
         esdRefine(poly, &mReader, &sReader, masterBand, slaveBand,
-                  mW, mH, sW, sH);
+                  mW, mH);
         qDebug() << "[Reg]" << pairName << ": ESD done";
     }
 
@@ -440,22 +448,29 @@ bool RegistrationServiceImpl::processBandPair(
     if (outputDir.isEmpty()) {
         qWarning() << "[Reg] outputDir not set, using temp path";
     }
-    // 从辅影像显示名提取日期 (如 "S1A_0617 Orbit83" → "0617")
-    QString slaveDate;
-    if (!mParams.slaveDisplayName.isEmpty()) {
-        QStringList parts = mParams.slaveDisplayName.split('_');
-        if (parts.size() >= 2) slaveDate = parts[1];
-    }
-    QString datePrefix = slaveDate.isEmpty() ? prefix : slaveDate + "_" + prefix;
-    QString outPath = outputDir.isEmpty()
-        ? QDir::tempPath() + "/" + datePrefix + "_" + pairName + "_reg.tif"
-        : outputDir + "/" + datePrefix + "_" + pairName + "_reg.tif";
+    QString datePrefix = makeDatePrefix(mParams.slaveDisplayName, prefix);
+    QString outPath = makeOutputPath(outputDir, datePrefix, pairName);
 
     GdalSlcWriter writer;
-    bool ok = resampleImage(poly, &sReader, &writer,
-        mW, mH, sW, sH,
-        mParams.resamplingMethod, mParams.sincWindowSize, mParams.sincBeta,
-        outPath);
+    bool ok;
+
+    // TOPSAR 多 burst 数据: 逐 burst 独立配准 + 拼接
+    if (masterBand.burstCount > 1 && masterBand.linesPerBurst > 100) {
+        emit progressChanged(62, pairName + QStringLiteral(": 逐burst拟合..."));
+        auto burstPolys = fitBurstLocalPolynomials(
+            validGcps, poly, masterBand, mW, mH);
+        qDebug() << "[Reg]" << pairName << ": per-burst resample,"
+                 << burstPolys.size() << "bursts";
+        ok = resampleImagePerBurst(burstPolys, &sReader, &writer,
+            mW, mH, sW, sH,
+            mParams.resamplingMethod, mParams.sincWindowSize, mParams.sincBeta,
+            outPath);
+    } else {
+        ok = resampleImage(poly, &sReader, &writer,
+            mW, mH, sW, sH,
+            mParams.resamplingMethod, mParams.sincWindowSize, mParams.sincBeta,
+            outPath);
+    }
 
     if (ok) {
         emit progressChanged(90, pairName + QStringLiteral(": 完成"));
@@ -559,9 +574,7 @@ RegistrationServiceImpl::coarseByOrbit(
 
     // 主影像速度大小 (方位向)
     double mVmag = std::sqrt(mvx * mvx + mvy * mvy + mvz * mvz);
-    double sVmag = std::sqrt(svx * svx + svy * svy + svz * svz);
 
-    double slantRangeMid = nearRange + (width / 2.0) * rangeSpacing;
     double Vr = 299792458.0; // 光速
 
     int cols = static_cast<int>(std::sqrt(static_cast<double>(numGcp)));
@@ -617,12 +630,8 @@ RegistrationServiceImpl::coarseByOrbit(
 void RegistrationServiceImpl::coarseByCorrelation(
     QVector<CoarseGcp>& gcps,
     GdalSlcReader* mReader, GdalSlcReader* sReader,
-    int masterW, int masterH, int slaveW, int slaveH,
-    int windowSize, int searchWindow, double corrThreshold)
+    int windowSize, int searchWindow)
 {
-    Q_UNUSED(corrThreshold);
-    Q_UNUSED(masterW); Q_UNUSED(masterH);
-    Q_UNUSED(slaveW); Q_UNUSED(slaveH);
 
     for (auto& gcp : gcps) {
         if (mCancelled) break;
@@ -712,9 +721,8 @@ void RegistrationServiceImpl::esdRefine(
     GdalSlcReader* mReader, GdalSlcReader* sReader,
     const SarBandDescriptor& masterBand,
     const SarBandDescriptor& slaveBand,
-    int masterW, int masterH, int slaveW, int slaveH)
+    int masterW, int masterH)
 {
-    Q_UNUSED(slaveW); Q_UNUSED(slaveH);
 
     int burstCount = masterBand.burstCount;
     int linesPerBurst = masterBand.linesPerBurst;
@@ -821,6 +829,86 @@ void RegistrationServiceImpl::esdRefine(
              << poly.rmseAzimuth << "pix";
 }
 
+// ──────────────────────────────────────────────────────────
+// 逐 burst 局部多项式拟合 (TOPSAR)
+// ──────────────────────────────────────────────────────────
+
+QVector<RegistrationServiceImpl::BurstLocalPoly>
+RegistrationServiceImpl::fitBurstLocalPolynomials(
+    const QVector<CoarseGcp>& gcps,
+    const RegPolynomial& globalPoly,
+    const SarBandDescriptor& masterBand,
+    int masterW, int masterH)
+{
+    QVector<BurstLocalPoly> result;
+
+    int burstCount = masterBand.burstCount;
+    int linesPerBurst = masterBand.linesPerBurst;
+    const auto& burstStarts = masterBand.burstStartLines;
+
+    // 退化情况: 单 burst 或无 burst 信息, 回退到全局多项式
+    if (burstCount < 2 || burstStarts.size() < burstCount || linesPerBurst < 100) {
+        BurstLocalPoly bp;
+        for (int i = 0; i < 6; ++i) {
+            bp.rangeCoeffs[i] = globalPoly.rangeCoeffs[i];
+            bp.aziCoeffs[i]   = globalPoly.aziCoeffs[i];
+        }
+        bp.masterStartLine = 0;
+        bp.masterEndLine   = masterH;
+        result.append(bp);
+        return result;
+    }
+
+    // 每个 burst 的 padding: 向相邻 burst 扩展以包含重叠区 GCP
+    int padding = qMin(linesPerBurst / 10, 100);
+
+    for (int b = 0; b < burstCount; ++b) {
+        BurstLocalPoly bp;
+        bp.masterStartLine = burstStarts[b];
+        bp.masterEndLine   = burstStarts[b] + linesPerBurst;
+
+        // 截断到影像范围
+        bp.masterStartLine = qMax(0, bp.masterStartLine);
+        bp.masterEndLine   = qMin(masterH, bp.masterEndLine);
+
+        int gcpsStart = bp.masterStartLine - padding;
+        int gcpsEnd   = bp.masterEndLine + padding;
+
+        QVector<CoarseGcp> burstGcps;
+        for (const auto& g : gcps) {
+            if (g.correlation >= mParams.correlationThreshold
+                && g.row >= gcpsStart && g.row < gcpsEnd) {
+                burstGcps.append(g);
+            }
+        }
+
+        // 需要 ≥8 个 GCP 才拟合局部多项式 (比全局 6 个更严格以抑制过拟合)
+        bool localOk = burstGcps.size() >= 8
+            && fitPolynomial(burstGcps, masterW, masterH,
+                             bp.rangeCoeffs, bp.aziCoeffs);
+
+        if (localOk) {
+            // 局部多项式拟合成功: 叠加上该 burst 的 ESD 残余修正
+            if (b < globalPoly.burstAziCorrections.size()) {
+                bp.aziCoeffs[0] += globalPoly.burstAziCorrections[b];
+            }
+        } else {
+            // 回退: 使用全局多项式 + ESD 修正
+            for (int i = 0; i < 6; ++i) {
+                bp.rangeCoeffs[i] = globalPoly.rangeCoeffs[i];
+                bp.aziCoeffs[i]   = globalPoly.aziCoeffs[i];
+            }
+            if (b < globalPoly.burstAziCorrections.size()) {
+                bp.aziCoeffs[0] += globalPoly.burstAziCorrections[b];
+            }
+        }
+
+        result.append(bp);
+    }
+
+    return result;
+}
+
 // [4] 精配准 — 亚像素 + 多项式
 // ──────────────────────────────────────────────────────────
 
@@ -828,12 +916,9 @@ RegistrationServiceImpl::RegPolynomial
 RegistrationServiceImpl::fineRegister(
     QVector<CoarseGcp>& gcps,
     GdalSlcReader* mReader, GdalSlcReader* sReader,
-    int masterW, int masterH, int slaveW, int slaveH,
-    int oversampleFactor, int polyDegree, double corrThreshold,
+    int masterW, int masterH, double corrThreshold,
     int windowSize)
 {
-    Q_UNUSED(oversampleFactor);
-    Q_UNUSED(slaveW); Q_UNUSED(slaveH);
 
     int halfWin = windowSize / 2;
 
@@ -911,28 +996,9 @@ RegistrationServiceImpl::fineRegister(
         if (active.size() < 6) break;
 
         int N = active.size();
-        int degree = qBound(1, polyDegree, 3); // 实际只用2阶
-
-        // 构建设计矩阵 for 2nd order (6 coeffs)
-        double ATA[6][6] = {};
-        double ATbR[6] = {};
-        double ATbA[6] = {};
-
-        for (const auto& g : active) {
-            double r = static_cast<double>(g.col) / masterW; // 归一化
-            double a = static_cast<double>(g.row) / masterH;
-            double basis[6] = {1.0, r, a, r * a, r * r, a * a};
-
-            for (int i = 0; i < 6; ++i) {
-                for (int j = 0; j < 6; ++j)
-                    ATA[i][j] += basis[i] * basis[j];
-                ATbR[i] += basis[i] * g.rangeOff;
-                ATbA[i] += basis[i] * g.aziOff;
-            }
-        }
 
         double rCoeffs[6], aCoeffs[6];
-        if (!solve6x6(ATA, ATbR, rCoeffs) || !solve6x6(ATA, ATbA, aCoeffs))
+        if (!fitPolynomial(active, masterW, masterH, rCoeffs, aCoeffs))
             break;
 
         // 计算残差
@@ -941,10 +1007,8 @@ RegistrationServiceImpl::fineRegister(
         for (int i = 0; i < N; ++i) {
             double r = static_cast<double>(active[i].col) / masterW;
             double a = static_cast<double>(active[i].row) / masterH;
-            double predR = rCoeffs[0] + rCoeffs[1]*r + rCoeffs[2]*a
-                + rCoeffs[3]*r*a + rCoeffs[4]*r*r + rCoeffs[5]*a*a;
-            double predA = aCoeffs[0] + aCoeffs[1]*r + aCoeffs[2]*a
-                + aCoeffs[3]*r*a + aCoeffs[4]*r*r + aCoeffs[5]*a*a;
+            double predR = evalPoly(rCoeffs, r, a);
+            double predA = evalPoly(aCoeffs, r, a);
             double resR = active[i].rangeOff - predR;
             double resA = active[i].aziOff - predA;
             residuals[i] = std::sqrt(resR * resR + resA * resA);
@@ -1003,42 +1067,9 @@ bool RegistrationServiceImpl::resampleImage(
     // 设置 geotransform（从主影像输入复制，无地理参考则用默认像素坐标）
     writer->setGeoTransform(0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
 
-    // ── Burst 分段方位向修正 (TOPSAR ESD) ──
-    bool useBurstCorr = !poly.burstAziCorrections.isEmpty()
-                        && poly.burstStartLines.size() > 1
-                        && poly.linesPerBurst > 0;
-    int transLines = useBurstCorr ? qMin(10, poly.linesPerBurst / 10) : 0;
-
-    auto burstAziOffset = [&](int row) -> double {
-        if (!useBurstCorr) return 0.0;
-        const auto& starts = poly.burstStartLines;
-        const auto& corrs  = poly.burstAziCorrections;
-        int n = starts.size();
-
-        // 二分确定 burst 索引
-        int b = 0;
-        for (int lo = 0, hi = n - 1; lo <= hi; ) {
-            int mid = (lo + hi) / 2;
-            if (row >= starts[mid]) { b = mid; lo = mid + 1; }
-            else                    { hi = mid - 1; }
-        }
-
-        double corr = corrs[b];
-
-        // 在 burst 边界处线性过渡，避免引入新跳变
-        int endLine = starts[b] + poly.linesPerBurst;
-        int distToEnd = endLine - row;
-        if (b + 1 < n && distToEnd < transLines) {
-            double t = static_cast<double>(distToEnd) / transLines;
-            corr = corr * t + corrs[b + 1] * (1.0 - t);
-        }
-        return corr;
-    };
-
     // 逐行重采样 + 写入，避免分配 2GB 全图缓冲
     QVector<std::complex<float>> rowBuf(masterW);
     int step = qMax(1, masterH / 100);
-    // 每行共用的多项式值
     double aNormRow, rowOffRow, syBase;
     int slaveRowBase;
 
@@ -1052,9 +1083,7 @@ bool RegistrationServiceImpl::resampleImage(
         }
 
         aNormRow = static_cast<double>(row) / masterH;
-        rowOffRow = poly.aziCoeffs[0] + poly.aziCoeffs[1]*0.5 + poly.aziCoeffs[2]*aNormRow
-            + poly.aziCoeffs[3]*0.5*aNormRow + poly.aziCoeffs[4]*0.25 + poly.aziCoeffs[5]*aNormRow*aNormRow
-            + burstAziOffset(row);
+        rowOffRow = evalPoly(poly.aziCoeffs, 0.5, aNormRow);
         slaveRowBase = row + static_cast<int>(rowOffRow);
         syBase = rowOffRow - static_cast<int>(rowOffRow);
 
@@ -1071,14 +1100,14 @@ bool RegistrationServiceImpl::resampleImage(
             // 每列计算 col polynomial
             for (int col = 0; col < masterW; ++col) {
                 double rN = static_cast<double>(col) / masterW;
-                double colOff = poly.rangeCoeffs[0] + poly.rangeCoeffs[1]*rN + poly.rangeCoeffs[2]*aNormRow
-                    + poly.rangeCoeffs[3]*rN*aNormRow + poly.rangeCoeffs[4]*rN*rN + poly.rangeCoeffs[5]*aNormRow*aNormRow;
+                double colOff = evalPoly(poly.rangeCoeffs, rN, aNormRow);
 
                 double sx = col + colOff;
                 double sy = syBase;
                 int sYi = slaveRowBase - sY0;
 
-                if (sx >= 0 && sx < slaveW - 1 && sYi >= 0 && sYi < sYH - 1
+                if (sx >= readRadius && sx < slaveW - readRadius - 1
+                    && sYi >= readRadius && sYi < sYH - readRadius - 1
                     && sWindow.size() >= slaveW * sYH) {
                     rowBuf[col] = interp2D(sWindow, slaveW, sYH, sx,
                         static_cast<double>(sYi) + syBase,
@@ -1090,6 +1119,91 @@ bool RegistrationServiceImpl::resampleImage(
         }
 
         writer->writeRow(row, rowBuf);
+    }
+
+    return true;
+}
+
+// ──────────────────────────────────────────────────────────
+// [5b] 逐 burst 独立重采样 + 拼接 (TOPSAR)
+// ──────────────────────────────────────────────────────────
+
+bool RegistrationServiceImpl::resampleImagePerBurst(
+    const QVector<BurstLocalPoly>& burstPolys,
+    GdalSlcReader* sReader, GdalSlcWriter* writer,
+    int masterW, int masterH, int slaveW, int slaveH,
+    const QString& interpMethod, int sincWindow, double sincBeta,
+    const QString& outputPath)
+{
+    if (!writer->create(outputPath, masterW, masterH, 1)) {
+        qWarning() << "[Reg] 创建输出文件失败:" << writer->lastError();
+        return false;
+    }
+    writer->setGeoTransform(0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+
+    QVector<std::complex<float>> rowBuf(masterW);
+    int burstCount = burstPolys.size();
+    int step = qMax(1, masterH / 100);
+
+    for (int b = 0; b < burstCount; ++b) {
+        if (mCancelled) return false;
+
+        const auto& bp = burstPolys[b];
+        int bStart = bp.masterStartLine;
+        int bEnd   = bp.masterEndLine;
+
+        for (int row = bStart; row < bEnd; ++row) {
+            if (mCancelled) return false;
+
+            if (row % step == 0) {
+                int pct = 60 + (row * 40 / masterH);
+                emit progressChanged(pct,
+                    QStringLiteral("重采样 burst %1/%2 行 %3")
+                        .arg(b + 1).arg(burstCount).arg(row));
+                QApplication::processEvents();
+            }
+
+            // 使用该 burst 的局部多项式计算偏移
+            double aNormRow = static_cast<double>(row) / masterH;
+            double rowOffRow = evalPoly(bp.aziCoeffs, 0.5, aNormRow);
+            int slaveRowBase = row + static_cast<int>(rowOffRow);
+            double syBase = rowOffRow - static_cast<int>(rowOffRow);
+
+            int readRadius = (interpMethod == "Sinc") ? sincWindow : 2;
+            int sY0 = slaveRowBase - readRadius;
+            int sYH = readRadius * 2 + 1;
+            if (sY0 < 0) { sYH += sY0; sY0 = 0; }
+            if (sY0 + sYH > slaveH) sYH = slaveH - sY0;
+
+            if (sYH <= 0) {
+                rowBuf.fill(std::complex<float>(0, 0));
+            } else {
+                auto sWindow = sReader->readBandWindow(0, 0, sY0, slaveW, sYH);
+
+                for (int col = 0; col < masterW; ++col) {
+                    double rN = static_cast<double>(col) / masterW;
+                    double colOff = evalPoly(bp.rangeCoeffs, rN, aNormRow);
+
+                    double sx  = col + colOff;
+                    double sy  = syBase;
+                    int    sYi = slaveRowBase - sY0;
+
+                    // 核半径感知的越界检查 (保留完整插值窗口裕量)
+                    int kernelR = readRadius;
+                    if (sx >= kernelR && sx < slaveW - kernelR - 1
+                        && sYi >= kernelR && sYi < sYH - kernelR - 1
+                        && sWindow.size() >= slaveW * sYH) {
+                        rowBuf[col] = interp2D(sWindow, slaveW, sYH, sx,
+                            static_cast<double>(sYi) + syBase,
+                            interpMethod, sincWindow, sincBeta);
+                    } else {
+                        rowBuf[col] = std::complex<float>(0, 0);
+                    }
+                }
+            }
+
+            writer->writeRow(row, rowBuf);
+        }
     }
 
     return true;
@@ -1127,6 +1241,12 @@ std::complex<float> RegistrationServiceImpl::interp2D(
         int iy = static_cast<int>(std::floor(y));
         double fx = x - ix, fy = y - iy;
 
+        // Catmull-Rom 插值核
+        auto cubic4 = [](double t, double vm1, double v0, double v1, double v2) {
+            return v0 + 0.5*t*(v1 - vm1 + t*(2.0*vm1 - 5.0*v0 + 4.0*v1 - v2
+                + t*(3.0*(v0 - v1) + v2 - vm1)));
+        };
+
         // 对4列分别沿y方向插值
         double colValsR[4], colValsI[4];
         for (int c = -1; c <= 2; ++c) {
@@ -1138,18 +1258,9 @@ std::complex<float> RegistrationServiceImpl::interp2D(
                 rowValsR[r + 1] = v.real();
                 rowValsI[r + 1] = v.imag();
             }
-            // Catmull-Rom 沿y
-            auto cubic4 = [](double t, double vm1, double v0, double v1, double v2) {
-                return v0 + 0.5*t*(v1 - vm1 + t*(2.0*vm1 - 5.0*v0 + 4.0*v1 - v2
-                    + t*(3.0*(v0 - v1) + v2 - vm1)));
-            };
             colValsR[c + 1] = cubic4(fy, rowValsR[0], rowValsR[1], rowValsR[2], rowValsR[3]);
             colValsI[c + 1] = cubic4(fy, rowValsI[0], rowValsI[1], rowValsI[2], rowValsI[3]);
         }
-        auto cubic4 = [](double t, double vm1, double v0, double v1, double v2) {
-            return v0 + 0.5*t*(v1 - vm1 + t*(2.0*vm1 - 5.0*v0 + 4.0*v1 - v2
-                + t*(3.0*(v0 - v1) + v2 - vm1)));
-        };
         float r = static_cast<float>(cubic4(fx, colValsR[0], colValsR[1], colValsR[2], colValsR[3]));
         float im = static_cast<float>(cubic4(fx, colValsI[0], colValsI[1], colValsI[2], colValsI[3]));
         return {r, im};
@@ -1197,4 +1308,33 @@ double RegistrationServiceImpl::meanCorrelation(const QVector<CoarseGcp>& gcps) 
     for (const auto& g : gcps)
         if (g.correlation > 0) { sum += g.correlation; ++cnt; }
     return cnt > 0 ? sum / cnt : 0;
+}
+
+// ── 辅助: 从 GCP 集合拟合 2 阶多项式 ──
+bool RegistrationServiceImpl::fitPolynomial(
+    const QVector<CoarseGcp>& gcps,
+    int masterW, int masterH,
+    double* rCoeffs, double* aCoeffs)
+{
+    int N = gcps.size();
+    if (N < 6) return false;
+
+    double ATA[6][6] = {};
+    double ATbR[6]  = {};
+    double ATbA[6]  = {};
+
+    for (const auto& g : gcps) {
+        double r = static_cast<double>(g.col) / masterW;
+        double a = static_cast<double>(g.row) / masterH;
+        double basis[6] = {1.0, r, a, r * a, r * r, a * a};
+
+        for (int i = 0; i < 6; ++i) {
+            for (int j = 0; j < 6; ++j)
+                ATA[i][j] += basis[i] * basis[j];
+            ATbR[i] += basis[i] * g.rangeOff;
+            ATbA[i] += basis[i] * g.aziOff;
+        }
+    }
+
+    return solve6x6(ATA, ATbR, rCoeffs) && solve6x6(ATA, ATbA, aCoeffs);
 }
