@@ -519,6 +519,7 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
     if (!nl.isEmpty())
         mParsedRangeSamples = nl.at(0).toElement().text().toInt();
     mParsedBurstStarts.clear();
+    mParsedBurstAzimuthTimes.clear();
 
     // 查找 burstList
     QDomNodeList blList = root.elementsByTagName("burstList");
@@ -528,6 +529,12 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
             QDomElement be = bursts.at(i).toElement();
             int firstLine = be.firstChildElement("firstLine").text().toInt();
             mParsedBurstStarts.append(firstLine);
+
+            QString atText = be.firstChildElement("azimuthTime").text().trimmed();
+            QDateTime at = atText.isEmpty()
+                ? QDateTime()
+                : QDateTime::fromString(atText.left(26), Qt::ISODateWithMs);
+            mParsedBurstAzimuthTimes.append(at);
         }
     }
 
@@ -616,6 +623,7 @@ void Sentinel1Product::discoverMeasurementFiles(const QString& measurementDir) {
         b.linesPerBurst = mParsedLinesPerBurst;
         b.burstCount = mParsedBurstStarts.size();
         b.burstStartLines = mParsedBurstStarts;
+        b.burstAzimuthTimes = mParsedBurstAzimuthTimes;
 
         mBands.append(b);
     }

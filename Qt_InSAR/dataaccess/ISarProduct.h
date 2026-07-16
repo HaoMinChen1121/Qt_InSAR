@@ -7,6 +7,7 @@
 #include <QString>
 #include <QList>
 #include <QSize>
+#include <QDateTime>
 #include <complex>
 
 // 波段描述符（SAR 版本，增加极化、分辨率）
@@ -24,6 +25,7 @@ struct SarBandDescriptor {
     int     linesPerBurst = 0;    // 每个 burst 方位向行数
     int     burstCount = 0;       // burst 数 (通常 9)
     QVector<int> burstStartLines; // 每个 burst 在整体影像中的起行号
+    QVector<QDateTime> burstAzimuthTimes; // 每个 burst 的方位向零多普勒时间
 };
 
 class ISarProduct {

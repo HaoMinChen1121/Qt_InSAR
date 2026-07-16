@@ -72,6 +72,20 @@ private:
         GdalSlcReader* mReader, GdalSlcReader* sReader,
         int windowSize, int searchWindow);
 
+    // ── FFTW3 幅度域粗配准 ──
+    void coarseByFFT(
+        QVector<CoarseGcp>& gcps,
+        GdalSlcReader* mReader, GdalSlcReader* sReader,
+        int masterW, int masterH, int slaveW, int slaveH,
+        int windowSize);
+
+    // ── FFTW3 复数域精配准 ──
+    void fftFineRefine(
+        QVector<CoarseGcp>& gcps,
+        GdalSlcReader* mReader, GdalSlcReader* sReader,
+        int masterW, int masterH, int slaveW, int slaveH,
+        int windowSize);
+
     RegPolynomial fineRegister(
         QVector<CoarseGcp>& gcps,
         GdalSlcReader* mReader, GdalSlcReader* sReader,

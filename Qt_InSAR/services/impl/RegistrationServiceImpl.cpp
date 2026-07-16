@@ -7,6 +7,8 @@
 
 #include <gdal_priv.h>
 
+#include "algorithms/Correlation.h"
+
 #include <QtMath>
 #include <QDebug>
 #include <QFileInfo>
@@ -401,13 +403,15 @@ bool RegistrationServiceImpl::processBandPair(
 
     if (mCancelled) return false;
 
-    // 互相关精化 (复用已打开的 mReader/sReader)
-    emit progressChanged(20, pairName + QStringLiteral(": 互相关..."));
-    qDebug() << "[Reg]" << pairName << ": cross-correlation start,"
-             << gcps.size() << "GCPs";
-    coarseByCorrelation(gcps, &mReader, &sReader,
-        mParams.fineWindowSize, mParams.coarseSearchWindow);
-    qDebug() << "[Reg]" << pairName << ": cross-correlation done";
+    // 粗配准 — NCC 或 FFT
+    if (mParams.coarseMethod == "FFT") {
+        emit progressChanged(20, pairName + QStringLiteral(": FFT粗配准..."));
+        coarseByFFT(gcps, &mReader, &sReader, mW, mH, sW, sH, mParams.coarseWindowSize);
+    } else {
+        emit progressChanged(20, pairName + QStringLiteral(": 互相关..."));
+        coarseByCorrelation(gcps, &mReader, &sReader,
+            mParams.fineWindowSize, mParams.coarseSearchWindow);
+    }
 
     // 过滤
     QVector<CoarseGcp> validGcps;
@@ -417,6 +421,12 @@ bool RegistrationServiceImpl::processBandPair(
     if (validGcps.size() < 6) {
         qWarning() << "[Reg]" << pairName << ": GCP不足:" << validGcps.size();
         return false;
+    }
+
+    // FFTW3 复数域精配准 (可选)
+    if (mParams.enableFineFFT) {
+        emit progressChanged(35, pairName + QStringLiteral(": FFT精配准..."));
+        fftFineRefine(validGcps, &mReader, &sReader, mW, mH, sW, sH, mParams.fineFFTWindow);
     }
 
     // 精配准 (复用已打开的 mReader/sReader)
@@ -710,6 +720,78 @@ void RegistrationServiceImpl::coarseByCorrelation(
         gcp.aziOff   += bestDy;
         gcp.correlation = bestNcc;
     }
+}
+
+// ──────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
+// [New] FFTW3 幅度域粗配准
+// ──────────────────────────────────────────────────────────
+void RegistrationServiceImpl::coarseByFFT(
+    QVector<CoarseGcp>& gcps,
+    GdalSlcReader* mReader, GdalSlcReader* sReader,
+    int masterW, int masterH, int slaveW, int slaveH,
+    int windowSize)
+{
+    int half = windowSize / 2;
+    for (auto& gcp : gcps) {
+        if (mCancelled) break;
+        int mX0 = gcp.col - half, mY0 = gcp.row - half;
+        auto mWin = mReader->readBandWindow(0, mX0, mY0, windowSize, windowSize);
+        if (mWin.size() < windowSize * windowSize) continue;
+
+        int sX0 = gcp.col + (int)gcp.rangeOff - half;
+        int sY0 = gcp.row + (int)gcp.aziOff - half;
+        if (sX0 < 0 || sY0 < 0 || sX0 + windowSize > slaveW || sY0 + windowSize > slaveH) continue;
+        auto sWin = sReader->readBandWindow(0, sX0, sY0, windowSize, windowSize);
+        if (sWin.size() < windowSize * windowSize) continue;
+
+        int oR = 2 * windowSize - 1, oC = 2 * windowSize - 1;
+        QVector<float> surf(oR * oC);
+        float maxV = fftAmpCorrelate(mWin.data(), sWin.data(), surf.data(), windowSize, windowSize);
+        if (maxV > 0) {
+            double sDx, sDy;
+            findPeakSubpixel(surf.data(), oR, oC, sDx, sDy);
+            gcp.rangeOff += sDx;
+            gcp.aziOff   += sDy;
+            gcp.correlation = maxV;
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────
+// [New] FFTW3 复数域精配准
+// ──────────────────────────────────────────────────────────
+void RegistrationServiceImpl::fftFineRefine(
+    QVector<CoarseGcp>& gcps,
+    GdalSlcReader* mReader, GdalSlcReader* sReader,
+    int masterW, int masterH, int slaveW, int slaveH,
+    int windowSize)
+{
+    int half = windowSize / 2;
+    for (auto& gcp : gcps) {
+        if (mCancelled) break;
+        if (gcp.correlation < mParams.correlationThreshold) continue;
+
+        int mX0 = gcp.col - half, mY0 = gcp.row - half;
+        auto mWin = mReader->readBandWindow(0, mX0, mY0, windowSize, windowSize);
+        if (mWin.size() < windowSize * windowSize) continue;
+
+        int sX0 = gcp.col + (int)gcp.rangeOff - half;
+        int sY0 = gcp.row + (int)gcp.aziOff - half;
+        if (sX0 < 0 || sY0 < 0 || sX0 + windowSize > slaveW || sY0 + windowSize > slaveH) continue;
+        auto sWin = sReader->readBandWindow(0, sX0, sY0, windowSize, windowSize);
+        if (sWin.size() < windowSize * windowSize) continue;
+
+        int oR = 2 * windowSize - 1, oC = 2 * windowSize - 1;
+        QVector<float> surf(oR * oC);
+        fftPhaseCorrelate(mWin.data(), sWin.data(), surf.data(), windowSize, windowSize);
+        double sDx, sDy;
+        findPeakSubpixel(surf.data(), oR, oC, sDx, sDy);
+        gcp.rangeOff += sDx;
+        gcp.aziOff   += sDy;
+    }
+    double c = meanCorrelation(gcps);
+    qDebug() << "[Reg] FFT fine refined" << gcps.size() << "GCPs, meanCorr:" << c;
 }
 
 // ──────────────────────────────────────────────────────────

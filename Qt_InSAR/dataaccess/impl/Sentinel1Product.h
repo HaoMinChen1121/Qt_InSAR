@@ -84,6 +84,7 @@ private:
     int mParsedLinesPerBurst = 0;
     int mParsedRangeSamples = 0;
     QVector<int> mParsedBurstStarts;
+    QVector<QDateTime> mParsedBurstAzimuthTimes;
 };
 
 #endif // SENTINEL1PRODUCT_H

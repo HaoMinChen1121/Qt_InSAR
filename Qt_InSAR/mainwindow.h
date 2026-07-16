@@ -118,14 +118,14 @@ private:
     QToolButton*     mBtnSlave = nullptr;
     QLabel*          mLblMasterInfo = nullptr;
     QLabel*          mLblSlaveInfo = nullptr;
-    QComboBox*       mCoarseMethodCombo = nullptr;
-    QComboBox*       mFineMethodCombo = nullptr;
-    QSpinBox*        mGcpSpin = nullptr;
+    QComboBox*       mRouteCombo = nullptr;
+    QComboBox*       mCoarseMethodCombo = nullptr;  // 保留，向后兼容
+    QSpinBox*        mCoarseWinSpin = nullptr;
+    QSpinBox*        mFineWinSpin = nullptr;
     QSpinBox*        mSearchWinSpin = nullptr;
-    QDoubleSpinBox*  mCorrThreshSpin = nullptr;
-    QComboBox*       mResampleCombo = nullptr;
-    QLabel*          mOutputDirLabel = nullptr;
-    QCheckBox*       mKeepResCheck = nullptr;
+    QCheckBox*       mEsdCheck = nullptr;
+    QCheckBox*       mFineFftCheck = nullptr;
+    QSpinBox*        mFineFftWinSpin = nullptr;
     RegistrationParams mRegParams;
     InterferogramParams mIfgParams;
     QSpinBox* mIfgRgSpin = nullptr;

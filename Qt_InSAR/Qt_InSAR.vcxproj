@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -110,6 +110,22 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="mainwindow.cpp" />
     <ClCompile Include="ApplicationWidget.cpp" />
+    <!-- Algorithms -->
+    <ClCompile Include="algorithms\Correlation.cpp" />
+    <ClCompile Include="algorithms\OrbitInterpolator.cpp" />
+    <ClCompile Include="algorithms\PolynomialFit.cpp" />
+    <ClCompile Include="algorithms\SincInterpolator.cpp" />
+    <!-- Registration Pipeline Steps -->
+    <ClCompile Include="services\registration\steps\BurstMatcher.cpp" />
+    <ClCompile Include="services\registration\steps\CoarseCorrelator.cpp" />
+    <ClCompile Include="services\registration\steps\DataReader.cpp" />
+    <ClCompile Include="services\registration\steps\EsdCorrector.cpp" />
+    <ClCompile Include="services\registration\steps\FineCorrelator.cpp" />
+    <ClCompile Include="services\registration\steps\OffsetExtractor.cpp" />
+    <ClCompile Include="services\registration\steps\OrbitInitializer.cpp" />
+    <ClCompile Include="services\registration\steps\PolynomialFitter.cpp" />
+    <ClCompile Include="services\registration\steps\QualityEvaluator.cpp" />
+    <ClCompile Include="services\registration\steps\SincResampler.cpp" />
     <!-- Data access stubs -->
     <ClCompile Include="dataaccess\impl\GdalSlcReader.cpp" />
     <ClCompile Include="dataaccess\impl\GdalSlcWriter.cpp" />
@@ -121,7 +137,7 @@
     <ClCompile Include="dataaccess\impl\GdalVsiProcessor.cpp" />
     <ClCompile Include="dataaccess\impl\QsarIO.cpp" />
     <!-- Service stubs -->
-    <ClCompile Include="services\impl\RegistrationServiceImpl.cpp" />
+    <ClCompile Include="services\registration\RegistrationServiceImpl.cpp" />
     <ClCompile Include="services\impl\InterferogramServiceImpl.cpp" />
     <ClCompile Include="services\impl\FlatEarthServiceImpl.cpp" />
     <ClCompile Include="services\impl\DifferentialServiceImpl.cpp" />
@@ -136,7 +152,7 @@
     <ClCompile Include="ui\MapCanvasWidget.cpp" />
     <ClCompile Include="ui\LayerPanel.cpp" />
     <ClCompile Include="ui\ProcessingMonitorPanel.cpp" />
-    <!-- UI Dialogs (used by Advanced buttons) -->
+    <!-- UI Dialogs -->
     <ClCompile Include="ui\Registration\RegistrationDialog.cpp" />
     <ClCompile Include="ui\Interferogram\InterferogramDialog.cpp" />
     <ClCompile Include="ui\Filter\FilterUnwrappingDialog.cpp" />
@@ -155,7 +171,7 @@
     <QtMoc Include="services\IFilterService.h" />
     <QtMoc Include="services\IUnwrappingService.h" />
     <QtMoc Include="services\IGeocodingService.h" />
-    <QtMoc Include="services\impl\RegistrationServiceImpl.h" />
+    <QtMoc Include="services\registration\RegistrationServiceImpl.h" />
     <QtMoc Include="services\impl\InterferogramServiceImpl.h" />
     <QtMoc Include="services\impl\FlatEarthServiceImpl.h" />
     <QtMoc Include="services\impl\DifferentialServiceImpl.h" />
@@ -175,16 +191,38 @@
     <QtMoc Include="ui\Deformation\DeformationDialog.h" />
     <QtMoc Include="ui\OverviewWidget.h" />
     <QtMoc Include="ui\SarMetadataPanel.h" />
+    <!-- Headers -->
+    <ClInclude Include="algorithms\Correlation.h" />
+    <ClInclude Include="algorithms\FFT.h" />
+    <ClInclude Include="algorithms\OrbitInterpolator.h" />
+    <ClInclude Include="algorithms\PolynomialFit.h" />
+    <ClInclude Include="algorithms\SincInterpolator.h" />
+    <ClInclude Include="domain\OrbitInfo.h" />
+    <ClInclude Include="domain\QsarProduct.h" />
+    <ClInclude Include="domain\SarProductType.h" />
+    <ClInclude Include="domain\SarSensorInfo.h" />
+    <ClInclude Include="domain\params\DeformationParams.h" />
+    <ClInclude Include="domain\params\InterferogramParams.h" />
+    <ClInclude Include="domain\params\RegistrationParams.h" />
+    <ClInclude Include="domain\params\TimeSeriesParams.h" />
+    <ClInclude Include="services\registration\PipelineContext.h" />
+    <ClInclude Include="services\registration\types\RegistrationTypes.h" />
+    <ClInclude Include="services\registration\steps\IRegStep.h" />
+    <ClInclude Include="services\registration\steps\BurstMatcher.h" />
+    <ClInclude Include="services\registration\steps\CoarseCorrelator.h" />
+    <ClInclude Include="services\registration\steps\DataReader.h" />
+    <ClInclude Include="services\registration\steps\EsdCorrector.h" />
+    <ClInclude Include="services\registration\steps\FineCorrelator.h" />
+    <ClInclude Include="services\registration\steps\OffsetExtractor.h" />
+    <ClInclude Include="services\registration\steps\OrbitInitializer.h" />
+    <ClInclude Include="services\registration\steps\PolynomialFitter.h" />
+    <ClInclude Include="services\registration\steps\QualityEvaluator.h" />
+    <ClInclude Include="services\registration\steps\SincResampler.h" />
     <ClInclude Include="dataaccess\ISarProduct.h" />
     <ClInclude Include="dataaccess\SarProductFactory.h" />
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h" />
     <ClInclude Include="dataaccess\impl\GdalVsiProcessor.h" />
     <ClInclude Include="dataaccess\impl\QsarIO.h" />
-    <ClInclude Include="domain\QsarProduct.h" />
-    <ClInclude Include="domain\SarProductType.h" />
-    <ClInclude Include="domain\SarSensorInfo.h" />
-    <ClInclude Include="domain\params\DeformationParams.h" />
-    <ClInclude Include="domain\params\TimeSeriesParams.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">

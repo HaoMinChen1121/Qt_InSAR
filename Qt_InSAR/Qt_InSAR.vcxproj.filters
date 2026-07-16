@@ -4,10 +4,14 @@
     <Filter Include="Application"><UniqueIdentifier>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</UniqueIdentifier></Filter>
     <Filter Include="Domain"><UniqueIdentifier>{B2C3D4E5-F6A7-8901-BCDE-F12345678901}</UniqueIdentifier></Filter>
     <Filter Include="Domain\Params"><UniqueIdentifier>{C3D4E5F6-A7B8-9012-CDEF-123456789012}</UniqueIdentifier></Filter>
+    <Filter Include="Algorithms"><UniqueIdentifier>{A0B1C2D3-E4F5-6789-ABCD-EF0123456789}</UniqueIdentifier></Filter>
     <Filter Include="DataAccess"><UniqueIdentifier>{D4E5F6A7-B8C9-0123-DEFA-234567890123}</UniqueIdentifier></Filter>
     <Filter Include="DataAccess\Impl"><UniqueIdentifier>{E5F6A7B8-C9D0-1234-EFAB-345678901234}</UniqueIdentifier></Filter>
     <Filter Include="Services"><UniqueIdentifier>{F6A7B8C9-D0E1-2345-FABC-456789012345}</UniqueIdentifier></Filter>
     <Filter Include="Services\Impl"><UniqueIdentifier>{A7B8C9D0-E1F2-3456-ABCD-567890123456}</UniqueIdentifier></Filter>
+    <Filter Include="Services\Registration"><UniqueIdentifier>{F1A2B3C4-D5E6-7890-ABCD-123456789ABC}</UniqueIdentifier></Filter>
+    <Filter Include="Services\Registration\Steps"><UniqueIdentifier>{A2B3C4D5-E6F7-8901-BCDE-23456789ABCD}</UniqueIdentifier></Filter>
+    <Filter Include="Services\Registration\Types"><UniqueIdentifier>{B3C4D5E6-F7A8-9012-CDEF-3456789ABCDE}</UniqueIdentifier></Filter>
     <Filter Include="Controllers"><UniqueIdentifier>{B8C9D0E1-F2A3-4567-BCDE-678901234567}</UniqueIdentifier></Filter>
     <Filter Include="UI"><UniqueIdentifier>{C9D0E1F2-A3B4-5678-CDEF-789012345678}</UniqueIdentifier></Filter>
     <Filter Include="UI\Registration"><UniqueIdentifier>{D0E1F2A3-B4C5-6789-DEFA-890123456789}</UniqueIdentifier></Filter>
@@ -16,6 +20,7 @@
     <Filter Include="UI\Geocoding"><UniqueIdentifier>{A3B4C5D6-E7F8-9012-ABCD-123456789012}</UniqueIdentifier></Filter>
     <Filter Include="UI\Deformation"><UniqueIdentifier>{B4C5D6E7-F8A9-0123-BCDE-234567890123}</UniqueIdentifier></Filter>
   </ItemGroup>
+  <!-- Application -->
   <ItemGroup>
     <ClCompile Include="main.cpp"><Filter>Application</Filter></ClCompile>
     <ClCompile Include="mainwindow.cpp"><Filter>Application</Filter></ClCompile>
@@ -24,6 +29,37 @@
     <QtMoc Include="ApplicationWidget.h"><Filter>Application</Filter></QtMoc>
     <QtRcc Include="Qt_InSAR.qrc"><Filter>Application</Filter></QtRcc>
   </ItemGroup>
+  <!-- Algorithms -->
+  <ItemGroup>
+    <ClCompile Include="algorithms\Correlation.cpp"><Filter>Algorithms</Filter></ClCompile>
+    <ClCompile Include="algorithms\OrbitInterpolator.cpp"><Filter>Algorithms</Filter></ClCompile>
+    <ClCompile Include="algorithms\PolynomialFit.cpp"><Filter>Algorithms</Filter></ClCompile>
+    <ClCompile Include="algorithms\SincInterpolator.cpp"><Filter>Algorithms</Filter></ClCompile>
+    <ClInclude Include="algorithms\Correlation.h"><Filter>Algorithms</Filter></ClInclude>
+    <ClInclude Include="algorithms\OrbitInterpolator.h"><Filter>Algorithms</Filter></ClInclude>
+    <ClInclude Include="algorithms\PolynomialFit.h"><Filter>Algorithms</Filter></ClInclude>
+    <ClInclude Include="algorithms\SincInterpolator.h"><Filter>Algorithms</Filter></ClInclude>
+  </ItemGroup>
+  <!-- Domain -->
+  <ItemGroup>
+    <ClInclude Include="domain\OrbitInfo.h"><Filter>Domain</Filter></ClInclude>
+    <ClInclude Include="domain\QsarProduct.h"><Filter>Domain</Filter></ClInclude>
+    <ClInclude Include="domain\SarProductType.h"><Filter>Domain</Filter></ClInclude>
+    <ClInclude Include="domain\SarSensorInfo.h"><Filter>Domain</Filter></ClInclude>
+  </ItemGroup>
+  <!-- Domain\Params -->
+  <ItemGroup>
+    <ClInclude Include="domain\params\DeformationParams.h"><Filter>Domain\Params</Filter></ClInclude>
+    <ClInclude Include="domain\params\InterferogramParams.h"><Filter>Domain\Params</Filter></ClInclude>
+    <ClInclude Include="domain\params\RegistrationParams.h"><Filter>Domain\Params</Filter></ClInclude>
+    <ClInclude Include="domain\params\TimeSeriesParams.h"><Filter>Domain\Params</Filter></ClInclude>
+  </ItemGroup>
+  <!-- DataAccess -->
+  <ItemGroup>
+    <ClInclude Include="dataaccess\ISarProduct.h"><Filter>DataAccess</Filter></ClInclude>
+    <ClInclude Include="dataaccess\SarProductFactory.h"><Filter>DataAccess</Filter></ClInclude>
+  </ItemGroup>
+  <!-- DataAccess\Impl -->
   <ItemGroup>
     <ClCompile Include="dataaccess\impl\GdalSlcReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\GdalSlcWriter.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
@@ -32,17 +68,13 @@
     <ClCompile Include="dataaccess\impl\GdalDemReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\OrbitDataReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\Sentinel1Product.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\GdalVsiProcessor.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\QsarIO.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
-    <ClInclude Include="dataaccess\ISarProduct.h"><Filter>DataAccess</Filter></ClInclude>
-    <ClInclude Include="dataaccess\SarProductFactory.h"><Filter>DataAccess</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h"><Filter>DataAccess\Impl</Filter></ClInclude>
+    <ClInclude Include="dataaccess\impl\GdalVsiProcessor.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\QsarIO.h"><Filter>DataAccess\Impl</Filter></ClInclude>
-    <ClInclude Include="domain\QsarProduct.h"><Filter>Domain</Filter></ClInclude>
-    <ClInclude Include="domain\SarProductType.h"><Filter>Domain</Filter></ClInclude>
-    <ClInclude Include="domain\SarSensorInfo.h"><Filter>Domain</Filter></ClInclude>
-    <ClInclude Include="domain\params\DeformationParams.h"><Filter>Domain\Params</Filter></ClInclude>
-    <ClInclude Include="domain\params\TimeSeriesParams.h"><Filter>Domain\Params</Filter></ClInclude>
   </ItemGroup>
+  <!-- Services -->
   <ItemGroup>
     <QtMoc Include="services\IProcessingService.h"><Filter>Services</Filter></QtMoc>
     <QtMoc Include="services\IRegistrationService.h"><Filter>Services</Filter></QtMoc>
@@ -52,14 +84,17 @@
     <QtMoc Include="services\IFilterService.h"><Filter>Services</Filter></QtMoc>
     <QtMoc Include="services\IUnwrappingService.h"><Filter>Services</Filter></QtMoc>
     <QtMoc Include="services\IGeocodingService.h"><Filter>Services</Filter></QtMoc>
-    <ClCompile Include="services\impl\RegistrationServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
+  </ItemGroup>
+  <!-- Services\Impl -->
+  <ItemGroup>
     <ClCompile Include="services\impl\InterferogramServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
     <ClCompile Include="services\impl\FlatEarthServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
     <ClCompile Include="services\impl\DifferentialServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
     <ClCompile Include="services\impl\FilterServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
     <ClCompile Include="services\impl\UnwrappingServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
     <ClCompile Include="services\impl\GeocodingServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
-    <QtMoc Include="services\impl\RegistrationServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
+    <ClCompile Include="services\registration\RegistrationServiceImpl.cpp"><Filter>Services\Registration</Filter></ClCompile>
+    <QtMoc Include="services\registration\RegistrationServiceImpl.h"><Filter>Services\Registration</Filter></QtMoc>
     <QtMoc Include="services\impl\InterferogramServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
     <QtMoc Include="services\impl\FlatEarthServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
     <QtMoc Include="services\impl\DifferentialServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
@@ -67,6 +102,39 @@
     <QtMoc Include="services\impl\UnwrappingServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
     <QtMoc Include="services\impl\GeocodingServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
   </ItemGroup>
+  <!-- Services\Registration -->
+  <ItemGroup>
+    <ClInclude Include="services\registration\PipelineContext.h"><Filter>Services\Registration</Filter></ClInclude>
+  </ItemGroup>
+  <!-- Services\Registration\Types -->
+  <ItemGroup>
+    <ClInclude Include="services\registration\types\RegistrationTypes.h"><Filter>Services\Registration\Types</Filter></ClInclude>
+  </ItemGroup>
+  <!-- Services\Registration\Steps -->
+  <ItemGroup>
+    <ClInclude Include="services\registration\steps\IRegStep.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+    <ClCompile Include="services\registration\steps\BurstMatcher.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
+    <ClCompile Include="services\registration\steps\CoarseCorrelator.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
+    <ClCompile Include="services\registration\steps\DataReader.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
+    <ClCompile Include="services\registration\steps\EsdCorrector.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
+    <ClCompile Include="services\registration\steps\FineCorrelator.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
+    <ClCompile Include="services\registration\steps\OffsetExtractor.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
+    <ClCompile Include="services\registration\steps\OrbitInitializer.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
+    <ClCompile Include="services\registration\steps\PolynomialFitter.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
+    <ClCompile Include="services\registration\steps\QualityEvaluator.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
+    <ClCompile Include="services\registration\steps\SincResampler.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
+    <ClInclude Include="services\registration\steps\BurstMatcher.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+    <ClInclude Include="services\registration\steps\CoarseCorrelator.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+    <ClInclude Include="services\registration\steps\DataReader.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+    <ClInclude Include="services\registration\steps\EsdCorrector.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+    <ClInclude Include="services\registration\steps\FineCorrelator.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+    <ClInclude Include="services\registration\steps\OffsetExtractor.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+    <ClInclude Include="services\registration\steps\OrbitInitializer.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+    <ClInclude Include="services\registration\steps\PolynomialFitter.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+    <ClInclude Include="services\registration\steps\QualityEvaluator.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+    <ClInclude Include="services\registration\steps\SincResampler.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+  </ItemGroup>
+  <!-- Controllers -->
   <ItemGroup>
     <ClCompile Include="controllers\ApplicationController.cpp"><Filter>Controllers</Filter></ClCompile>
     <ClCompile Include="controllers\TaskWorker.cpp"><Filter>Controllers</Filter></ClCompile>
@@ -75,34 +143,39 @@
     <QtMoc Include="controllers\TaskWorker.h"><Filter>Controllers</Filter></QtMoc>
     <QtMoc Include="controllers\WorkerManager.h"><Filter>Controllers</Filter></QtMoc>
   </ItemGroup>
+  <!-- UI -->
   <ItemGroup>
     <ClCompile Include="ui\MapCanvasWidget.cpp"><Filter>UI</Filter></ClCompile>
     <ClCompile Include="ui\LayerPanel.cpp"><Filter>UI</Filter></ClCompile>
     <ClCompile Include="ui\ProcessingMonitorPanel.cpp"><Filter>UI</Filter></ClCompile>
+    <ClCompile Include="ui\OverviewWidget.cpp"><Filter>UI</Filter></ClCompile>
+    <ClCompile Include="ui\SarMetadataPanel.cpp"><Filter>UI</Filter></ClCompile>
     <QtMoc Include="ui\MapCanvasWidget.h"><Filter>UI</Filter></QtMoc>
     <QtMoc Include="ui\LayerPanel.h"><Filter>UI</Filter></QtMoc>
     <QtMoc Include="ui\ProcessingMonitorPanel.h"><Filter>UI</Filter></QtMoc>
+    <QtMoc Include="ui\OverviewWidget.h"><Filter>UI</Filter></QtMoc>
+    <QtMoc Include="ui\SarMetadataPanel.h"><Filter>UI</Filter></QtMoc>
   </ItemGroup>
+  <!-- UI\Registration -->
   <ItemGroup>
     <ClCompile Include="ui\Registration\RegistrationDialog.cpp"><Filter>UI\Registration</Filter></ClCompile>
     <QtMoc Include="ui\Registration\RegistrationDialog.h"><Filter>UI\Registration</Filter></QtMoc>
   </ItemGroup>
+  <!-- UI\Interferogram -->
   <ItemGroup>
     <ClCompile Include="ui\Interferogram\InterferogramDialog.cpp"><Filter>UI\Interferogram</Filter></ClCompile>
     <QtMoc Include="ui\Interferogram\InterferogramDialog.h"><Filter>UI\Interferogram</Filter></QtMoc>
   </ItemGroup>
+  <!-- UI\Filter -->
   <ItemGroup>
     <ClCompile Include="ui\Filter\FilterUnwrappingDialog.cpp"><Filter>UI\Filter</Filter></ClCompile>
     <QtMoc Include="ui\Filter\FilterUnwrappingDialog.h"><Filter>UI\Filter</Filter></QtMoc>
   </ItemGroup>
+  <!-- UI\Geocoding & Deformation -->
   <ItemGroup>
     <ClCompile Include="ui\Geocoding\GeocodingDialog.cpp"><Filter>UI\Geocoding</Filter></ClCompile>
     <ClCompile Include="ui\Deformation\DeformationDialog.cpp"><Filter>UI\Deformation</Filter></ClCompile>
-    <ClCompile Include="ui\OverviewWidget.cpp"><Filter>UI</Filter></ClCompile>
-    <ClCompile Include="ui\SarMetadataPanel.cpp"><Filter>UI</Filter></ClCompile>
     <QtMoc Include="ui\Geocoding\GeocodingDialog.h"><Filter>UI\Geocoding</Filter></QtMoc>
     <QtMoc Include="ui\Deformation\DeformationDialog.h"><Filter>UI\Deformation</Filter></QtMoc>
-    <QtMoc Include="ui\OverviewWidget.h"><Filter>UI</Filter></QtMoc>
-    <QtMoc Include="ui\SarMetadataPanel.h"><Filter>UI</Filter></QtMoc>
   </ItemGroup>
 </Project>
