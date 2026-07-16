@@ -26,6 +26,7 @@ bool DataReader::execute(PipelineContext& ctx) {
     d.burstStartLines    = ctx.masterBand->burstStartLines;
     d.masterBurstTimes   = ctx.masterBand->burstAzimuthTimes;
     d.slaveBurstTimes    = ctx.slaveBand->burstAzimuthTimes;
+    d.slaveAzimuthFmRate = ctx.slaveBand->azimuthFmRate;
     ctx.isTopsar = (d.burstCount > 1);
     return true;
 }

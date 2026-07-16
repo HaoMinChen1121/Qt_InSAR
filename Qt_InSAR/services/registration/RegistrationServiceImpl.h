@@ -1,7 +1,7 @@
 #ifndef REGISTRATIONSERVICEIMPL_H
 #define REGISTRATIONSERVICEIMPL_H
 
-#include "IRegistrationService.h"
+#include "../IRegistrationService.h"
 #include <memory>
 
 class RegistrationServiceImpl : public IRegistrationService

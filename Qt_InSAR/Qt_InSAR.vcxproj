@@ -193,7 +193,6 @@
     <QtMoc Include="ui\SarMetadataPanel.h" />
     <!-- Headers -->
     <ClInclude Include="algorithms\Correlation.h" />
-    <ClInclude Include="algorithms\FFT.h" />
     <ClInclude Include="algorithms\OrbitInterpolator.h" />
     <ClInclude Include="algorithms\PolynomialFit.h" />
     <ClInclude Include="algorithms\SincInterpolator.h" />

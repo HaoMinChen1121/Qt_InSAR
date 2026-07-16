@@ -538,6 +538,22 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
         }
     }
 
+    // azimuthFmRate (TOPS deramping所需)
+    QDomNodeList gaList = root.elementsByTagName("generalAnnotation");
+    if (!gaList.isEmpty()) {
+        QDomNodeList afmList = gaList.at(0).toElement().elementsByTagName("azimuthFmRateList");
+        if (!afmList.isEmpty()) {
+            QDomNodeList fmRates = afmList.at(0).toElement().elementsByTagName("azimuthFmRate");
+            if (!fmRates.isEmpty()) {
+                QString polyStr = fmRates.at(0).toElement()
+                    .firstChildElement("azimuthFmRatePolynomial").text().trimmed();
+                QStringList coeffs = polyStr.split(' ', Qt::SkipEmptyParts);
+                if (!coeffs.isEmpty())
+                    mParsedAzimuthFmRate = coeffs[0].toDouble();
+            }
+        }
+    }
+
     // 采样数 (SLC: samplesPerBurst/linesPerBurst; GRD: numberOfSamples/numberOfLines)
     nl = root.elementsByTagName("samplesPerBurst");
     if (!nl.isEmpty())
@@ -624,6 +640,7 @@ void Sentinel1Product::discoverMeasurementFiles(const QString& measurementDir) {
         b.burstCount = mParsedBurstStarts.size();
         b.burstStartLines = mParsedBurstStarts;
         b.burstAzimuthTimes = mParsedBurstAzimuthTimes;
+        b.azimuthFmRate    = mParsedAzimuthFmRate;
 
         mBands.append(b);
     }

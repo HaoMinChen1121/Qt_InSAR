@@ -6,7 +6,7 @@
 #include "ui/MapCanvasWidget.h"
 #include "ui/SarMetadataPanel.h"
 
-#include "services/impl/RegistrationServiceImpl.h"
+#include "services/registration/RegistrationServiceImpl.h"
 #include "services/impl/InterferogramServiceImpl.h"
 #include "services/impl/FlatEarthServiceImpl.h"
 #include "services/impl/DifferentialServiceImpl.h"

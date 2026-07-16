@@ -12,7 +12,6 @@ public:
 
     virtual void setParams(const RegistrationParams& params) = 0;
     virtual RegistrationParams params() const = 0;
-    virtual double currentCorrelation() const = 0;
 };
 
 #endif // IREGISTRATIONSERVICE_H
