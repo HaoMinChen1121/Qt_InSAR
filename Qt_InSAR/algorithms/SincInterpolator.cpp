@@ -84,3 +84,80 @@ std::complex<float> bilinearInterp2D(const QVector<std::complex<float>>& data,
         + (1-fx)*fy*f01.imag() + fx*fy*f11.imag());
     return {re, im};
 }
+
+// ── 预计算 Sinc×Kaiser 权重表 ──
+void initSincLUT(int sincWin, double beta,
+                 QVector<QVector<float>>& weights)
+{
+    int K = 2 * sincWin + 1;
+    weights.resize(256);
+    for (int frac = 0; frac < 256; ++frac) {
+        double fx = frac / 256.0;
+        weights[frac].resize(K);
+        for (int i = -sincWin; i <= sincWin; ++i) {
+            weights[frac][i + sincWin] = (float)(
+                sinc(i - fx) * kaiserWindow(i + sincWin, K, beta));
+        }
+    }
+}
+
+// ── 1D 水平 Sinc 插值 ──
+void sincInterp1D_Horizontal(const QVector<std::complex<float>>& src,
+                              int srcW, int srcH,
+                              const QVector<double>& sx,
+                              const QVector<QVector<float>>& weightLUT,
+                              int sincWin,
+                              QVector<std::complex<float>>& dst, int dstW)
+{
+    dst.resize(srcH * dstW);
+    for (int row = 0; row < srcH; ++row) {
+        int srcRowOff = row * srcW;
+        int dstRowOff = row * dstW;
+        for (int col = 0; col < dstW; ++col) {
+            double x = sx[col];
+            int ix = (int)std::floor(x);
+            int fi = (int)((x - ix) * 256.0);
+            fi = qBound(0, fi, 255);
+            const auto& w = weightLUT[fi];
+            float sumR = 0, sumI = 0, wsum = 0;
+            for (int i = -sincWin; i <= sincWin; ++i) {
+                int cx = qBound(0, ix + i, srcW - 1);
+                auto v = src[srcRowOff + cx];
+                float wi = w[i + sincWin];
+                sumR += v.real() * wi;
+                sumI += v.imag() * wi;
+                wsum += wi;
+            }
+            if (wsum > 0) { sumR /= wsum; sumI /= wsum; }
+            dst[dstRowOff + col] = {sumR, sumI};
+        }
+    }
+}
+
+// ── 1D 垂直 Sinc 插值 ──
+void sincInterp1D_Vertical(const QVector<std::complex<float>>& src,
+                            int srcH, int width,
+                            const QVector<double>& sy,
+                            const QVector<QVector<float>>& weightLUT,
+                            int sincWin,
+                            std::complex<float>* dst)
+{
+    for (int col = 0; col < width; ++col) {
+        double y = sy[col];
+        int iy = (int)std::floor(y);
+        int fi = (int)((y - iy) * 256.0);
+        fi = qBound(0, fi, 255);
+        const auto& w = weightLUT[fi];
+        float sumR = 0, sumI = 0, wsum = 0;
+        for (int j = -sincWin; j <= sincWin; ++j) {
+            int ry = qBound(0, iy + j, srcH - 1);
+            auto v = src[ry * width + col];
+            float wj = w[j + sincWin];
+            sumR += v.real() * wj;
+            sumI += v.imag() * wj;
+            wsum += wj;
+        }
+        if (wsum > 0) { sumR /= wsum; sumI /= wsum; }
+        dst[col] = {sumR, sumI};
+    }
+}

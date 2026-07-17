@@ -3,6 +3,7 @@
 #include <gdal_priv.h>
 #include <cpl_conv.h>
 #include <cpl_port.h>
+#include <cpl_string.h>
 #include <QVector>
 
 GdalSlcWriter::GdalSlcWriter() = default;
@@ -29,6 +30,9 @@ bool GdalSlcWriter::create(const QString& filePath,
         mLastError = QStringLiteral("无法创建输出文件: %1").arg(filePath);
         return false;
     }
+
+    // 告知 GDAL/QGIS 按幅度渲染复数数据
+    GDALSetMetadataItem(hDS, "COMPLEX_SCHEME", "MAGNITUDE", "IMAGE_STRUCTURE");
 
     if (!projection.isEmpty()) {
         GDALSetProjection(hDS, projection.toUtf8().constData());
@@ -101,6 +105,20 @@ void GdalSlcWriter::setGeoTransform(double x0, double dx, double rx,
     if (!mDataset) return;
     double gt[6] = {x0, dx, rx, y0, ry, dy};
     GDALSetGeoTransform(static_cast<GDALDatasetH>(mDataset), gt);
+}
+
+void GdalSlcWriter::copyGeoreferencing(void* srcDataset, const QString& /*projection*/)
+{
+    if (!mDataset || !srcDataset) return;
+    GDALDatasetH hSrc = static_cast<GDALDatasetH>(srcDataset);
+    GDALDatasetH hDst = static_cast<GDALDatasetH>(mDataset);
+
+    // 只复制 GCPs — SLC 通过地面控制点做地理定位, 不写 GeoTransform/Projection
+    int gcpCount = GDALGetGCPCount(hSrc);
+    if (gcpCount > 0) {
+        GDALSetGCPs(hDst, gcpCount,
+            GDALGetGCPs(hSrc), GDALGetGCPProjection(hSrc));
+    }
 }
 
 void GdalSlcWriter::close()

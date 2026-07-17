@@ -18,6 +18,7 @@ public:
         const QVector<std::complex<float>>& data) override;
     void setGeoTransform(double x0, double dx, double rx,
                          double y0, double ry, double dy);
+    void copyGeoreferencing(void* srcDataset, const QString& projection);
     void close() override;
     QString lastError() const override;
 

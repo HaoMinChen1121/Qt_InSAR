@@ -50,7 +50,7 @@ struct RegistrationParams
     int       fineFFTWindow   = 256;       // 精配准FFT窗口
 
     // ── 重采样 ──
-    QString   resamplingMethod = "Bilinear";// "Sinc" / "Bilinear" / "Bicubic"
+    QString   resamplingMethod = "Sinc";    // "Sinc" / "Bilinear" / "Bicubic"
     double    outputResolutionRange = 0;    // 0=保持原始
     double    outputResolutionAzimuth = 0;
     int       sincWindowSize = 16;

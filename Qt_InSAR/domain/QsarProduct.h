@@ -20,6 +20,13 @@ struct QsarBand {
     QString diffPhaseFile;      // 差分相位
     int     width  = 0;
     int     height = 0;
+
+    // TOPSAR burst 元数据 (配准输出携带，用于后续 deburst)
+    int     burstCount = 0;
+    int     linesPerBurst = 0;
+    QVector<int> burstStartLines;
+    QVector<QDateTime> burstAzimuthTimes;
+    double  azimuthFrequency = 0.0;   // 有效方位向PRF (Hz)
 };
 
 // 基线信息 (可选)

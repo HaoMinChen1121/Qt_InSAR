@@ -1,5 +1,5 @@
-#ifndef COARSECORRELATOR_H
-#define COARSECORRELATOR_H
+#ifndef REG_COARSECORRELATOR_H
+#define REG_COARSECORRELATOR_H
 
 #include "IRegStep.h"
 

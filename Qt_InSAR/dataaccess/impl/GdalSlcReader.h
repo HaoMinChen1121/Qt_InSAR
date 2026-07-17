@@ -23,6 +23,8 @@ public:
     int     bandCount() const override;
     QString projection() const override;
     QString filePath() const override;
+    bool    geoTransform(double gt[6]) const;
+    void*   datasetHandle() const { return mDataset; }
 
 private:
     void* mDataset = nullptr; // GDALDataset*

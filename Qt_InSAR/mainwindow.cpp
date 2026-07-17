@@ -457,7 +457,7 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mRegParams.route = RegRoute::Route3_FFT_FFTW;
     mRegParams.coarseMethod = "FFT";
     mRegParams.fineMethod = "FFT";
-    mRegParams.resamplingMethod = "Bilinear";
+    mRegParams.resamplingMethod = "Sinc";
     mRegParams.outputPrefix = "registered";
     mRegParams.coarseWindowSize = 256;
     mRegParams.offsetPerBurst = 64;

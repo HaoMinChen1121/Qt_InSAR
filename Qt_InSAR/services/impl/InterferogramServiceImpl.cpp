@@ -19,6 +19,34 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+// ── 计算 TOPSAR burst 间 overlap discard 行数 ──
+static void computeBurstDiscard(int N, int linesPerBurst, double prf,
+    const QVector<QDateTime>& burstTimes,
+    QVector<int>& discardTop, QVector<int>& discardBottom)
+{
+    discardTop.fill(0, N);
+    discardBottom.fill(0, N);
+    if (N < 2) return;
+
+    if (burstTimes.size() >= N) {
+        for (int b = 0; b < N - 1; ++b) {
+            double dt = burstTimes[b].msecsTo(burstTimes[b+1]) / 1000.0;
+            double burstDur = linesPerBurst / prf;
+            double overlapTime = burstDur - dt;
+            if (overlapTime < 0) overlapTime = 0;
+            int overlapLines = (int)(overlapTime * prf + 0.5);
+            int half = overlapLines / 2;
+            discardBottom[b] = half;
+            discardTop[b + 1] = half;
+        }
+    } else {
+        for (int b = 0; b < N - 1; ++b) {
+            discardBottom[b] = 40;
+            discardTop[b + 1] = 40;
+        }
+    }
+}
+
 InterferogramServiceImpl::InterferogramServiceImpl(QObject* parent)
     : IInterferogramService(parent) {}
 
@@ -73,6 +101,11 @@ void InterferogramServiceImpl::execute()
             qb.file = b.rasterPath;
             qb.width  = b.rasterSize.width();
             qb.height = b.rasterSize.height();
+            qb.burstCount = b.burstCount;
+            qb.linesPerBurst = b.linesPerBurst;
+            qb.burstStartLines = b.burstStartLines;
+            qb.burstAzimuthTimes = b.burstAzimuthTimes;
+            qb.azimuthFrequency = b.azimuthFrequency;
             masterQsar.bands.append(qb);
         }
     }
@@ -135,7 +168,7 @@ void InterferogramServiceImpl::execute()
         emit progressChanged(basePct + 5, pairName + QStringLiteral(": 干涉图生成..."));
         QString ifgBase = ifgDir + "/" + pairName;
         if (!stageInterferogram(pairs[i].master.file, pairs[i].slave.file,
-                ifgBase, w, h, mParams.rangeLooks, mParams.azimuthLooks)) {
+                ifgBase, w, h, mParams.rangeLooks, mParams.azimuthLooks, &pairs[i].slave)) {
             qWarning() << "[Ifg] Stage 1 failed:" << pairName;
             continue;
         }
@@ -143,6 +176,16 @@ void InterferogramServiceImpl::execute()
         qb.ifgFile  = qb.file;
         qb.cohFile  = QStringLiteral("ifg/%1_coh.tif").arg(pairName);
         qb.phaseFile = QStringLiteral("ifg/%1_phase.tif").arg(pairName);
+
+        // 更新为实际输出尺寸（TOPSAR deburst 后高度会减小）
+        {
+            GdalSlcReader dimRdr;
+            if (dimRdr.open(ifgBase + "_ifg.tif")) {
+                qb.width = dimRdr.width();
+                qb.height = dimRdr.height();
+                dimRdr.close();
+            }
+        }
 
         // === Stage 2: 平地效应 ===
         if (mParams.enableFlatEarth) {
@@ -184,12 +227,15 @@ void InterferogramServiceImpl::execute()
     mRunning = false;
 }
 
-// ── Stage 1: 多视 + 干涉图 + 相干性 ──
+// ── Stage 1: 多视 + 干涉图 + 相干性 (TOPSAR: 逐burst干涉 + deburst) ──
 bool InterferogramServiceImpl::stageInterferogram(
     const QString& masterPath, const QString& slavePath,
     const QString& outBase, int width, int height,
-    int rgLooks, int azLooks)
+    int rgLooks, int azLooks,
+    const QsarBand* burstInfo)
 {
+    Q_UNUSED(width); Q_UNUSED(height);
+
     qDebug() << "[Ifg] stageInterferogram: master=" << masterPath.left(80);
     qDebug() << "[Ifg] stageInterferogram: slave=" << slavePath;
 
@@ -203,22 +249,48 @@ bool InterferogramServiceImpl::stageInterferogram(
         return false;
     }
 
-    qDebug() << "[Ifg-CK1] master" << mReader.width() << "x" << mReader.height()
-             << "slave" << sReader.width() << "x" << sReader.height();
-
-    // 用实际读取尺寸而非传入参数（QSAR band 可能未设 rasterSize）
     int realW = mReader.width();
     int realH = mReader.height();
     int outW = realW / rgLooks;
-    int outH = realH / azLooks;
-    if (outW < 1 || outH < 1) return false;
+    if (outW < 1) return false;
+
+    qDebug() << "[Ifg-CK1] master" << realW << "x" << realH
+             << "slave" << sReader.width() << "x" << sReader.height();
+
+    // ── 判断 TOPSAR ──
+    bool isTopsar = burstInfo && burstInfo->burstCount > 1;
+    int outH;
+    QVector<int> discardTop, discardBottom, burstOutOffsets;
+
+    if (isTopsar) {
+        int N = burstInfo->burstCount;
+        int L = burstInfo->linesPerBurst;
+        double prf = burstInfo->azimuthFrequency > 0
+            ? burstInfo->azimuthFrequency : 486.0; // fallback S1 IW PRF
+
+        computeBurstDiscard(N, L, prf, burstInfo->burstAzimuthTimes,
+            discardTop, discardBottom);
+
+        burstOutOffsets.resize(N);
+        outH = 0;
+        for (int b = 0; b < N; ++b) {
+            burstOutOffsets[b] = outH;
+            int validLines = L - discardTop[b] - discardBottom[b];
+            outH += validLines / azLooks;
+        }
+        qDebug() << "[Ifg] TOPSAR deburst" << N << "bursts L=" << L
+                 << "prf=" << prf << "outH=" << outH;
+    } else {
+        outH = realH / azLooks;
+    }
+
+    if (outH < 1) return false;
 
     QDir().mkpath(QFileInfo(outBase).absolutePath());
     QString ifgPath  = outBase + "_ifg.tif";
     QString cohPath  = outBase + "_coh.tif";
     QString phasePath = outBase + "_phase.tif";
 
-    // 创建三个独立文件
     GDALDriverH driver = GDALGetDriverByName("GTiff");
     double gt[6] = {0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
     GDALDatasetH hIfg = GDALCreate(driver, ifgPath.toUtf8().constData(), outW, outH, 1, GDT_CFloat32, nullptr);
@@ -232,70 +304,154 @@ bool InterferogramServiceImpl::stageInterferogram(
     QVector<float> rowCoh(outW);
     int cohWindow = 5;
 
-    for (int row = 0; row < outH; ++row) {
-        if (mCancelled) { GDALClose(hIfg); GDALClose(hCoh); GDALClose(hPh); return false; }
-        int srcRow = row * azLooks;
-        int readH = azLooks + cohWindow * 2;
-        int row0 = srcRow - cohWindow;
+    if (isTopsar) {
+        // ── TOPSAR: 逐burst处理，输出时跳过overlap discard区域 ──
+        int N = burstInfo->burstCount;
+        int L = burstInfo->linesPerBurst;
 
-        auto mData = mReader.readBandWindow(0, 0, row0, realW, readH);
-        auto sData = sReader.readBandWindow(0, 0, row0, realW, readH);
-        int actualH = std::min(mData.size() / realW, sData.size() / realW);
-        if (actualH == 0) {
-            rowComplex.fill(std::complex<float>(0,0));
-            rowPhase.fill(0); rowCoh.fill(0);
+        for (int b = 0; b < N; ++b) {
+            if (mCancelled) { GDALClose(hIfg); GDALClose(hCoh); GDALClose(hPh); return false; }
+
+            int burstRow0 = b * L;
+            int validRow0 = burstRow0 + discardTop[b];
+            int validRow1 = burstRow0 + L - 1 - discardBottom[b];
+            int validRows = validRow1 - validRow0 + 1;
+            int burstOutH = validRows / azLooks;
+            if (burstOutH <= 0) continue;
+
+            // 读取完整 burst（含 overlap），为相干性计算提供上下文
+            int readRow0 = burstRow0 - cohWindow;
+            int readH = L + cohWindow * 2;
+            if (readRow0 < 0) { readH += readRow0; readRow0 = 0; }
+            if (readRow0 + readH > realH) readH = realH - readRow0;
+
+            auto mBurst = mReader.readBandWindow(0, 0, readRow0, realW, readH);
+            auto sBurst = sReader.readBandWindow(0, 0, readRow0, realW, readH);
+            int actualH = std::min(mBurst.size() / realW, sBurst.size() / realW);
+
+            qDebug() << "[Ifg] burst" << (b+1) << "/" << N
+                     << "validRows=" << validRows << "outRows=" << burstOutH;
+
+            for (int outLocal = 0; outLocal < burstOutH; ++outLocal) {
+                int outRow = burstOutOffsets[b] + outLocal;
+                int srcRow = validRow0 + outLocal * azLooks;
+                int rowOff = srcRow - readRow0;  // 在读取窗口内的行偏移
+
+                for (int col = 0; col < outW; ++col) {
+                    int srcCol = col * rgLooks;
+
+                    // 多视平均
+                    std::complex<double> mAvg(0, 0), sAvg(0, 0);
+                    int nPix = 0;
+                    for (int ar = 0; ar < azLooks; ++ar) {
+                        for (int ac = 0; ac < rgLooks; ++ac) {
+                            int idx = (rowOff + ar) * realW + (srcCol + ac);
+                            if (idx >= 0 && idx < actualH * realW) {
+                                mAvg += std::complex<double>(mBurst[idx].real(), mBurst[idx].imag());
+                                sAvg += std::complex<double>(sBurst[idx].real(), sBurst[idx].imag());
+                                ++nPix;
+                            }
+                        }
+                    }
+                    if (nPix > 0) { mAvg /= nPix; sAvg /= nPix; }
+
+                    std::complex<double> ifg = mAvg * std::conj(sAvg);
+                    rowComplex[col] = std::complex<float>(ifg.real(), ifg.imag());
+                    rowPhase[col] = std::atan2(ifg.imag(), ifg.real());
+
+                    // 相干性
+                    std::complex<double> crossSum(0, 0);
+                    double magM = 0, magS = 0;
+                    for (int wr = -cohWindow/2; wr <= cohWindow/2; ++wr) {
+                        for (int wc = -cohWindow/2; wc <= cohWindow/2; ++wc) {
+                            int sc = srcCol + cohWindow/2 + wc;
+                            int sr = rowOff + cohWindow/2 + wr;
+                            if (sc >= 0 && sc < realW && sr >= 0 && sr < actualH) {
+                                int idx = sr * realW + sc;
+                                auto mv = mBurst[idx]; auto sv = sBurst[idx];
+                                crossSum += std::complex<double>(mv.real(), mv.imag())
+                                    * std::complex<double>(sv.real(), -sv.imag());
+                                magM += mv.real()*mv.real() + mv.imag()*mv.imag();
+                                magS += sv.real()*sv.real() + sv.imag()*sv.imag();
+                            }
+                        }
+                    }
+                    double denom = std::sqrt(std::max(1e-15, magM * magS));
+                    rowCoh[col] = static_cast<float>(std::abs(crossSum) / denom);
+                }
+
+                GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, outRow, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
+                GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, outRow, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
+                GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, outRow, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
+            }
+        }
+    } else {
+        // ── 非TOPSAR: 全幅处理（保持原有逻辑） ──
+        for (int row = 0; row < outH; ++row) {
+            if (mCancelled) { GDALClose(hIfg); GDALClose(hCoh); GDALClose(hPh); return false; }
+            int srcRow = row * azLooks;
+            int readH = azLooks + cohWindow * 2;
+            int row0 = srcRow - cohWindow;
+
+            auto mData = mReader.readBandWindow(0, 0, row0, realW, readH);
+            auto sData = sReader.readBandWindow(0, 0, row0, realW, readH);
+            int actualH = std::min(mData.size() / realW, sData.size() / realW);
+            if (actualH == 0) {
+                rowComplex.fill(std::complex<float>(0,0));
+                rowPhase.fill(0); rowCoh.fill(0);
+                GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, row, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
+                GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
+                GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
+                continue;
+            }
+
+            int rowOff = cohWindow + (row0 < 0 ? row0 : 0);
+
+            for (int col = 0; col < outW; ++col) {
+                int srcCol = col * rgLooks;
+
+                std::complex<double> mAvg(0, 0), sAvg(0, 0);
+                for (int ar = 0; ar < azLooks; ++ar) {
+                    for (int ac = 0; ac < rgLooks; ++ac) {
+                        int idx = (rowOff + ar) * realW + (srcCol + ac);
+                        if (idx >= 0 && idx < actualH * realW) {
+                            mAvg += std::complex<double>(mData[idx].real(), mData[idx].imag());
+                            sAvg += std::complex<double>(sData[idx].real(), sData[idx].imag());
+                        }
+                    }
+                }
+                int nPix = azLooks * rgLooks;
+                mAvg /= nPix;
+                sAvg /= nPix;
+
+                std::complex<double> ifg = mAvg * std::conj(sAvg);
+                rowComplex[col] = std::complex<float>(ifg.real(), ifg.imag());
+                rowPhase[col] = std::atan2(ifg.imag(), ifg.real());
+
+                std::complex<double> crossSum(0, 0);
+                double magM = 0, magS = 0;
+                for (int wr = -cohWindow/2; wr <= cohWindow/2; ++wr) {
+                    for (int wc = -cohWindow/2; wc <= cohWindow/2; ++wc) {
+                        int sc = srcCol + cohWindow/2 + wc;
+                        int sr = rowOff + cohWindow/2 + wr;
+                        if (sc >= 0 && sc < realW && sr >= 0 && sr < actualH) {
+                            int idx = sr * realW + sc;
+                            auto mv = mData[idx]; auto sv = sData[idx];
+                            crossSum += std::complex<double>(mv.real(), mv.imag())
+                                * std::complex<double>(sv.real(), -sv.imag());
+                            magM += mv.real()*mv.real() + mv.imag()*mv.imag();
+                            magS += sv.real()*sv.real() + sv.imag()*sv.imag();
+                        }
+                    }
+                }
+                double denom = std::sqrt(std::max(1e-15, magM * magS));
+                rowCoh[col] = static_cast<float>(std::abs(crossSum) / denom);
+            }
+
             GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, row, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
             GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
             GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
-            continue;
         }
-
-        int rowOff = cohWindow + (row0 < 0 ? row0 : 0);
-
-        for (int col = 0; col < outW; ++col) {
-            int srcCol = col * rgLooks;
-
-            std::complex<double> mAvg(0, 0), sAvg(0, 0);
-            for (int ar = 0; ar < azLooks; ++ar) {
-                for (int ac = 0; ac < rgLooks; ++ac) {
-                    int idx = (rowOff + ar) * realW + (srcCol + ac);
-                    if (idx >= 0 && idx < actualH * realW) {
-                        mAvg += std::complex<double>(mData[idx].real(), mData[idx].imag());
-                        sAvg += std::complex<double>(sData[idx].real(), sData[idx].imag());
-                    }
-                }
-            }
-            int nPix = azLooks * rgLooks;
-            mAvg /= nPix;
-            sAvg /= nPix;
-
-            std::complex<double> ifg = mAvg * std::conj(sAvg);
-            rowComplex[col] = std::complex<float>(ifg.real(), ifg.imag());
-            rowPhase[col] = std::atan2(ifg.imag(), ifg.real());
-
-            std::complex<double> crossSum(0, 0);
-            double magM = 0, magS = 0;
-            for (int wr = -cohWindow/2; wr <= cohWindow/2; ++wr) {
-                for (int wc = -cohWindow/2; wc <= cohWindow/2; ++wc) {
-                    int sc = srcCol + cohWindow/2 + wc;
-                    int sr = rowOff + cohWindow/2 + wr;
-                    if (sc >= 0 && sc < realW && sr >= 0 && sr < actualH) {
-                        int idx = sr * realW + sc;
-                        auto mv = mData[idx]; auto sv = sData[idx];
-                        crossSum += std::complex<double>(mv.real(), mv.imag())
-                            * std::complex<double>(sv.real(), -sv.imag());
-                        magM += mv.real()*mv.real() + mv.imag()*mv.imag();
-                        magS += sv.real()*sv.real() + sv.imag()*sv.imag();
-                    }
-                }
-            }
-            double denom = std::sqrt(std::max(1e-15, magM * magS));
-            rowCoh[col] = static_cast<float>(std::abs(crossSum) / denom);
-        }
-
-        GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, row, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
-        GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
-        GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
     }
 
     GDALClose(hIfg); GDALClose(hCoh); GDALClose(hPh);

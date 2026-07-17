@@ -120,14 +120,18 @@ bool fitJointPolynomial(const QVector<OffsetPoint>& points,
     if (!fitOnce(inlierPts, masterW, masterH, rPoly, aPoly))
         return false;
 
-    // RMSE
+    // RMSE — 分别计算 range 和 azimuth
     double ssR = 0, ssA = 0;
     for (const auto& p : inlierPts) {
-        double res = residual(p, rPoly, aPoly, masterW, masterH);
-        ssR += res * res;
+        double rn = (double)p.col / masterW, an = (double)p.row / masterH;
+        double pR = rPoly.coeffs[0]+rPoly.coeffs[1]*rn+rPoly.coeffs[2]*an+rPoly.coeffs[3]*rn*an+rPoly.coeffs[4]*rn*rn+rPoly.coeffs[5]*an*an;
+        double pA = aPoly.coeffs[0]+aPoly.coeffs[1]*an;
+        double dr = p.rangeOff - pR, da = p.aziOff - pA;
+        ssR += dr * dr;
+        ssA += da * da;
     }
     rPoly.rmse = std::sqrt(ssR / inlierPts.size());
-    aPoly.rmse = rPoly.rmse;
+    aPoly.rmse = std::sqrt(ssA / inlierPts.size());
 
     return true;
 }

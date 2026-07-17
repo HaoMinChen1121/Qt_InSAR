@@ -92,3 +92,9 @@ QString GdalSlcReader::projection() const
     return QString::fromUtf8(proj);
 }
 QString GdalSlcReader::filePath() const { return mFilePath; }
+
+bool GdalSlcReader::geoTransform(double gt[6]) const
+{
+    if (!mDataset) return false;
+    return GDALGetGeoTransform(static_cast<GDALDatasetH>(mDataset), gt) == CE_None;
+}

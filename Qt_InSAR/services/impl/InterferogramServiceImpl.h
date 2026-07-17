@@ -22,7 +22,8 @@ private:
     bool stageInterferogram(
         const QString& masterPath, const QString& slavePath,
         const QString& outBase, int width, int height,
-        int rgLooks, int azLooks);
+        int rgLooks, int azLooks,
+        const struct QsarBand* burstInfo = nullptr);
 
     bool stageFlatEarth(
         const QString& ifgPath, const QString& outBase,

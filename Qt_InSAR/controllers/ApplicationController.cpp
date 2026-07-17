@@ -135,7 +135,7 @@ void ApplicationController::wireConnections()
                     // 设置分组名
                     mPendingGroupName = qsar.productType + " " + qsar.sourceMaster;
                     groupName = mPendingGroupName;
-                    QgsProject::instance()->layerTreeRoot()->addGroup(groupName);
+                    QgsProject::instance()->layerTreeRoot()->insertGroup(0, groupName);
                     for (const auto& b : qsar.bands) {
                         expandedFiles.append(b.file);
                         // 扩展所有阶段文件
@@ -189,8 +189,8 @@ void ApplicationController::wireConnections()
                         QgsProject::instance()->addMapLayer(layer, false);
                         QgsLayerTreeGroup* grp = QgsProject::instance()
                             ->layerTreeRoot()->findGroup(groupName);
-                        if (grp) grp->addLayer(layer);
-                        else QgsProject::instance()->layerTreeRoot()->addLayer(layer);
+                        if (grp) grp->insertLayer(0, layer);
+                        else QgsProject::instance()->layerTreeRoot()->insertLayer(0, layer);
                     } else {
                         // 通用栅格: QGIS 自动管理图层树
                         QgsProject::instance()->addMapLayer(layer);
@@ -249,10 +249,10 @@ void ApplicationController::wireConnections()
                     if (!groupName.isEmpty()) {
                         QgsLayerTreeGroup* grp = QgsProject::instance()
                             ->layerTreeRoot()->findGroup(groupName);
-                        if (grp) grp->addLayer(layer);
-                        else QgsProject::instance()->layerTreeRoot()->addLayer(layer);
+                        if (grp) grp->insertLayer(0, layer);
+                        else QgsProject::instance()->layerTreeRoot()->insertLayer(0, layer);
                     } else {
-                        QgsProject::instance()->layerTreeRoot()->addLayer(layer);
+                        QgsProject::instance()->layerTreeRoot()->insertLayer(0, layer);
                     }
                     newLayers.append(layer);
                     QString lt2 = QStringLiteral("Raster");
@@ -292,7 +292,7 @@ void ApplicationController::wireConnections()
         } else {
             QgsMapLayer* layer = QgsProject::instance()->mapLayer(id);
             if (layer) {
-                QgsProject::instance()->layerTreeRoot()->addLayer(layer);
+                QgsProject::instance()->layerTreeRoot()->insertLayer(0, layer);
                 qWarning() << "[Layer] 图层在注册表但不在树中, 已恢复:" << layer->name();
             }
         }
@@ -561,7 +561,7 @@ void ApplicationController::onSarProductOpenRequested(const QString& path)
             .arg(sensorInfo.acquisitionMode)
             .arg(sensorInfo.acquisitionStart.toString("yyyy-MM-dd"))
             .arg(sensorInfo.relativeOrbit);
-        QgsProject::instance()->layerTreeRoot()->addGroup(mPendingGroupName);
+        QgsProject::instance()->layerTreeRoot()->insertGroup(0, mPendingGroupName);
 
         QStringList paths;
         for (const auto& b : bands) {

@@ -47,6 +47,19 @@ bool QsarIO::write(const QString& filePath, const QsarProduct& product)
         if (!b.flatPhaseFile.isEmpty()) bo["flat_phase"] = b.flatPhaseFile;
         if (!b.diffFile.isEmpty()) bo["diff"] = b.diffFile;
         if (!b.diffPhaseFile.isEmpty()) bo["diff_phase"] = b.diffPhaseFile;
+        // burst metadata
+        if (b.burstCount > 0) {
+            bo["burstCount"] = b.burstCount;
+            bo["linesPerBurst"] = b.linesPerBurst;
+            bo["azimuthFrequency"] = b.azimuthFrequency;
+            QJsonArray startLines;
+            for (int v : b.burstStartLines) startLines.append(v);
+            bo["burstStartLines"] = startLines;
+            QJsonArray burstTimes;
+            for (const auto& t : b.burstAzimuthTimes)
+                burstTimes.append(t.toString(Qt::ISODate));
+            bo["burstAzimuthTimes"] = burstTimes;
+        }
         bands.append(bo);
     }
     root["bands"] = bands;
@@ -116,6 +129,16 @@ QsarProduct QsarIO::read(const QString& filePath)
         b.flatPhaseFile = bo["flat_phase"].toString();
         b.diffFile = bo["diff"].toString();
         b.diffPhaseFile = bo["diff_phase"].toString();
+        // burst metadata
+        if (bo.contains("burstCount")) {
+            b.burstCount = bo["burstCount"].toInt();
+            b.linesPerBurst = bo["linesPerBurst"].toInt();
+            b.azimuthFrequency = bo["azimuthFrequency"].toDouble();
+            for (const auto& v : bo["burstStartLines"].toArray())
+                b.burstStartLines.append(v.toInt());
+            for (const auto& v : bo["burstAzimuthTimes"].toArray())
+                b.burstAzimuthTimes.append(QDateTime::fromString(v.toString(), Qt::ISODate));
+        }
         p.bands.append(b);
     }
 

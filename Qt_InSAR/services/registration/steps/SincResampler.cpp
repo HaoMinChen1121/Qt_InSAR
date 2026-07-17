@@ -23,7 +23,8 @@ bool SincResampler::resampleNonTopsar(PipelineContext& ctx) {
     if (!writer.create(ctx.outputPath, mW, mH, 1)) {
         ctx.errorMessage = QStringLiteral("SincResampler: create output fail"); return false;
     }
-    writer.setGeoTransform(0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+    if (ctx.masterReader)
+        writer.copyGeoreferencing(ctx.masterReader->datasetHandle(), QString());
     qDebug() << QStringLiteral("[Step9] non-TOPSAR resample %1x%2 method=%3").arg(mW).arg(mH).arg(p.resamplingMethod);
 
     QVector<std::complex<float>> rowBuf(mW);
@@ -114,6 +115,15 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
     double kt     = ctx.data.slaveAzimuthFmRate;
     bool doDeramp = (std::abs(kt) > 1e-6) && (prf > 0);
 
+    // 预计算 Sinc 权重表 (加速: 查表替代 sinc()+Kaiser() 调用)
+    QVector<QVector<float>> sincLUT;
+    bool useFastSinc = useSinc;
+    if (useFastSinc) {
+        initSincLUT(sincW, beta, sincLUT);
+        qDebug() << QStringLiteral("[Step9] Sinc LUT ready (%1 levels)")
+            .arg(sincLUT.size());
+    }
+
     qDebug() << QStringLiteral("[Step9] band=%1 usingPrf=%2 Hz")
         .arg(ctx.masterBand->subSwath).arg(prf, 0, 'f', 2);
 
@@ -165,9 +175,14 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
     if (!writer.create(ctx.outputPath, mW, outH, 1)) {
         ctx.errorMessage = QStringLiteral("SincResampler: create output fail"); return false;
     }
-    writer.setGeoTransform(0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+    if (ctx.masterReader)
+        writer.copyGeoreferencing(ctx.masterReader->datasetHandle(), QString());
 
     int step = std::max(1, outH / 100);
+
+    // 可分离Sinc临时缓冲区 (复用避免每行重新分配)
+    QVector<std::complex<float>> tempBuf;
+    QVector<double> syBuf;
 
     // ── Step D: 逐burst逐行重采样 + deramp ──
     for (int b = 0; b < N; ++b) {
@@ -185,25 +200,48 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             auto rc = computeRowCoords(gRowSrc, mW, mH, sH,
                 br.rangePoly, br.aziPoly, readR);
 
-            double eta = (doDeramp) ? (r - L/2.0) / prf : 0.0;
-            double dp = (doDeramp) ? -M_PI * kt * eta * eta : 0.0;
-            float dCos = (float)std::cos(dp);
-            float dSin = (float)std::sin(dp);
-
             QVector<std::complex<float>> rowBuf(mW);
             if (rc.sYH <= 0) {
                 rowBuf.fill({0, 0});
             } else {
                 auto strip = ctx.slaveReader->readBandWindow(0, 0, rc.sY0, sW, rc.sYH);
-                for (int c = 0; c < mW; ++c) {
-                    auto val = interpFromStrip(strip, sW, rc.sYH,
-                        rc.sx[c], rc.syFrac, useSinc, sincW, beta);
-                    if (doDeramp && val != std::complex<float>{0, 0}) {
-                        float re = val.real() * dCos - val.imag() * dSin;
-                        float im = val.real() * dSin + val.imag() * dCos;
-                        val = {re, im};
+
+                // Deramp slave strip BEFORE interpolation (Sinc插快速振荡相位会失真)
+                if (doDeramp) {
+                    for (int sr = 0; sr < rc.sYH; ++sr) {
+                        int slaveRow = rc.sY0 + sr;
+                        int sbIdx = qBound(0, slaveRow / L, N - 1);
+                        double eta_S = (slaveRow - sbIdx * L - L/2.0) / prf;
+                        double dp = -M_PI * kt * eta_S * eta_S;
+                        float dCos = (float)std::cos(dp);
+                        float dSin = (float)std::sin(dp);
+                        int base = sr * sW;
+                        int end = base + sW;
+                        if (end > strip.size()) end = strip.size();
+                        for (int idx = base; idx < end; ++idx) {
+                            auto v = strip[idx];
+                            float re = v.real() * dCos - v.imag() * dSin;
+                            float im = v.real() * dSin + v.imag() * dCos;
+                            strip[idx] = {re, im};
+                        }
                     }
-                    rowBuf[c] = val;
+                }
+
+                if (useFastSinc) {
+                    // 可分离 Sinc: 1D水平→1D垂直 (查表, 66次 vs 1089次)
+                    // 2-coeff azimuth: 垂直偏移对所有列相同 = syFrac + readR
+                    double syVal = rc.syFrac + readR;
+                    syBuf.resize(mW);
+                    syBuf.fill(syVal);
+                    sincInterp1D_Horizontal(strip, sW, rc.sYH, rc.sx,
+                        sincLUT, sincW, tempBuf, mW);
+                    sincInterp1D_Vertical(tempBuf, rc.sYH, mW, syBuf,
+                        sincLUT, sincW, rowBuf.data());
+                } else {
+                    for (int c = 0; c < mW; ++c) {
+                        rowBuf[c] = interpFromStrip(strip, sW, rc.sYH,
+                            rc.sx[c], rc.syFrac, useSinc, sincW, beta);
+                    }
                 }
             }
             writer.writeRow(gRowOut, rowBuf);

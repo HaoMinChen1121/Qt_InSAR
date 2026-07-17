@@ -94,14 +94,15 @@ void RegistrationServiceImpl::execute() {
         ctx.outputPath = outPath;
 
         // 运行 10 步管道
+        // FineCorrelator 必须在 PolynomialFitter 之前 — 多项式需要在精化后的点上拟合
         QVector<IRegStep*> steps;
         steps << new DataReader
               << new BurstMatcher
               << new OrbitInitializer
               << new CoarseCorrelator
               << new OffsetExtractor
-              << new PolynomialFitter
               << new FineCorrelator
+              << new PolynomialFitter
               << new EsdCorrector
               << new SincResampler
               << new QualityEvaluator;
