@@ -5,6 +5,11 @@
 #include "dataaccess/impl/GdalSlcWriter.h"
 #include <QDebug>
 #include <QApplication>
+#include <QThread>
+#include <QtConcurrent>
+#include <QFuture>
+#include <gdal_priv.h>
+#include <algorithm>
 #include <cmath>
 
 #ifndef M_PI
@@ -101,6 +106,100 @@ static RowCoords computeRowCoords(int gRow, int mW, int mH, int sH,
     return rc;
 }
 
+// ── 并行重采样批次 ──
+struct ResampleWorkItem {
+    int gRowSrc, gRowOut;
+    RangePolynomial rangePoly;
+    AzimuthPolynomial aziPoly;
+};
+
+struct ResampleConfig {
+    QString slavePath;
+    int sW, sH, mW, mH, N, L, readR;
+    double prf, kt;
+    bool doDeramp, useFastSinc;
+    int sincW; double beta;
+    QVector<QVector<float>>* sincLUT;
+};
+
+// 直接从 GDAL 读 strip (避免 GDALOpenShared 多线程锁争用)
+static QVector<std::complex<float>> readBandWindowMT(
+    GDALDatasetH hDS, int band, int col0, int row0, int w, int h)
+{
+    if (!hDS) return {};
+    if (col0 < 0) { w += col0; col0 = 0; }
+    if (row0 < 0) { h += row0; row0 = 0; }
+    int bw = GDALGetRasterXSize(hDS), bh = GDALGetRasterYSize(hDS);
+    if (col0 + w > bw) w = bw - col0;
+    if (row0 + h > bh) h = bh - row0;
+    if (w <= 0 || h <= 0) return {};
+    QVector<std::complex<float>> buf(w * h);
+    GDALRasterIO(GDALGetRasterBand(hDS, band + 1), GF_Read,
+        col0, row0, w, h, buf.data(), w, h, GDT_CFloat32, 0, 0);
+    return buf;
+}
+
+static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
+    QVector<ResampleWorkItem> batch, ResampleConfig cfg)
+{
+    GDALDatasetH hDS = GDALOpen(cfg.slavePath.toUtf8().constData(), GA_ReadOnly);
+    if (!hDS) return {};
+
+    QVector<QPair<int, QVector<std::complex<float>>>> results;
+    QVector<std::complex<float>> tempBuf;
+    QVector<double> syBuf;
+
+    for (const auto& w : batch) {
+        auto rc = computeRowCoords(w.gRowSrc, cfg.mW, cfg.mH, cfg.sH,
+            w.rangePoly, w.aziPoly, cfg.readR);
+
+        QVector<std::complex<float>> rowBuf(cfg.mW);
+        if (rc.sYH <= 0) {
+            rowBuf.fill({0, 0});
+        } else {
+            auto strip = readBandWindowMT(hDS, 0, 0, rc.sY0, cfg.sW, rc.sYH);
+
+            // Deramp slave strip BEFORE interpolation
+            if (cfg.doDeramp) {
+                for (int sr = 0; sr < rc.sYH; ++sr) {
+                    int slaveRow = rc.sY0 + sr;
+                    int sbIdx = qBound(0, slaveRow / cfg.L, cfg.N - 1);
+                    double eta_S = (slaveRow - sbIdx * cfg.L - cfg.L/2.0) / cfg.prf;
+                    double dp = -M_PI * cfg.kt * eta_S * eta_S;
+                    float dCos = (float)std::cos(dp), dSin = (float)std::sin(dp);
+                    int base = sr * cfg.sW, end = base + cfg.sW;
+                    if (end > strip.size()) end = strip.size();
+                    for (int idx = base; idx < end; ++idx) {
+                        auto v = strip[idx];
+                        float re = v.real() * dCos - v.imag() * dSin;
+                        float im = v.real() * dSin + v.imag() * dCos;
+                        strip[idx] = {re, im};
+                    }
+                }
+            }
+
+            // Interpolate
+            if (cfg.useFastSinc) {
+                double syVal = rc.syFrac + cfg.readR;
+                syBuf.resize(cfg.mW);
+                syBuf.fill(syVal);
+                sincInterp1D_Horizontal(strip, cfg.sW, rc.sYH, rc.sx,
+                    *cfg.sincLUT, cfg.sincW, tempBuf, cfg.mW);
+                sincInterp1D_Vertical(tempBuf, rc.sYH, cfg.mW, syBuf,
+                    *cfg.sincLUT, cfg.sincW, rowBuf.data());
+            } else {
+                for (int c = 0; c < cfg.mW; ++c) {
+                    rowBuf[c] = interpFromStrip(strip, cfg.sW, rc.sYH,
+                        rc.sx[c], rc.syFrac, true, cfg.sincW, cfg.beta);
+                }
+            }
+        }
+        results.append({w.gRowOut, std::move(rowBuf)});
+    }
+    GDALClose(hDS);
+    return results;
+}
+
 bool SincResampler::resampleTopsar(PipelineContext& ctx) {
     const auto& p = *ctx.params;
     int mW = ctx.data.masterWidth, mH = ctx.data.masterHeight;
@@ -131,121 +230,68 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         ctx.errorMessage = "SincResampler: burstResults not populated"; return false;
     }
 
-    // ── Step A: 计算每对burst间的overlap和cut line ──
-    QVector<int> discardBottom(N, 0), discardTop(N, 0);
-    const auto& mT = ctx.data.masterBurstTimes;
+    qDebug() << QStringLiteral("[Step9] TOPSAR resample %1x%2 %3bursts (no deburst) deramp=%4")
+        .arg(mW).arg(mH).arg(N).arg(doDeramp ? "on" : "off");
 
-    if (mT.size() >= N) {
-        for (int b = 0; b < N - 1; ++b) {
-            double dt = mT[b].msecsTo(mT[b+1]) / 1000.0;   // 秒
-            double burstDur = L / prf;
-            double overlapTime = burstDur - dt;
-            if (overlapTime < 0) overlapTime = 0;
-            int overlapLines = (int)(overlapTime * prf + 0.5);
-
-            // cut在overlap的中点(azimuth时间), 每burst丢弃一半overlap
-            int half = overlapLines / 2;
-            discardBottom[b]   = half;
-            discardTop[b + 1]  = half;
-        }
-    } else {
-        // 无burst时间: 固定overlap=80行
-        for (int b = 0; b < N - 1; ++b) {
-            discardBottom[b]   = 40;
-            discardTop[b + 1]  = 40;
-        }
-    }
-
-    // ── Step B: 每burst保留范围 + 输出偏移 ──
-    QVector<int> keepStart(N), keepEnd(N), outOffset(N);
-    int outH = 0;
-    for (int b = 0; b < N; ++b) {
-        keepStart[b] = discardTop[b];
-        keepEnd[b]   = L - 1 - discardBottom[b];
-        outOffset[b] = outH;
-        outH += (keepEnd[b] - keepStart[b] + 1);
-    }
-
-    qDebug() << QStringLiteral("[Step9] TOPSAR deburst %1x%2→%3x%4 %5burts deramp=%6")
-        .arg(mW).arg(mH).arg(mW).arg(outH).arg(N)
-        .arg(doDeramp ? "on" : "off");
-
-    // ── Step C: 创建输出 ──
+    // ── 创建输出: 全尺寸,保留burst结构,deburst在干涉图模块做 ──
     GdalSlcWriter writer;
-    if (!writer.create(ctx.outputPath, mW, outH, 1)) {
+    if (!writer.create(ctx.outputPath, mW, mH, 1)) {
         ctx.errorMessage = QStringLiteral("SincResampler: create output fail"); return false;
     }
     if (ctx.masterReader)
         writer.copyGeoreferencing(ctx.masterReader->datasetHandle(), QString());
 
-    int step = std::max(1, outH / 100);
+    int step = std::max(1, mH / 100);
+    int nThreads = qBound(1, QThread::idealThreadCount(), 4);
 
-    // 可分离Sinc临时缓冲区 (复用避免每行重新分配)
-    QVector<std::complex<float>> tempBuf;
-    QVector<double> syBuf;
+    ResampleConfig rcfg;
+    rcfg.slavePath = ctx.slaveBand->rasterPath;
+    rcfg.sW = sW; rcfg.sH = sH; rcfg.mW = mW; rcfg.mH = mH;
+    rcfg.N = N; rcfg.L = L; rcfg.readR = readR;
+    rcfg.prf = prf; rcfg.kt = kt;
+    rcfg.doDeramp = doDeramp; rcfg.useFastSinc = useFastSinc;
+    rcfg.sincW = sincW; rcfg.beta = beta;
+    rcfg.sincLUT = &sincLUT;
 
-    // ── Step D: 逐burst逐行重采样 + deramp ──
+    // ── 逐burst并行重采样 (全burst,不裁overlap) ──
     for (int b = 0; b < N; ++b) {
         if (mCancelled) return false;
-        qDebug() << QStringLiteral("[Step9] burst %1/%2 rows %3-%4...")
-            .arg(b+1).arg(N).arg(keepStart[b]).arg(keepEnd[b]);
+        qDebug() << QStringLiteral("[Step9] burst %1/%2...").arg(b+1).arg(N);
 
         const auto& br = ctx.burstResults[b];
-        int startRow = b * L;
+        int burstRow0 = b * L;
 
-        for (int r = keepStart[b]; r <= keepEnd[b]; ++r) {
-            int gRowOut = outOffset[b] + (r - keepStart[b]);
-            int gRowSrc = startRow + r;
+        // 全burst行 (不含deburst裁切)
+        QVector<ResampleWorkItem> items;
+        for (int r = 0; r < L; ++r)
+            items.append({burstRow0 + r, burstRow0 + r,
+                          br.rangePoly, br.aziPoly});
 
-            auto rc = computeRowCoords(gRowSrc, mW, mH, sH,
-                br.rangePoly, br.aziPoly, readR);
+        // 按线程数分批
+        int batchSz = qMax(1, (items.size() + nThreads - 1) / nThreads);
+        QList<QVector<ResampleWorkItem>> batches;
+        for (int i = 0; i < items.size(); i += batchSz) {
+            QVector<ResampleWorkItem> batch;
+            for (int j = i; j < qMin(i + batchSz, items.size()); ++j)
+                batch.append(items[j]);
+            batches.append(batch);
+        }
 
-            QVector<std::complex<float>> rowBuf(mW);
-            if (rc.sYH <= 0) {
-                rowBuf.fill({0, 0});
-            } else {
-                auto strip = ctx.slaveReader->readBandWindow(0, 0, rc.sY0, sW, rc.sYH);
+        // 并行处理
+        QList<QFuture<QVector<QPair<int, QVector<std::complex<float>>>>>> futures;
+        for (int i = 0; i < batches.size(); ++i)
+            futures.append(QtConcurrent::run(processResampleBatch, batches[i], rcfg));
 
-                // Deramp slave strip BEFORE interpolation (Sinc插快速振荡相位会失真)
-                if (doDeramp) {
-                    for (int sr = 0; sr < rc.sYH; ++sr) {
-                        int slaveRow = rc.sY0 + sr;
-                        int sbIdx = qBound(0, slaveRow / L, N - 1);
-                        double eta_S = (slaveRow - sbIdx * L - L/2.0) / prf;
-                        double dp = -M_PI * kt * eta_S * eta_S;
-                        float dCos = (float)std::cos(dp);
-                        float dSin = (float)std::sin(dp);
-                        int base = sr * sW;
-                        int end = base + sW;
-                        if (end > strip.size()) end = strip.size();
-                        for (int idx = base; idx < end; ++idx) {
-                            auto v = strip[idx];
-                            float re = v.real() * dCos - v.imag() * dSin;
-                            float im = v.real() * dSin + v.imag() * dCos;
-                            strip[idx] = {re, im};
-                        }
-                    }
-                }
+        // 收集结果并按行号排序写入
+        QVector<QPair<int, QVector<std::complex<float>>>> allRows;
+        for (auto& f : futures)
+            allRows.append(f.result());
+        std::sort(allRows.begin(), allRows.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
 
-                if (useFastSinc) {
-                    // 可分离 Sinc: 1D水平→1D垂直 (查表, 66次 vs 1089次)
-                    // 2-coeff azimuth: 垂直偏移对所有列相同 = syFrac + readR
-                    double syVal = rc.syFrac + readR;
-                    syBuf.resize(mW);
-                    syBuf.fill(syVal);
-                    sincInterp1D_Horizontal(strip, sW, rc.sYH, rc.sx,
-                        sincLUT, sincW, tempBuf, mW);
-                    sincInterp1D_Vertical(tempBuf, rc.sYH, mW, syBuf,
-                        sincLUT, sincW, rowBuf.data());
-                } else {
-                    for (int c = 0; c < mW; ++c) {
-                        rowBuf[c] = interpFromStrip(strip, sW, rc.sYH,
-                            rc.sx[c], rc.syFrac, useSinc, sincW, beta);
-                    }
-                }
-            }
-            writer.writeRow(gRowOut, rowBuf);
-            if (gRowOut % step == 0) QApplication::processEvents();
+        for (const auto& row : allRows) {
+            writer.writeRow(row.first, row.second);
+            if (row.first % step == 0) QApplication::processEvents();
         }
         QApplication::processEvents();
     }
