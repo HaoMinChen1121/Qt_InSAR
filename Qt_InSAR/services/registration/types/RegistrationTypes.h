@@ -62,7 +62,8 @@ struct SlcDataBundle {
     QVector<int>       burstStartLines;
     QVector<QDateTime> masterBurstTimes;
     QVector<QDateTime> slaveBurstTimes;
-    double  slaveAzimuthFmRate = 0.0;  // 辅影像方位向调频率 (Hz/s, TOPS deramp)
+    double  slaveAzimuthFmRate = 0.0;       // 辅影像方位向调频率 (Hz/s, TOPS deramp)
+    double  slaveAzimuthSteeringRate = 0.0;  // 天线转向速率 (deg/s, TOPS deburst)
 };
 
 // ── 质量报告 ──

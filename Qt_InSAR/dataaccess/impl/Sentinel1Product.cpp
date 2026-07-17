@@ -492,10 +492,16 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
         mSensorInfo.nearRange = nl.at(0).toElement().text().toDouble()
                                 * 299792458.0 / 2.0;
 
-    // PRF
-    nl = root.elementsByTagName("prf");
+    // 方位向PRF: 优先用 azimuthFrequency (单子条带有效值),
+    // 降级使用 prf (雷达总脉冲频率, 需除以子条带数)
+    nl = root.elementsByTagName("azimuthFrequency");
     if (!nl.isEmpty())
         mSensorInfo.prf = nl.at(0).toElement().text().toDouble();
+    else {
+        nl = root.elementsByTagName("prf");
+        if (!nl.isEmpty())
+            mSensorInfo.prf = nl.at(0).toElement().text().toDouble();
+    }
 
     // 入射角 (S1 标注: <incidenceAngleMidSwath>33.95</incidenceAngleMidSwath>)
     {
@@ -552,6 +558,10 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
                     mParsedAzimuthFmRate = coeffs[0].toDouble();
             }
         }
+        // azimuthSteeringRate (TOPS deburst cut line)
+        QDomElement asrEl = gaList.at(0).toElement().firstChildElement("azimuthSteeringRate");
+        if (!asrEl.isNull())
+            mParsedAzimuthSteeringRate = asrEl.text().trimmed().toDouble();
     }
 
     // 采样数 (SLC: samplesPerBurst/linesPerBurst; GRD: numberOfSamples/numberOfLines)
@@ -640,7 +650,8 @@ void Sentinel1Product::discoverMeasurementFiles(const QString& measurementDir) {
         b.burstCount = mParsedBurstStarts.size();
         b.burstStartLines = mParsedBurstStarts;
         b.burstAzimuthTimes = mParsedBurstAzimuthTimes;
-        b.azimuthFmRate    = mParsedAzimuthFmRate;
+        b.azimuthFmRate        = mParsedAzimuthFmRate;
+        b.azimuthSteeringRate   = mParsedAzimuthSteeringRate;
 
         mBands.append(b);
     }

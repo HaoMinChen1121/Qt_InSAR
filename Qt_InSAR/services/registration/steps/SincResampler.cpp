@@ -70,12 +70,11 @@ static std::complex<float> interpFromStrip(const QVector<std::complex<float>>& s
                    : bilinearInterp2D(strip, sW, sH, sx, sy);
 }
 
-// ── 计算一行中所有像素的 slave 坐标 + 行偏移 ──
+// ── 计算一行的 slave 坐标 ──
 struct RowCoords {
-    QVector<double> sx;       // slave col = col + colOff
-    QVector<double> syFrac;   // 亚像素行偏移
-    int sRowBase;
-    int sY0, sYH;             // 条带窗口
+    QVector<double> sx;
+    double syFrac;
+    int sY0, sYH;
 };
 
 static RowCoords computeRowCoords(int gRow, int mW, int mH, int sH,
@@ -83,13 +82,12 @@ static RowCoords computeRowCoords(int gRow, int mW, int mH, int sH,
 {
     RowCoords rc;
     rc.sx.resize(mW);
-    rc.syFrac.resize(mW);
     double aLoc = (double)gRow / mH;
     double rowOff = aP.coeffs[0] + aP.coeffs[1] * aLoc;
-    rc.sRowBase = gRow + (int)rowOff;
-    double syFracBase = rowOff - (int)rowOff;
+    int sRowBase = gRow + (int)rowOff;
+    rc.syFrac = rowOff - (int)rowOff;
 
-    rc.sY0 = rc.sRowBase - readR; rc.sYH = readR * 2 + 1;
+    rc.sY0 = sRowBase - readR; rc.sYH = readR * 2 + 1;
     if (rc.sY0 < 0) { rc.sYH += rc.sY0; rc.sY0 = 0; }
     if (rc.sY0 + rc.sYH > sH) rc.sYH = sH - rc.sY0;
 
@@ -98,7 +96,6 @@ static RowCoords computeRowCoords(int gRow, int mW, int mH, int sH,
         double colOff = rP.coeffs[0] + rP.coeffs[1]*rN + rP.coeffs[2]*aLoc
                       + rP.coeffs[3]*rN*aLoc + rP.coeffs[4]*rN*rN + rP.coeffs[5]*aLoc*aLoc;
         rc.sx[c] = c + colOff;
-        rc.syFrac[c] = syFracBase;
     }
     return rc;
 }
@@ -112,53 +109,91 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
     int sincW = p.sincWindowSize; double beta = p.sincBeta;
     int readR = useSinc ? sincW : 2;
 
-    double prf     = p.masterPrf;
-    double kt      = ctx.data.slaveAzimuthFmRate;
-    bool doDeramp  = (std::abs(kt) > 1e-6) && (prf > 0);
-    int blendHalf  = qMin(80, L / 6);
+    double prf    = p.masterPrf;
+    double kt     = ctx.data.slaveAzimuthFmRate;
+    bool doDeramp = (std::abs(kt) > 1e-6) && (prf > 0);
 
     if (ctx.burstResults.size() < N) {
         ctx.errorMessage = "SincResampler: burstResults not populated"; return false;
     }
 
+    // ── Step A: 计算每对burst间的overlap和cut line ──
+    QVector<int> discardBottom(N, 0), discardTop(N, 0);
+    const auto& mT = ctx.data.masterBurstTimes;
+
+    if (mT.size() >= N) {
+        for (int b = 0; b < N - 1; ++b) {
+            double dt = mT[b].msecsTo(mT[b+1]) / 1000.0;   // 秒
+            double burstDur = L / prf;
+            double overlapTime = burstDur - dt;
+            if (overlapTime < 0) overlapTime = 0;
+            int overlapLines = (int)(overlapTime * prf + 0.5);
+
+            // cut在overlap的中点(azimuth时间), 每burst丢弃一半overlap
+            int half = overlapLines / 2;
+            discardBottom[b]   = half;
+            discardTop[b + 1]  = half;
+        }
+    } else {
+        // 无burst时间: 固定overlap=80行
+        for (int b = 0; b < N - 1; ++b) {
+            discardBottom[b]   = 40;
+            discardTop[b + 1]  = 40;
+        }
+    }
+
+    // ── Step B: 每burst保留范围 + 输出偏移 ──
+    QVector<int> keepStart(N), keepEnd(N), outOffset(N);
+    int outH = 0;
+    for (int b = 0; b < N; ++b) {
+        keepStart[b] = discardTop[b];
+        keepEnd[b]   = L - 1 - discardBottom[b];
+        outOffset[b] = outH;
+        outH += (keepEnd[b] - keepStart[b] + 1);
+    }
+
+    qDebug() << QStringLiteral("[Step9] TOPSAR deburst %1x%2→%3x%4 %5burts deramp=%6")
+        .arg(mW).arg(mH).arg(mW).arg(outH).arg(N)
+        .arg(doDeramp ? "on" : "off");
+
+    // ── Step C: 创建输出 ──
     GdalSlcWriter writer;
-    if (!writer.create(ctx.outputPath, mW, mH, 1)) {
+    if (!writer.create(ctx.outputPath, mW, outH, 1)) {
         ctx.errorMessage = QStringLiteral("SincResampler: create output fail"); return false;
     }
     writer.setGeoTransform(0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
 
-    qDebug() << QStringLiteral("[Step9] TOPSAR resample %1x%2 %3bursts method=%4 deramp=%5 blend=%6")
-        .arg(mW).arg(mH).arg(N).arg(p.resamplingMethod)
-        .arg(doDeramp ? "on" : "off").arg(blendHalf);
+    int step = std::max(1, outH / 100);
 
-    int step = std::max(1, mH / 100);
-
+    // ── Step D: 逐burst逐行重采样 + deramp ──
     for (int b = 0; b < N; ++b) {
         if (mCancelled) return false;
-        qDebug() << QStringLiteral("[Step9] burst %1/%2...").arg(b+1).arg(N);
+        qDebug() << QStringLiteral("[Step9] burst %1/%2 rows %3-%4...")
+            .arg(b+1).arg(N).arg(keepStart[b]).arg(keepEnd[b]);
+
         const auto& br = ctx.burstResults[b];
         int startRow = b * L;
 
-        for (int r = 0; r < L; ++r) {
-            int gRow = startRow + r;
-            QVector<std::complex<float>> rowBuf(mW);
+        for (int r = keepStart[b]; r <= keepEnd[b]; ++r) {
+            int gRowOut = outOffset[b] + (r - keepStart[b]);
+            int gRowSrc = startRow + r;
 
-            // ── 当前burst: 读一整行条带，全像素内插 ──
-            auto rcCur = computeRowCoords(gRow, mW, mH, sH,
+            auto rc = computeRowCoords(gRowSrc, mW, mH, sH,
                 br.rangePoly, br.aziPoly, readR);
 
             double eta = (doDeramp) ? (r - L/2.0) / prf : 0.0;
-            double derampPhase = (doDeramp) ? -M_PI * kt * eta * eta : 0.0;
-            float dCos = (float)std::cos(derampPhase);
-            float dSin = (float)std::sin(derampPhase);
+            double dp = (doDeramp) ? -M_PI * kt * eta * eta : 0.0;
+            float dCos = (float)std::cos(dp);
+            float dSin = (float)std::sin(dp);
 
-            if (rcCur.sYH <= 0) {
+            QVector<std::complex<float>> rowBuf(mW);
+            if (rc.sYH <= 0) {
                 rowBuf.fill({0, 0});
             } else {
-                auto stripCur = ctx.slaveReader->readBandWindow(0, 0, rcCur.sY0, sW, rcCur.sYH);
+                auto strip = ctx.slaveReader->readBandWindow(0, 0, rc.sY0, sW, rc.sYH);
                 for (int c = 0; c < mW; ++c) {
-                    auto val = interpFromStrip(stripCur, sW, rcCur.sYH,
-                        rcCur.sx[c], rcCur.syFrac[c], useSinc, sincW, beta);
+                    auto val = interpFromStrip(strip, sW, rc.sYH,
+                        rc.sx[c], rc.syFrac, useSinc, sincW, beta);
                     if (doDeramp && val != std::complex<float>{0, 0}) {
                         float re = val.real() * dCos - val.imag() * dSin;
                         float im = val.real() * dSin + val.imag() * dCos;
@@ -167,56 +202,10 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
                     rowBuf[c] = val;
                 }
             }
-
-            // ── Overlap 融合: 读相邻burst的条带，逐像素加权叠加 ──
-            bool inUpper = (b > 0 && r < blendHalf);
-            bool inLower = (b + 1 < N && r >= L - blendHalf);
-
-            if (inUpper) {
-                double t = (double)(r + 1) / (blendHalf + 1);
-                const auto& brP = ctx.burstResults[b - 1];
-                auto rcPrev = computeRowCoords(gRow, mW, mH, sH,
-                    brP.rangePoly, brP.aziPoly, readR);
-                if (rcPrev.sYH > 0) {
-                    auto stripPrev = ctx.slaveReader->readBandWindow(0, 0, rcPrev.sY0, sW, rcPrev.sYH);
-                    float wP = (float)(1.0 - t), wC = (float)t;
-                    for (int c = 0; c < mW; ++c) {
-                        auto valP = interpFromStrip(stripPrev, sW, rcPrev.sYH,
-                            rcPrev.sx[c], rcPrev.syFrac[c], useSinc, sincW, beta);
-                        if (doDeramp && valP != std::complex<float>{0, 0}) {
-                            float re = valP.real() * dCos - valP.imag() * dSin;
-                            float im = valP.real() * dSin + valP.imag() * dCos;
-                            valP = {re, im};
-                        }
-                        rowBuf[c] = {wP * valP.real() + wC * rowBuf[c].real(),
-                                     wP * valP.imag() + wC * rowBuf[c].imag()};
-                    }
-                }
-            } else if (inLower) {
-                double t = (double)(r - (L - blendHalf) + 1) / (blendHalf + 1);
-                const auto& brN = ctx.burstResults[b + 1];
-                auto rcNext = computeRowCoords(gRow, mW, mH, sH,
-                    brN.rangePoly, brN.aziPoly, readR);
-                if (rcNext.sYH > 0) {
-                    auto stripNext = ctx.slaveReader->readBandWindow(0, 0, rcNext.sY0, sW, rcNext.sYH);
-                    float wC = (float)(1.0 - t), wN = (float)t;
-                    for (int c = 0; c < mW; ++c) {
-                        auto valN = interpFromStrip(stripNext, sW, rcNext.sYH,
-                            rcNext.sx[c], rcNext.syFrac[c], useSinc, sincW, beta);
-                        if (doDeramp && valN != std::complex<float>{0, 0}) {
-                            float re = valN.real() * dCos - valN.imag() * dSin;
-                            float im = valN.real() * dSin + valN.imag() * dCos;
-                            valN = {re, im};
-                        }
-                        rowBuf[c] = {wC * rowBuf[c].real() + wN * valN.real(),
-                                     wC * rowBuf[c].imag() + wN * valN.imag()};
-                    }
-                }
-            }
-            writer.writeRow(gRow, rowBuf);
-            if (gRow % step == 0) QApplication::processEvents();
+            writer.writeRow(gRowOut, rowBuf);
+            if (gRowOut % step == 0) QApplication::processEvents();
         }
-        if (b % 2 == 0) QApplication::processEvents();
+        QApplication::processEvents();
     }
     return true;
 }
