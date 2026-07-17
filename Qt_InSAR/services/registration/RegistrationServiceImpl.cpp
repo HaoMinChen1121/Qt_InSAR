@@ -118,9 +118,20 @@ void RegistrationServiceImpl::execute() {
         }
 
         // 清理 reader
-        if (ctx.masterReader) { ctx.masterReader->close(); delete ctx.masterReader; }
-        if (ctx.slaveReader)  { ctx.slaveReader->close();  delete ctx.slaveReader; }
+        if (ctx.masterReader) {
+            ctx.masterReader->close();
+            delete ctx.masterReader;
+            ctx.masterReader = nullptr;
+        }
+        if (ctx.slaveReader) {
+            ctx.slaveReader->close();
+            delete ctx.slaveReader;
+            ctx.slaveReader = nullptr;
+        }
         qDeleteAll(steps);
+        steps.clear();
+
+        qDebug() << QStringLiteral("[Reg] pair %1/%2 done").arg(i+1).arg(pairs.size());
 
         if (ok) {
             ++succeeded; lastOut = outPath;

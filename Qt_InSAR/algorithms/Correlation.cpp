@@ -4,6 +4,8 @@
 #include <cstring>
 #include <memory>
 #include <QDebug>
+#include <QMutex>
+#include <QMutexLocker>
 
 #if __has_include(<fftw3.h>)
   #define HAS_FFTW 1
@@ -17,6 +19,7 @@
 #endif
 
 static int nextPow2(int n) { int p = 1; while (p < n) p <<= 1; return p; }
+static QMutex gFftwMutex;  // FFTW3 plan创建不是线程安全的
 
 // ── Hamming 窗 ──
 static void applyHammingWindow(std::complex<float>* data, int rows, int cols) {
@@ -34,11 +37,19 @@ static bool fft2D(std::complex<float>* data, int rows, int cols, bool inverse) {
 #if HAS_FFTW
     static bool logged = false;
     if (!logged) { qDebug() << "[Correlation] FFTW3 ready"; logged = true; }
-    fftwf_plan p = fftwf_plan_dft_2d(rows, cols,
-        reinterpret_cast<fftwf_complex*>(data),
-        reinterpret_cast<fftwf_complex*>(data),
-        inverse ? FFTW_BACKWARD : FFTW_FORWARD, FFTW_ESTIMATE);
-    fftwf_execute(p); fftwf_destroy_plan(p);
+    fftwf_plan p;
+    {
+        QMutexLocker lock(&gFftwMutex);
+        p = fftwf_plan_dft_2d(rows, cols,
+            reinterpret_cast<fftwf_complex*>(data),
+            reinterpret_cast<fftwf_complex*>(data),
+            inverse ? FFTW_BACKWARD : FFTW_FORWARD, FFTW_ESTIMATE);
+    }
+    fftwf_execute(p);
+    {
+        QMutexLocker lock(&gFftwMutex);
+        fftwf_destroy_plan(p);
+    }
     if (inverse) {
         float norm = 1.0f / (rows * cols);
         for (int i = 0; i < rows * cols; ++i) data[i] *= norm;

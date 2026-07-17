@@ -74,12 +74,26 @@ bool Sentinel1Product::openDirectory(const QString& safDir) {
 
     // 解析 annotation 获取轨道/多普勒
     QString annDir = safDir + "/annotation";
-    if (QFileInfo::exists(annDir)) {
+    QStringList xmls;
+    if (annDir.startsWith("/vsizip/")) {
+        char** entries = VSIReadDir(annDir.toUtf8().constData());
+        if (entries) {
+            for (int i = 0; entries[i]; ++i) {
+                QString f = QString::fromUtf8(entries[i]);
+                if (f.endsWith(".xml", Qt::CaseInsensitive))
+                    xmls.append(f);
+            }
+            CSLDestroy(entries);
+        }
+    } else if (QFileInfo::exists(annDir)) {
         QDir ad(annDir);
-        QStringList xmls = ad.entryList({"*.xml"}, QDir::Files, QDir::Name);
-        for (const QString& f : xmls) {
-            if (!f.contains("calibration", Qt::CaseInsensitive))
-                parseAnnotation(annDir + "/" + f);
+        xmls = ad.entryList({"*.xml"}, QDir::Files, QDir::Name);
+    }
+    qDebug() << "[S1Product] annotation XMLs found:" << xmls.size() << xmls;
+    for (const QString& f : xmls) {
+        if (!f.contains("calibration", Qt::CaseInsensitive)) {
+            qDebug() << "[S1Product] parsing:" << f;
+            parseAnnotation(annDir + "/" + f);
         }
     }
 
@@ -220,7 +234,7 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
     QString annDir = safRoot + "/annotation";
     char** annEntries = VSIReadDir(annDir.toUtf8().constData());
     if (annEntries) {
-        for (int i = 0; i < 20 && annEntries[i]; ++i) {
+        for (int i = 0; annEntries[i]; ++i) {
             QString e = QString::fromUtf8(annEntries[i]);
             if (e.endsWith(".xml") && !e.contains("calibration", Qt::CaseInsensitive)) {
                 QString annVsi = annDir + "/" + e;
@@ -246,7 +260,6 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
                         af.close();
                         parseAnnotation(tmpAnn);
                         QFile::remove(tmpAnn);
-                        break;
                     }
                 }
             }
@@ -428,6 +441,12 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
 
     QDomElement root = doc.documentElement();
 
+    // 子条带名 (IW1/IW2/IW3)
+    QString swathName;
+    QDomNodeList swList = root.elementsByTagName("swath");
+    if (!swList.isEmpty())
+        swathName = swList.at(0).toElement().text().trimmed().toUpper();
+
     // 轨道号
     QDomNodeList nl = root.elementsByTagName("orbitNumber");
     if (!nl.isEmpty()) {
@@ -495,12 +514,21 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
     // 方位向PRF: 优先用 azimuthFrequency (单子条带有效值),
     // 降级使用 prf (雷达总脉冲频率, 需除以子条带数)
     nl = root.elementsByTagName("azimuthFrequency");
+    double efPrf = 0;
     if (!nl.isEmpty())
-        mSensorInfo.prf = nl.at(0).toElement().text().toDouble();
+        efPrf = nl.at(0).toElement().text().toDouble();
     else {
         nl = root.elementsByTagName("prf");
         if (!nl.isEmpty())
-            mSensorInfo.prf = nl.at(0).toElement().text().toDouble();
+            efPrf = nl.at(0).toElement().text().toDouble();
+    }
+    if (efPrf > 0) {
+        mSensorInfo.prf = efPrf;
+        if (!swathName.isEmpty()) {
+            mParsedAzimuthFreqBySwath[swathName] = efPrf;
+            qDebug() << QStringLiteral("[S1Product] annotation swath=%1 azimuthFreq=%2 Hz")
+                .arg(swathName).arg(efPrf, 0, 'f', 2);
+        }
     }
 
     // 入射角 (S1 标注: <incidenceAngleMidSwath>33.95</incidenceAngleMidSwath>)
@@ -519,8 +547,11 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
 
     // ── Burst 边界 (TOPSAR ESD 所需) ──
     nl = root.elementsByTagName("linesPerBurst");
-    if (!nl.isEmpty())
+    if (!nl.isEmpty()) {
         mParsedLinesPerBurst = nl.at(0).toElement().text().toInt();
+        if (!swathName.isEmpty())
+            mParsedLinesPerBurstBySwath[swathName] = mParsedLinesPerBurst;
+    }
     nl = root.elementsByTagName("samplesPerBurst");
     if (!nl.isEmpty())
         mParsedRangeSamples = nl.at(0).toElement().text().toInt();
@@ -541,6 +572,10 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
                 ? QDateTime()
                 : QDateTime::fromString(atText.left(26), Qt::ISODateWithMs);
             mParsedBurstAzimuthTimes.append(at);
+        }
+        if (!swathName.isEmpty()) {
+            mParsedBurstStartsBySwath[swathName] = mParsedBurstStarts;
+            mParsedBurstTimesBySwath[swathName]  = mParsedBurstAzimuthTimes;
         }
     }
 
@@ -645,13 +680,18 @@ void Sentinel1Product::discoverMeasurementFiles(const QString& measurementDir) {
             else if (l.contains("-hv"))   b.polarization = "HV";
         }
 
-        // 传入 burst 信息
-        b.linesPerBurst = mParsedLinesPerBurst;
-        b.burstCount = mParsedBurstStarts.size();
-        b.burstStartLines = mParsedBurstStarts;
-        b.burstAzimuthTimes = mParsedBurstAzimuthTimes;
-        b.azimuthFmRate        = mParsedAzimuthFmRate;
-        b.azimuthSteeringRate   = mParsedAzimuthSteeringRate;
+        // 传入 burst 信息 (每子条带独立)
+        b.linesPerBurst   = mParsedLinesPerBurstBySwath.value(b.subSwath, mParsedLinesPerBurst);
+        b.burstCount      = b.linesPerBurst > 0
+                          ? mParsedBurstStartsBySwath.value(b.subSwath, mParsedBurstStarts).size() : 0;
+        b.burstStartLines = mParsedBurstStartsBySwath.value(b.subSwath, mParsedBurstStarts);
+        b.burstAzimuthTimes = mParsedBurstTimesBySwath.value(b.subSwath, mParsedBurstAzimuthTimes);
+        b.azimuthFmRate      = mParsedAzimuthFmRate;
+        b.azimuthSteeringRate = mParsedAzimuthSteeringRate;
+        b.azimuthFrequency    = mParsedAzimuthFreqBySwath.value(b.subSwath, 0.0);
+        qDebug() << QStringLiteral("[S1Product] band %1 L=%2 bursts=%3 aziFreq=%4 Hz")
+            .arg(b.subSwath).arg(b.linesPerBurst).arg(b.burstCount)
+            .arg(b.azimuthFrequency, 0, 'f', 2);
 
         mBands.append(b);
     }

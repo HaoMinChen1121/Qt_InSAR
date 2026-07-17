@@ -28,6 +28,7 @@ struct SarBandDescriptor {
     QVector<QDateTime> burstAzimuthTimes; // 每个 burst 的方位向零多普勒时间
     double  azimuthFmRate = 0.0;          // 方位向调频率 (Hz/s, 用于TOPS deramping)
     double  azimuthSteeringRate = 0.0;     // 天线转向速率 (deg/s, TOPS deburst)
+    double  azimuthFrequency = 0.0;        // 有效方位向PRF (Hz, 每子条带不同)
 };
 
 class ISarProduct {

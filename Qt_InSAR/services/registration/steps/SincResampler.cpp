@@ -109,9 +109,13 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
     int sincW = p.sincWindowSize; double beta = p.sincBeta;
     int readR = useSinc ? sincW : 2;
 
-    double prf    = p.masterPrf;
+    double prf    = (ctx.data.masterAzimuthFrequency > 0)
+                         ? ctx.data.masterAzimuthFrequency : p.masterPrf;
     double kt     = ctx.data.slaveAzimuthFmRate;
     bool doDeramp = (std::abs(kt) > 1e-6) && (prf > 0);
+
+    qDebug() << QStringLiteral("[Step9] band=%1 usingPrf=%2 Hz")
+        .arg(ctx.masterBand->subSwath).arg(prf, 0, 'f', 2);
 
     if (ctx.burstResults.size() < N) {
         ctx.errorMessage = "SincResampler: burstResults not populated"; return false;

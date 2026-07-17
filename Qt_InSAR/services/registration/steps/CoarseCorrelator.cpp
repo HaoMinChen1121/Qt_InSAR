@@ -2,7 +2,80 @@
 #include "../PipelineContext.h"
 #include "algorithms/Correlation.h"
 #include <QDebug>
+#include <QThread>
+#include <QtConcurrent>
+#include <QFuture>
 #include "dataaccess/impl/GdalSlcReader.h"
+
+struct CoarseWorkItem {
+    int row, col;
+    double initRangeOff, initAziOff;
+};
+
+struct CoarseConfig {
+    QString masterPath, slavePath;
+    int sW, sH, winSize;
+    bool useNcc;
+    int searchHalf;
+};
+
+static QVector<OffsetPoint> processCoarseBatch(
+    QVector<CoarseWorkItem> batch, CoarseConfig cfg)
+{
+    GdalSlcReader mR, sR;
+    if (!mR.open(cfg.masterPath) || !sR.open(cfg.slavePath))
+        return {};
+
+    int half = cfg.winSize / 2;
+    QVector<OffsetPoint> results;
+    results.reserve(batch.size());
+
+    for (const auto& w : batch) {
+        OffsetPoint pt;
+        pt.row = w.row; pt.col = w.col;
+        pt.rangeOff = w.initRangeOff;
+        pt.aziOff   = w.initAziOff;
+
+        int mX0 = w.col - half, mY0 = w.row - half;
+        auto mWin = mR.readBandWindow(0, mX0, mY0, cfg.winSize, cfg.winSize);
+        if (mWin.size() < cfg.winSize * cfg.winSize) continue;
+
+        if (cfg.useNcc) {
+            int slaveWinSz = cfg.winSize + 2 * cfg.searchHalf;
+            int sX0 = w.col + (int)w.initRangeOff - half - cfg.searchHalf;
+            int sY0 = w.row + (int)w.initAziOff - half - cfg.searchHalf;
+            if (sX0 < 0 || sY0 < 0 || sX0 + slaveWinSz > cfg.sW || sY0 + slaveWinSz > cfg.sH) continue;
+            auto sWin = sR.readBandWindow(0, sX0, sY0, slaveWinSz, slaveWinSz);
+            if (sWin.size() < slaveWinSz * slaveWinSz) continue;
+
+            int bestDx, bestDy;
+            double subDx, subDy;
+            double nccVal = nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
+                                         slaveWinSz, slaveWinSz,
+                                         bestDx, bestDy, subDx, subDy);
+            pt.rangeOff += subDx;
+            pt.aziOff   += subDy;
+            pt.correlation = nccVal;
+        } else {
+            int sX0c = w.col + (int)w.initRangeOff - half;
+            int sY0c = w.row + (int)w.initAziOff - half;
+            if (sX0c < 0 || sY0c < 0 || sX0c + cfg.winSize > cfg.sW || sY0c + cfg.winSize > cfg.sH) continue;
+            auto sWinC = sR.readBandWindow(0, sX0c, sY0c, cfg.winSize, cfg.winSize);
+            if (sWinC.size() < cfg.winSize * cfg.winSize) continue;
+
+            int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
+            QVector<float> surf(outRows * outCols);
+            float maxV = fftAmpCorrelate(mWin.data(), sWinC.data(), surf.data(), cfg.winSize, cfg.winSize);
+            double subDx, subDy;
+            findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
+            pt.rangeOff += subDx;
+            pt.aziOff   += subDy;
+            pt.correlation = maxV;
+        }
+        results.append(pt);
+    }
+    return results;
+}
 
 bool CoarseCorrelator::execute(PipelineContext& ctx) {
     const auto& p = *ctx.params;
@@ -11,68 +84,60 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     int N = ctx.data.burstCount, L = ctx.data.linesPerBurst;
     int nPerBurst = p.offsetPerBurst;
     int winSize = p.coarseWindowSize;
-    int half = winSize / 2;
-
     bool useNcc = (p.route == RegRoute::Route2_NCC_FFTW);
-    int searchHalf = useNcc ? p.coarseSearchWindow : 0;  // coarseSearchWindow = 搜索半径
+    int searchHalf = useNcc ? p.coarseSearchWindow : 0;
 
-    ctx.offsetPoints.clear();
-    ctx.offsetPoints.reserve(N * nPerBurst);
-
+    // 收集所有工作项
+    QVector<CoarseWorkItem> items;
+    items.reserve(N * nPerBurst);
     for (int b = 0; b < N; ++b) {
-        if (mCancelled) return false;
         int startRow = b * L;
         for (int k = 0; k < nPerBurst; ++k) {
-            OffsetPoint pt;
-            pt.row = startRow + (k + 1) * L / (nPerBurst + 1);
-            pt.col = static_cast<int>(w * (0.1 + 0.8 * k / (nPerBurst - 1.0)));
+            CoarseWorkItem wi;
+            wi.row = startRow + (k + 1) * L / (nPerBurst + 1);
+            wi.col = static_cast<int>(w * (0.1 + 0.8 * k / (nPerBurst - 1.0)));
             for (const auto& io : ctx.initialOffsets)
-                if (io.burstIndex == b) { pt.rangeOff = io.rangeOff; pt.aziOff = io.aziOff; break; }
-
-            int mX0 = pt.col - half, mY0 = pt.row - half;
-            auto mWin = ctx.masterReader->readBandWindow(0, mX0, mY0, winSize, winSize);
-            if (mWin.size() < winSize * winSize) continue;
-
-            if (useNcc) {
-                // ── Route2: 幅度NCC搜索 ──
-                int slaveWinSz = winSize + 2 * searchHalf;
-                int sX0 = pt.col + (int)pt.rangeOff - half - searchHalf;
-                int sY0 = pt.row + (int)pt.aziOff - half - searchHalf;
-                if (sX0 < 0 || sY0 < 0 || sX0 + slaveWinSz > sW || sY0 + slaveWinSz > sH) continue;
-                auto sWin = ctx.slaveReader->readBandWindow(0, sX0, sY0, slaveWinSz, slaveWinSz);
-                if (sWin.size() < slaveWinSz * slaveWinSz) continue;
-
-                int bestDx, bestDy;
-                double subDx, subDy;
-                double nccVal = nccCorrelate(mWin, sWin, winSize, winSize,
-                                             slaveWinSz, slaveWinSz,
-                                             bestDx, bestDy, subDx, subDy);
-
-                // subDx/subDy已包含整像素+亚像素, 是相对于搜索区域中心的偏移
-                pt.rangeOff += subDx;
-                pt.aziOff   += subDy;
-                pt.correlation = nccVal;
-            } else {
-                // ── Route1/3: FFT幅度域互相关 ──
-                int sX0c = pt.col + (int)pt.rangeOff - half;
-                int sY0c = pt.row + (int)pt.aziOff - half;
-                if (sX0c < 0 || sY0c < 0 || sX0c + winSize > sW || sY0c + winSize > sH) continue;
-                auto sWinC = ctx.slaveReader->readBandWindow(0, sX0c, sY0c, winSize, winSize);
-                if (sWinC.size() < winSize * winSize) continue;
-
-                int outRows = 2 * winSize - 1, outCols = 2 * winSize - 1;
-                QVector<float> surf(outRows * outCols);
-                float maxV = fftAmpCorrelate(mWin.data(), sWinC.data(), surf.data(), winSize, winSize);
-                double subDx, subDy;
-                findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
-                pt.rangeOff += subDx;
-                pt.aziOff   += subDy;
-                pt.correlation = maxV;
-            }
-            ctx.offsetPoints.append(pt);
+                if (io.burstIndex == b) { wi.initRangeOff = io.rangeOff; wi.initAziOff = io.aziOff; break; }
+            items.append(wi);
         }
     }
 
+    // 按线程数分批
+    int nThreads = qBound(1, QThread::idealThreadCount(), 4);
+    int batchSize = qMax(1, (items.size() + nThreads - 1) / nThreads);
+    QList<QVector<CoarseWorkItem>> batches;
+    for (int i = 0; i < items.size(); i += batchSize) {
+        QVector<CoarseWorkItem> batch;
+        for (int j = i; j < qMin(i + batchSize, items.size()); ++j)
+            batch.append(items[j]);
+        batches.append(batch);
+    }
+
+    qDebug() << QStringLiteral("[Step4] Parallel coarse: %1 points, %2 threads, %3 batches")
+        .arg(items.size()).arg(nThreads).arg(batches.size());
+
+    // 并行: 每批一个 QFuture
+    CoarseConfig cfg;
+    cfg.masterPath = ctx.masterBand->rasterPath;
+    cfg.slavePath  = ctx.slaveBand->rasterPath;
+    cfg.sW = sW; cfg.sH = sH;
+    cfg.winSize = winSize;
+    cfg.useNcc = useNcc;
+    cfg.searchHalf = searchHalf;
+
+    QList<QFuture<QVector<OffsetPoint>>> futures;
+    for (int i = 0; i < batches.size(); ++i) {
+        futures.append(QtConcurrent::run(
+            processCoarseBatch, batches[i], cfg));
+    }
+
+    // 收集结果
+    ctx.offsetPoints.clear();
+    ctx.offsetPoints.reserve(items.size());
+    for (auto& f : futures)
+        ctx.offsetPoints.append(f.result());
+
+    // 统计
     int validN = 0;
     double minR=1e9, maxR=-1e9, minA=1e9, maxA=-1e9, sumR=0, sumA=0;
     for (const auto& pt : ctx.offsetPoints) {

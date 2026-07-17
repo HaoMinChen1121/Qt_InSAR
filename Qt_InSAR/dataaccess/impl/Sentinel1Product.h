@@ -5,6 +5,7 @@
 #include <QStringList>
 #include <QDomDocument>
 #include <QDateTime>
+#include <QMap>
 
 class Sentinel1Product : public ISarProduct {
 public:
@@ -87,6 +88,10 @@ private:
     QVector<QDateTime> mParsedBurstAzimuthTimes;
     double mParsedAzimuthFmRate = 0.0;
     double mParsedAzimuthSteeringRate = 0.0;
+    QMap<QString, double> mParsedAzimuthFreqBySwath;      // 每子条带的有效方位向PRF
+    QMap<QString, int>    mParsedLinesPerBurstBySwath;    // 每子条带的burst行数
+    QMap<QString, QVector<int>>      mParsedBurstStartsBySwath;   // 每子条带的burst起始行
+    QMap<QString, QVector<QDateTime>> mParsedBurstTimesBySwath;   // 每子条带的burst azimuth时间
 };
 
 #endif // SENTINEL1PRODUCT_H

@@ -13,7 +13,7 @@ bool GdalSlcReader::open(const QString& filePath)
 {
     close();
 
-    GDALDatasetH hDS = GDALOpen(filePath.toUtf8().constData(), GA_ReadOnly);
+    GDALDatasetH hDS = GDALOpenShared(filePath.toUtf8().constData(), GA_ReadOnly);
     if (!hDS) return false;
 
     mDataset = hDS;

@@ -10,6 +10,7 @@
 struct OffsetPoint {
     int    row = 0;
     int    col = 0;
+    int    origIdx = -1;       // 原始索引 (并行处理时用于写回)
     double rangeOff = 0.0;     // 距离向偏移 (pixel)
     double aziOff   = 0.0;     // 方位向偏移 (pixel)
     double correlation = 0.0;  // NCC系数
@@ -64,6 +65,7 @@ struct SlcDataBundle {
     QVector<QDateTime> slaveBurstTimes;
     double  slaveAzimuthFmRate = 0.0;       // 辅影像方位向调频率 (Hz/s, TOPS deramp)
     double  slaveAzimuthSteeringRate = 0.0;  // 天线转向速率 (deg/s, TOPS deburst)
+    double  masterAzimuthFrequency = 0.0;    // 主影像有效方位向PRF (Hz, 每子条带)
 };
 
 // ── 质量报告 ──
