@@ -301,6 +301,21 @@ QString GdalVsiProcessor::process(const QString& vsiPath,
                 tifPath.toUtf8().constData(), srcDS, FALSE,
                 nullptr, nullptr, nullptr);
             if (dstDS) {
+                GDALRasterBandH dstBand = GDALGetRasterBand(dstDS, 1);
+
+                // ensure NODATA=0 so QGIS renders border zeros as transparent
+                int bHasNoData = 0;
+                double srcND = GDALGetRasterNoDataValue(dstBand, &bHasNoData);
+                if (!bHasNoData || srcND != 0.0)
+                    GDALSetRasterNoDataValue(dstBand, 0.0);
+
+                // compute stats excluding NODATA pixels
+                double dmin, dmax, dmean, dstd;
+                if (GDALGetRasterStatistics(dstBand, FALSE, TRUE,
+                        &dmin, &dmax, &dmean, &dstd) == CE_None) {
+                    GDALSetRasterStatistics(dstBand, dmin, dmax, dmean, dstd);
+                }
+
                 int levels[] = {2, 4, 8, 16, 32, 64};
                 GDALBuildOverviews(dstDS, "NEAREST", 6,
                     levels, 0, nullptr, nullptr, nullptr);
