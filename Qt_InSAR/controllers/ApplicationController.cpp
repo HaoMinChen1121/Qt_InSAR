@@ -16,6 +16,7 @@
 
 #include "dataaccess/SarProductFactory.h"
 #include "dataaccess/impl/GdalVsiProcessor.h"
+#include "renderers/RasterRenderer.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/QsarIO.h"
 #include "dataaccess/ISarProduct.h"
@@ -196,8 +197,8 @@ void ApplicationController::wireConnections()
                         QgsProject::instance()->addMapLayer(layer);
                     }
                     newLayers.append(layer);
+                    RasterRenderer::applyAutoRenderer(layer, name);
                     QString layerType = QStringLiteral("Raster");
-                    // 自动彩色渲染: 相位用cyclic色带, 相干性用灰度
                     layerPanel->onLayerLoaded(layer->id(), name,
                         layerType, groupName);
                 } else {
@@ -255,6 +256,7 @@ void ApplicationController::wireConnections()
                         QgsProject::instance()->layerTreeRoot()->insertLayer(0, layer);
                     }
                     newLayers.append(layer);
+                    RasterRenderer::applyAutoRenderer(layer, names[i]);
                     QString lt2 = QStringLiteral("Raster");
                     if (names[i].contains("_phase")) lt2 = QStringLiteral("相位");
                     else if (names[i].contains("_coh")) lt2 = QStringLiteral("相干性");

@@ -2,6 +2,8 @@
 
 #include <gdal_priv.h>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <vector>
 #include <QFile>
 #include <QTextStream>
@@ -182,6 +184,12 @@ static bool createAmplitudeGeoTiff(const QString& vsiPath,
         blockYSize = 1;
     }
 
+    double statsMin   = std::numeric_limits<double>::max();
+    double statsMax   = -std::numeric_limits<double>::max();
+    double statsMean  = 0.0;
+    double statsM2    = 0.0;
+    uint64_t statsCount = 0;
+
     if (srcDT == GDT_CInt16) {
         std::vector<int16_t> srcBuf(blockXSize * blockYSize * 2);
         std::vector<float> dstBuf(blockXSize * blockYSize);
@@ -197,6 +205,13 @@ static bool createAmplitudeGeoTiff(const QString& vsiPath,
                 float I = static_cast<float>(srcBuf[i * 2]);
                 float Q = static_cast<float>(srcBuf[i * 2 + 1]);
                 dstBuf[i] = std::sqrt(I * I + Q * Q);
+                double v = static_cast<double>(dstBuf[i]);
+                if (v < statsMin) statsMin = v;
+                if (v > statsMax) statsMax = v;
+                ++statsCount;
+                double delta = v - statsMean;
+                statsMean += delta / statsCount;
+                statsM2 += delta * (v - statsMean);
             }
 
             GDALRasterIO(dstBand, GF_Write, 0, y, w, rows,
@@ -217,6 +232,13 @@ static bool createAmplitudeGeoTiff(const QString& vsiPath,
                 float I = srcBuf[i * 2];
                 float Q = srcBuf[i * 2 + 1];
                 dstBuf[i] = std::sqrt(I * I + Q * Q);
+                double v = static_cast<double>(dstBuf[i]);
+                if (v < statsMin) statsMin = v;
+                if (v > statsMax) statsMax = v;
+                ++statsCount;
+                double delta = v - statsMean;
+                statsMean += delta / statsCount;
+                statsM2 += delta * (v - statsMean);
             }
 
             GDALRasterIO(dstBand, GF_Write, 0, y, w, rows,
@@ -231,6 +253,11 @@ static bool createAmplitudeGeoTiff(const QString& vsiPath,
     int levels[] = {2, 4, 8, 16, 32, 64};
     GDALBuildOverviews(dstDS, "AVERAGE", 6, levels, 0, nullptr, nullptr,
                        nullptr);
+
+    double statsStdDev = (statsCount > 0)
+        ? std::sqrt(statsM2 / statsCount) : 0.0;
+    GDALSetRasterStatistics(GDALGetRasterBand(dstDS, 1),
+                             statsMin, statsMax, statsMean, statsStdDev);
 
     GDALClose(dstDS);
     GDALClose(srcDS);

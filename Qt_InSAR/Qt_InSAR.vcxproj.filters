@@ -13,6 +13,7 @@
     <Filter Include="Services\Registration\Steps"><UniqueIdentifier>{A2B3C4D5-E6F7-8901-BCDE-23456789ABCD}</UniqueIdentifier></Filter>
     <Filter Include="Services\Registration\Types"><UniqueIdentifier>{B3C4D5E6-F7A8-9012-CDEF-3456789ABCDE}</UniqueIdentifier></Filter>
     <Filter Include="Controllers"><UniqueIdentifier>{B8C9D0E1-F2A3-4567-BCDE-678901234567}</UniqueIdentifier></Filter>
+    <Filter Include="Renderers"><UniqueIdentifier>{A1B2C3D4-E5F6-7890-ABCD-9876543210FE}</UniqueIdentifier></Filter>
     <Filter Include="UI"><UniqueIdentifier>{C9D0E1F2-A3B4-5678-CDEF-789012345678}</UniqueIdentifier></Filter>
     <Filter Include="UI\Registration"><UniqueIdentifier>{D0E1F2A3-B4C5-6789-DEFA-890123456789}</UniqueIdentifier></Filter>
     <Filter Include="UI\Interferogram"><UniqueIdentifier>{E1F2A3B4-C5D6-7890-EFAB-901234567890}</UniqueIdentifier></Filter>
@@ -142,6 +143,11 @@
     <QtMoc Include="controllers\ApplicationController.h"><Filter>Controllers</Filter></QtMoc>
     <QtMoc Include="controllers\TaskWorker.h"><Filter>Controllers</Filter></QtMoc>
     <QtMoc Include="controllers\WorkerManager.h"><Filter>Controllers</Filter></QtMoc>
+  </ItemGroup>
+  <!-- Renderers -->
+  <ItemGroup>
+    <ClCompile Include="renderers\RasterRenderer.cpp"><Filter>Renderers</Filter></ClCompile>
+    <ClInclude Include="renderers\RasterRenderer.h"><Filter>Renderers</Filter></ClInclude>
   </ItemGroup>
   <!-- UI -->
   <ItemGroup>

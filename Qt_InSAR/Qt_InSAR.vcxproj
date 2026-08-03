@@ -148,6 +148,7 @@
     <ClCompile Include="controllers\ApplicationController.cpp" />
     <ClCompile Include="controllers\TaskWorker.cpp" />
     <ClCompile Include="controllers\WorkerManager.cpp" />
+    <ClCompile Include="renderers\RasterRenderer.cpp" />
     <!-- UI Core -->
     <ClCompile Include="ui\MapCanvasWidget.cpp" />
     <ClCompile Include="ui\LayerPanel.cpp" />
@@ -222,6 +223,7 @@
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h" />
     <ClInclude Include="dataaccess\impl\GdalVsiProcessor.h" />
     <ClInclude Include="dataaccess\impl\QsarIO.h" />
+    <ClInclude Include="renderers\RasterRenderer.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">
