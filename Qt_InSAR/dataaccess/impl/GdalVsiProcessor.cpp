@@ -176,6 +176,7 @@ static bool createAmplitudeGeoTiff(const QString& vsiPath,
     }
 
     GDALRasterBandH dstBand = GDALGetRasterBand(dstDS, 1);
+    GDALSetRasterNoDataValue(dstBand, 0.0);
 
     int blockXSize, blockYSize;
     GDALGetBlockSize(srcBand, &blockXSize, &blockYSize);
@@ -206,12 +207,14 @@ static bool createAmplitudeGeoTiff(const QString& vsiPath,
                 float Q = static_cast<float>(srcBuf[i * 2 + 1]);
                 dstBuf[i] = std::sqrt(I * I + Q * Q);
                 double v = static_cast<double>(dstBuf[i]);
-                if (v < statsMin) statsMin = v;
-                if (v > statsMax) statsMax = v;
-                ++statsCount;
-                double delta = v - statsMean;
-                statsMean += delta / statsCount;
-                statsM2 += delta * (v - statsMean);
+                if (v > 0.0) {
+                    if (v < statsMin) statsMin = v;
+                    if (v > statsMax) statsMax = v;
+                    ++statsCount;
+                    double delta = v - statsMean;
+                    statsMean += delta / statsCount;
+                    statsM2 += delta * (v - statsMean);
+                }
             }
 
             GDALRasterIO(dstBand, GF_Write, 0, y, w, rows,
@@ -233,12 +236,14 @@ static bool createAmplitudeGeoTiff(const QString& vsiPath,
                 float Q = srcBuf[i * 2 + 1];
                 dstBuf[i] = std::sqrt(I * I + Q * Q);
                 double v = static_cast<double>(dstBuf[i]);
-                if (v < statsMin) statsMin = v;
-                if (v > statsMax) statsMax = v;
-                ++statsCount;
-                double delta = v - statsMean;
-                statsMean += delta / statsCount;
-                statsM2 += delta * (v - statsMean);
+                if (v > 0.0) {
+                    if (v < statsMin) statsMin = v;
+                    if (v > statsMax) statsMax = v;
+                    ++statsCount;
+                    double delta = v - statsMean;
+                    statsMean += delta / statsCount;
+                    statsM2 += delta * (v - statsMean);
+                }
             }
 
             GDALRasterIO(dstBand, GF_Write, 0, y, w, rows,
