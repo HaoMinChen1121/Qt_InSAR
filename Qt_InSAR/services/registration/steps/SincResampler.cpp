@@ -131,11 +131,15 @@ struct ResampleWorkItem {
 };
 
 struct ResampleConfig {
-    const QVector<std::complex<float>>* fullBurst = nullptr;  // 全burst内存缓冲区
+    const QVector<std::complex<float>>* fullBurst = nullptr;  // 全burst内存缓冲区(未deramp)
     int sW, burstH, burstRow0, sH, mW, mH, readR;
     bool useFastSinc;
     int sincW; double beta;
     QVector<QVector<float>>* sincLUT;
+    // deramp 参数 (worker 内对 strip 做 deramp)
+    bool doDeramp;
+    double prf, kt;
+    int burstIdx, L;  // burstIdx = 当前burst索引 (0-based), L = linesPerBurst
 };
 
 static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
@@ -155,6 +159,25 @@ static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
         } else {
             auto strip = extractStrip(*cfg.fullBurst, cfg.sW,
                 cfg.burstH, cfg.burstRow0, rc.sY0, rc.sYH);
+
+            // 对提取的 strip 做 deramp (和旧代码逻辑一致: strip来自内存而非GDAL)
+            if (cfg.doDeramp) {
+                for (int sr = 0; sr < rc.sYH; ++sr) {
+                    int slaveRow = rc.sY0 + sr;
+                    int sbIdx = qBound(0, slaveRow / cfg.L, cfg.burstIdx + 1);
+                    double eta_S = (slaveRow - sbIdx * cfg.L - cfg.L / 2.0) / cfg.prf;
+                    double dp = -M_PI * cfg.kt * eta_S * eta_S;
+                    float dCos = (float)std::cos(dp), dSin = (float)std::sin(dp);
+                    int base = sr * cfg.sW, end = base + cfg.sW;
+                    if (end > strip.size()) end = strip.size();
+                    for (int idx = base; idx < end; ++idx) {
+                        auto v = strip[idx];
+                        strip[idx] = {
+                            v.real() * dCos - v.imag() * dSin,
+                            v.real() * dSin + v.imag() * dCos};
+                    }
+                }
+            }
 
             if (cfg.useFastSinc) {
                 double syVal = rc.syFrac + cfg.readR;
@@ -252,28 +275,7 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             }
         }
 
-        qDebug() << QStringLiteral("[Step9] burst %1 read done, pixel[0]=(%2,%3)")
-            .arg(b+1).arg(fullBurst[0].real(), 0, 'f', 1).arg(fullBurst[0].imag(), 0, 'f', 1);
-
-        // ── 一次性对整个 burst 做 deramp (串行, 32M像素 <1秒) ──
-        if (doDeramp) {
-            qDebug() << QStringLiteral("[Step9] burst %1 deramping (%2 rows)...").arg(b+1).arg(L);
-            const double ktOver2 = kt * 0.5;
-            const double LHalf = L / 2.0;
-            for (int sr = 0; sr < L; ++sr) {
-                int slaveRow = burstRow0 + sr;
-                double eta_S = (slaveRow - b * L - LHalf) / prf;
-                double dp = -M_PI * kt * eta_S * eta_S;
-                float dCos = (float)std::cos(dp), dSin = (float)std::sin(dp);
-                int base = sr * sW, end = base + sW;
-                for (int idx = base; idx < end; ++idx) {
-                    auto v = fullBurst[idx];
-                    fullBurst[idx] = {
-                        v.real() * dCos - v.imag() * dSin,
-                        v.real() * dSin + v.imag() * dCos};
-                }
-            }
-        }
+        qDebug() << QStringLiteral("[Step9] burst %1 read done, %2 rows in memory").arg(b+1).arg(L);
 
         // ── 构建工作项 ──
         QVector<ResampleWorkItem> items;
@@ -292,16 +294,19 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             batches.append(batch);
         }
 
-        // ── 并行插值 (所有线程共享 fullBurst 只读内存) ──
+        // ── 并行插值 (所有线程共享 fullBurst 只读内存, deramp在worker内做) ──
         ResampleConfig rcfg;
         rcfg.fullBurst   = &fullBurst;
         rcfg.sW = sW; rcfg.burstH = L; rcfg.burstRow0 = burstRow0;
-        rcfg.sH = sH;   // 全局slave高度 (用于坐标裁剪)
+        rcfg.sH = sH;
         rcfg.mW = mW; rcfg.mH = mH;
         rcfg.readR = readR;
         rcfg.useFastSinc = useFastSinc;
         rcfg.sincW = sincW; rcfg.beta = beta;
         rcfg.sincLUT = &sincLUT;
+        rcfg.doDeramp = doDeramp;
+        rcfg.prf = prf; rcfg.kt = kt;
+        rcfg.burstIdx = b; rcfg.L = L;
 
         QList<QFuture<QVector<QPair<int, QVector<std::complex<float>>>>>> futures;
         for (int i = 0; i < batches.size(); ++i)
