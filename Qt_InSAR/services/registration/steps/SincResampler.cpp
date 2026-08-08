@@ -264,6 +264,7 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         for (int r = 0; r < L; ++r)
             items.append({burstRow0 + r, burstRow0 + r,
                           br.rangePoly, br.aziPoly});
+        qDebug() << "[Step9] items created:" << items.size();
 
         // 按线程数分批
         int batchSz = qMax(1, (items.size() + nThreads - 1) / nThreads);
@@ -274,8 +275,9 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
                 batch.append(items[j]);
             batches.append(batch);
         }
+        qDebug() << "[Step9] batches:" << batches.size() << "batchSz:" << batchSz;
 
-        // ── 并行插值 (所有线程共享 fullBurst 只读内存, deramp在worker内做) ──
+        // ── 插值 (所有线程共享 fullBurst 只读内存, deramp在worker内做) ──
         ResampleConfig rcfg;
         rcfg.fullBurst   = &fullBurst;
         rcfg.sW = sW; rcfg.burstH = L; rcfg.burstRow0 = burstRow0;
@@ -288,15 +290,22 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         rcfg.doDeramp = doDeramp;
         rcfg.prf = prf; rcfg.kt = kt;
         rcfg.burstIdx = b; rcfg.L = L;
+        qDebug() << "[Step9] config ready, spawning workers...";
 
         QList<QFuture<QVector<QPair<int, QVector<std::complex<float>>>>>> futures;
-        for (int i = 0; i < batches.size(); ++i)
+        for (int i = 0; i < batches.size(); ++i) {
+            qDebug() << "[Step9] spawning batch" << i+1 << "/" << batches.size();
             futures.append(QtConcurrent::run(processResampleBatch, batches[i], rcfg));
+        }
+        qDebug() << "[Step9] all batches spawned, collecting results...";
 
         // 收集并写入
         QVector<QPair<int, QVector<std::complex<float>>>> allRows;
-        for (auto& f : futures)
+        for (auto& f : futures) {
+            qDebug() << "[Step9] waiting for future...";
             allRows.append(f.result());
+        }
+        qDebug() << "[Step9] all results collected, sorting...";
         std::sort(allRows.begin(), allRows.end(),
             [](const auto& a, const auto& b) { return a.first < b.first; });
 
