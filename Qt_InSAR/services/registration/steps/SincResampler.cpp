@@ -154,22 +154,29 @@ static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
             w.rangePoly, w.aziPoly, cfg.readR);
 
         QVector<std::complex<float>> rowBuf(cfg.mW);
-        if (rc.sYH <= 0) {
+        int actualStripH = rc.sYH;
+        if (actualStripH <= 0) {
             rowBuf.fill({0, 0});
         } else {
             auto strip = extractStrip(*cfg.fullBurst, cfg.sW,
                 cfg.burstH, cfg.burstRow0, rc.sY0, rc.sYH);
+            // extractStrip 可能在边界裁剪，用实际 strip 高度替代 rc.sYH
+            actualStripH = strip.size() / cfg.sW;
+            if (actualStripH <= 0) {
+                rowBuf.fill({0, 0});
+                results.append({w.gRowOut, std::move(rowBuf)});
+                continue;
+            }
 
-            // 对提取的 strip 做 deramp (和旧代码逻辑一致: strip来自内存而非GDAL)
+            // 对提取的 strip 做 deramp
             if (cfg.doDeramp) {
-                for (int sr = 0; sr < rc.sYH; ++sr) {
+                for (int sr = 0; sr < actualStripH; ++sr) {
                     int slaveRow = rc.sY0 + sr;
                     int sbIdx = qBound(0, slaveRow / cfg.L, cfg.burstIdx + 1);
                     double eta_S = (slaveRow - sbIdx * cfg.L - cfg.L / 2.0) / cfg.prf;
                     double dp = -M_PI * cfg.kt * eta_S * eta_S;
                     float dCos = (float)std::cos(dp), dSin = (float)std::sin(dp);
                     int base = sr * cfg.sW, end = base + cfg.sW;
-                    if (end > strip.size()) end = strip.size();
                     for (int idx = base; idx < end; ++idx) {
                         auto v = strip[idx];
                         strip[idx] = {
@@ -180,16 +187,16 @@ static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
             }
 
             if (cfg.useFastSinc) {
-                double syVal = rc.syFrac + cfg.readR;
+                double syFracInStrip = rc.syFrac + (rc.sY0 - qMax(rc.sY0, cfg.burstRow0));
                 syBuf.resize(cfg.mW);
-                syBuf.fill(syVal);
-                sincInterp1D_Horizontal(strip, cfg.sW, rc.sYH, rc.sx,
+                syBuf.fill(syFracInStrip + cfg.readR);
+                sincInterp1D_Horizontal(strip, cfg.sW, actualStripH, rc.sx,
                     *cfg.sincLUT, cfg.sincW, tempBuf, cfg.mW);
-                sincInterp1D_Vertical(tempBuf, rc.sYH, cfg.mW, syBuf,
+                sincInterp1D_Vertical(tempBuf, actualStripH, cfg.mW, syBuf,
                     *cfg.sincLUT, cfg.sincW, rowBuf.data());
             } else {
                 for (int c = 0; c < cfg.mW; ++c) {
-                    rowBuf[c] = interpFromStrip(strip, cfg.sW, rc.sYH,
+                    rowBuf[c] = interpFromStrip(strip, cfg.sW, actualStripH,
                         rc.sx[c], rc.syFrac, true, cfg.sincW, cfg.beta);
                 }
             }
