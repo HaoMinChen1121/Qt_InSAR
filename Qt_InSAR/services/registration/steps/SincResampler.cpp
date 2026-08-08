@@ -232,11 +232,28 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         const auto& br = ctx.burstResults[b];
         int burstRow0 = b * L;
 
-        // ── 一次性读入整个 burst (sW × L 复数) ──
+        // ── 分块读入整个 burst (避免 /vsizip 大块读取限制) ──
         QVector<std::complex<float>> fullBurst(sW * L);
-        GDALRasterIO(GDALGetRasterBand(hSlave, 1), GF_Read,
-            0, burstRow0, sW, L,
-            fullBurst.data(), sW, L, GDT_CFloat32, 0, 0);
+        {
+            GDALRasterBandH hBand = GDALGetRasterBand(hSlave, 1);
+            if (!hBand) {
+                ctx.errorMessage = QStringLiteral("SincResampler: null raster band");
+                GDALClose(hSlave); return false;
+            }
+            const int chunkRows = 64;
+            for (int cr = 0; cr < L; cr += chunkRows) {
+                int h = qMin(chunkRows, L - cr);
+                CPLErr e = GDALRasterIO(hBand, GF_Read, 0, burstRow0 + cr, sW, h,
+                    fullBurst.data() + cr * sW, sW, h, GDT_CFloat32, 0, 0);
+                if (e != CE_None) {
+                    ctx.errorMessage = QStringLiteral("SincResampler: GDALRasterIO error at row %1").arg(cr);
+                    GDALClose(hSlave); return false;
+                }
+            }
+        }
+
+        qDebug() << QStringLiteral("[Step9] burst %1 read done, pixel[0]=(%2,%3)")
+            .arg(b+1).arg(fullBurst[0].real(), 0, 'f', 1).arg(fullBurst[0].imag(), 0, 'f', 1);
 
         // ── 一次性对整个 burst 做 deramp (串行, 32M像素 <1秒) ──
         if (doDeramp) {
