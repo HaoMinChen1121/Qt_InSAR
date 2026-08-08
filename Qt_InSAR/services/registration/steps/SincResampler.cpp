@@ -292,11 +292,12 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         rcfg.burstIdx = b; rcfg.L = L;
         qDebug() << "[Step9] config ready, processing batches serially...";
 
-        // 串行处理各批次 (调试用，定位多线程问题)
+        // ── 串行处理各批次 ──
         QVector<QPair<int, QVector<std::complex<float>>>> allRows;
         for (int i = 0; i < batches.size(); ++i) {
             qDebug() << "[Step9] processing batch" << i+1 << "/" << batches.size();
-            allRows.append(processResampleBatch(batches[i], rcfg));
+            auto batchResults = processResampleBatch(batches[i], rcfg);
+            allRows += batchResults;  // QVector::operator+= 合并两个向量
         }
         qDebug() << "[Step9] all batches done, sorting...";
         std::sort(allRows.begin(), allRows.end(),
