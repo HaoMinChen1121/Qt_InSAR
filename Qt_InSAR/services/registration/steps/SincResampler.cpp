@@ -76,6 +76,23 @@ static std::complex<float> interpFromStrip(const QVector<std::complex<float>>& s
                    : bilinearInterp2D(strip, sW, sH, sx, sy);
 }
 
+// ── 从全burst缓冲区提取条带 ──
+// sY0/sYH 是全局 slave 行坐标, burstRow0 是当前 burst 在 slave 中的起始行
+static QVector<std::complex<float>> extractStrip(
+    const QVector<std::complex<float>>& fullBurst,
+    int sW, int burstH, int burstRow0, int sY0, int sYH)
+{
+    if (sYH <= 0) return {};
+    int localY0 = qMax(sY0, burstRow0) - burstRow0;
+    int localY1 = qMin(sY0 + sYH, burstRow0 + burstH) - burstRow0;
+    int h = localY1 - localY0;
+    if (h <= 0) return {};
+    QVector<std::complex<float>> strip(sW * h);
+    memcpy(strip.data(), fullBurst.data() + localY0 * sW,
+           sW * h * sizeof(std::complex<float>));
+    return strip;
+}
+
 // ── 计算一行的 slave 坐标 ──
 struct RowCoords {
     QVector<double> sx;
@@ -114,37 +131,16 @@ struct ResampleWorkItem {
 };
 
 struct ResampleConfig {
-    QString slavePath;
-    int sW, sH, mW, mH, N, L, readR;
-    double prf, kt;
-    bool doDeramp, useFastSinc;
+    const QVector<std::complex<float>>* fullBurst = nullptr;  // 全burst内存缓冲区
+    int sW, burstH, burstRow0, sH, mW, mH, readR;
+    bool useFastSinc;
     int sincW; double beta;
     QVector<QVector<float>>* sincLUT;
 };
 
-// 直接从 GDAL 读 strip (避免 GDALOpenShared 多线程锁争用)
-static QVector<std::complex<float>> readBandWindowMT(
-    GDALDatasetH hDS, int band, int col0, int row0, int w, int h)
-{
-    if (!hDS) return {};
-    if (col0 < 0) { w += col0; col0 = 0; }
-    if (row0 < 0) { h += row0; row0 = 0; }
-    int bw = GDALGetRasterXSize(hDS), bh = GDALGetRasterYSize(hDS);
-    if (col0 + w > bw) w = bw - col0;
-    if (row0 + h > bh) h = bh - row0;
-    if (w <= 0 || h <= 0) return {};
-    QVector<std::complex<float>> buf(w * h);
-    GDALRasterIO(GDALGetRasterBand(hDS, band + 1), GF_Read,
-        col0, row0, w, h, buf.data(), w, h, GDT_CFloat32, 0, 0);
-    return buf;
-}
-
 static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
     QVector<ResampleWorkItem> batch, ResampleConfig cfg)
 {
-    GDALDatasetH hDS = GDALOpen(cfg.slavePath.toUtf8().constData(), GA_ReadOnly);
-    if (!hDS) return {};
-
     QVector<QPair<int, QVector<std::complex<float>>>> results;
     QVector<std::complex<float>> tempBuf;
     QVector<double> syBuf;
@@ -157,28 +153,9 @@ static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
         if (rc.sYH <= 0) {
             rowBuf.fill({0, 0});
         } else {
-            auto strip = readBandWindowMT(hDS, 0, 0, rc.sY0, cfg.sW, rc.sYH);
+            auto strip = extractStrip(*cfg.fullBurst, cfg.sW,
+                cfg.burstH, cfg.burstRow0, rc.sY0, rc.sYH);
 
-            // Deramp slave strip BEFORE interpolation
-            if (cfg.doDeramp) {
-                for (int sr = 0; sr < rc.sYH; ++sr) {
-                    int slaveRow = rc.sY0 + sr;
-                    int sbIdx = qBound(0, slaveRow / cfg.L, cfg.N - 1);
-                    double eta_S = (slaveRow - sbIdx * cfg.L - cfg.L/2.0) / cfg.prf;
-                    double dp = -M_PI * cfg.kt * eta_S * eta_S;
-                    float dCos = (float)std::cos(dp), dSin = (float)std::sin(dp);
-                    int base = sr * cfg.sW, end = base + cfg.sW;
-                    if (end > strip.size()) end = strip.size();
-                    for (int idx = base; idx < end; ++idx) {
-                        auto v = strip[idx];
-                        float re = v.real() * dCos - v.imag() * dSin;
-                        float im = v.real() * dSin + v.imag() * dCos;
-                        strip[idx] = {re, im};
-                    }
-                }
-            }
-
-            // Interpolate
             if (cfg.useFastSinc) {
                 double syVal = rc.syFrac + cfg.readR;
                 syBuf.resize(cfg.mW);
@@ -196,7 +173,6 @@ static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
         }
         results.append({w.gRowOut, std::move(rowBuf)});
     }
-    GDALClose(hDS);
     return results;
 }
 
@@ -214,7 +190,6 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
     double kt     = ctx.data.slaveAzimuthFmRate;
     bool doDeramp = (std::abs(kt) > 1e-6) && (prf > 0);
 
-    // 预计算 Sinc 权重表 (加速: 查表替代 sinc()+Kaiser() 调用)
     QVector<QVector<float>> sincLUT;
     bool useFastSinc = useSinc;
     if (useFastSinc) {
@@ -233,7 +208,6 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
     qDebug() << QStringLiteral("[Step9] TOPSAR resample %1x%2 %3bursts (no deburst) deramp=%4")
         .arg(mW).arg(mH).arg(N).arg(doDeramp ? "on" : "off");
 
-    // ── 创建输出: 全尺寸,保留burst结构,deburst在干涉图模块做 ──
     GdalSlcWriter writer;
     if (!writer.create(ctx.outputPath, mW, mH, 1)) {
         ctx.errorMessage = QStringLiteral("SincResampler: create output fail"); return false;
@@ -244,25 +218,49 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
     int step = std::max(1, mH / 100);
     int nThreads = qBound(1, QThread::idealThreadCount(), 4);
 
-    ResampleConfig rcfg;
-    rcfg.slavePath = ctx.slaveBand->rasterPath;
-    rcfg.sW = sW; rcfg.sH = sH; rcfg.mW = mW; rcfg.mH = mH;
-    rcfg.N = N; rcfg.L = L; rcfg.readR = readR;
-    rcfg.prf = prf; rcfg.kt = kt;
-    rcfg.doDeramp = doDeramp; rcfg.useFastSinc = useFastSinc;
-    rcfg.sincW = sincW; rcfg.beta = beta;
-    rcfg.sincLUT = &sincLUT;
+    // ── 打开 slave 一次, 逐burst读取全burst数据到内存 ──
+    GDALDatasetH hSlave = GDALOpen(ctx.slaveBand->rasterPath.toUtf8().constData(), GA_ReadOnly);
+    if (!hSlave) {
+        ctx.errorMessage = QStringLiteral("SincResampler: cannot open slave");
+        return false;
+    }
 
-    // ── 逐burst并行重采样 (全burst,不裁overlap) ──
     for (int b = 0; b < N; ++b) {
-        if (mCancelled) return false;
-        qDebug() << QStringLiteral("[Step9] burst %1/%2...").arg(b+1).arg(N);
+        if (mCancelled) { GDALClose(hSlave); return false; }
+        qDebug() << QStringLiteral("[Step9] burst %1/%2 reading full burst...").arg(b+1).arg(N);
 
         const auto& br = ctx.burstResults[b];
         int burstRow0 = b * L;
 
-        // 全burst行 (不含deburst裁切)
+        // ── 一次性读入整个 burst (sW × L 复数) ──
+        QVector<std::complex<float>> fullBurst(sW * L);
+        GDALRasterIO(GDALGetRasterBand(hSlave, 1), GF_Read,
+            0, burstRow0, sW, L,
+            fullBurst.data(), sW, L, GDT_CFloat32, 0, 0);
+
+        // ── 一次性对整个 burst 做 deramp (并行) ──
+        if (doDeramp) {
+            qDebug() << QStringLiteral("[Step9] burst %1 deramping...").arg(b+1);
+            QtConcurrent::blockingMap(
+                QVector<int>::fromStdVector(std::vector<int>(L, 0)),
+                [&](int sr) {
+                    int slaveRow = burstRow0 + sr;
+                    double eta_S = (slaveRow - b * L - L / 2.0) / prf;
+                    double dp = -M_PI * kt * eta_S * eta_S;
+                    float dCos = (float)std::cos(dp), dSin = (float)std::sin(dp);
+                    int base = sr * sW, end = base + sW;
+                    for (int idx = base; idx < end; ++idx) {
+                        auto v = fullBurst[idx];
+                        fullBurst[idx] = {
+                            v.real() * dCos - v.imag() * dSin,
+                            v.real() * dSin + v.imag() * dCos};
+                    }
+                });
+        }
+
+        // ── 构建工作项 ──
         QVector<ResampleWorkItem> items;
+        items.reserve(L);
         for (int r = 0; r < L; ++r)
             items.append({burstRow0 + r, burstRow0 + r,
                           br.rangePoly, br.aziPoly});
@@ -277,12 +275,22 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             batches.append(batch);
         }
 
-        // 并行处理
+        // ── 并行插值 (所有线程共享 fullBurst 只读内存) ──
+        ResampleConfig rcfg;
+        rcfg.fullBurst   = &fullBurst;
+        rcfg.sW = sW; rcfg.burstH = L; rcfg.burstRow0 = burstRow0;
+        rcfg.sH = sH;   // 全局slave高度 (用于坐标裁剪)
+        rcfg.mW = mW; rcfg.mH = mH;
+        rcfg.readR = readR;
+        rcfg.useFastSinc = useFastSinc;
+        rcfg.sincW = sincW; rcfg.beta = beta;
+        rcfg.sincLUT = &sincLUT;
+
         QList<QFuture<QVector<QPair<int, QVector<std::complex<float>>>>>> futures;
         for (int i = 0; i < batches.size(); ++i)
             futures.append(QtConcurrent::run(processResampleBatch, batches[i], rcfg));
 
-        // 收集结果并按行号排序写入
+        // 收集并写入
         QVector<QPair<int, QVector<std::complex<float>>>> allRows;
         for (auto& f : futures)
             allRows.append(f.result());
@@ -295,6 +303,7 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         }
         QApplication::processEvents();
     }
+    GDALClose(hSlave);
     return true;
 }
 
