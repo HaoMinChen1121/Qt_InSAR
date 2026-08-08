@@ -290,22 +290,15 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         rcfg.doDeramp = doDeramp;
         rcfg.prf = prf; rcfg.kt = kt;
         rcfg.burstIdx = b; rcfg.L = L;
-        qDebug() << "[Step9] config ready, spawning workers...";
+        qDebug() << "[Step9] config ready, processing batches serially...";
 
-        QList<QFuture<QVector<QPair<int, QVector<std::complex<float>>>>>> futures;
-        for (int i = 0; i < batches.size(); ++i) {
-            qDebug() << "[Step9] spawning batch" << i+1 << "/" << batches.size();
-            futures.append(QtConcurrent::run(processResampleBatch, batches[i], rcfg));
-        }
-        qDebug() << "[Step9] all batches spawned, collecting results...";
-
-        // 收集并写入
+        // 串行处理各批次 (调试用，定位多线程问题)
         QVector<QPair<int, QVector<std::complex<float>>>> allRows;
-        for (auto& f : futures) {
-            qDebug() << "[Step9] waiting for future...";
-            allRows.append(f.result());
+        for (int i = 0; i < batches.size(); ++i) {
+            qDebug() << "[Step9] processing batch" << i+1 << "/" << batches.size();
+            allRows.append(processResampleBatch(batches[i], rcfg));
         }
-        qDebug() << "[Step9] all results collected, sorting...";
+        qDebug() << "[Step9] all batches done, sorting...";
         std::sort(allRows.begin(), allRows.end(),
             [](const auto& a, const auto& b) { return a.first < b.first; });
 
