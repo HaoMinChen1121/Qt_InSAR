@@ -138,9 +138,10 @@
     <ClCompile Include="dataaccess\impl\QsarIO.cpp" />
     <!-- Service stubs -->
     <ClCompile Include="services\registration\RegistrationServiceImpl.cpp" />
-    <ClCompile Include="services\impl\InterferogramServiceImpl.cpp" />
-    <ClCompile Include="services\impl\FlatEarthServiceImpl.cpp" />
-    <ClCompile Include="services\impl\DifferentialServiceImpl.cpp" />
+    <ClCompile Include="services\interferogram\InterferogramServiceImpl.cpp" />
+    <ClCompile Include="services\interferogram\steps\IfgGenerator.cpp" />
+    <ClCompile Include="services\interferogram\steps\FlatEarthRemover.cpp" />
+    <ClCompile Include="services\interferogram\steps\TopoPhaseRemover.cpp" />
     <ClCompile Include="services\impl\FilterServiceImpl.cpp" />
     <ClCompile Include="services\impl\UnwrappingServiceImpl.cpp" />
     <ClCompile Include="services\impl\GeocodingServiceImpl.cpp" />
@@ -167,15 +168,16 @@
     <QtMoc Include="services\IProcessingService.h" />
     <QtMoc Include="services\IRegistrationService.h" />
     <QtMoc Include="services\IInterferogramService.h" />
-    <QtMoc Include="services\IFlatEarthService.h" />
-    <QtMoc Include="services\IDifferentialService.h" />
     <QtMoc Include="services\IFilterService.h" />
     <QtMoc Include="services\IUnwrappingService.h" />
     <QtMoc Include="services\IGeocodingService.h" />
     <QtMoc Include="services\registration\RegistrationServiceImpl.h" />
-    <QtMoc Include="services\impl\InterferogramServiceImpl.h" />
-    <QtMoc Include="services\impl\FlatEarthServiceImpl.h" />
-    <QtMoc Include="services\impl\DifferentialServiceImpl.h" />
+    <QtMoc Include="services\interferogram\InterferogramServiceImpl.h" />
+    <ClInclude Include="services\interferogram\PipelineContext.h" />
+    <ClInclude Include="services\interferogram\steps\IIfgStep.h" />
+    <ClInclude Include="services\interferogram\steps\IfgGenerator.h" />
+    <ClInclude Include="services\interferogram\steps\FlatEarthRemover.h" />
+    <ClInclude Include="services\interferogram\steps\TopoPhaseRemover.h" />
     <QtMoc Include="services\impl\FilterServiceImpl.h" />
     <QtMoc Include="services\impl\UnwrappingServiceImpl.h" />
     <QtMoc Include="services\impl\GeocodingServiceImpl.h" />

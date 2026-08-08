@@ -7,9 +7,7 @@
 #include "ui/SarMetadataPanel.h"
 
 #include "services/registration/RegistrationServiceImpl.h"
-#include "services/impl/InterferogramServiceImpl.h"
-#include "services/impl/FlatEarthServiceImpl.h"
-#include "services/impl/DifferentialServiceImpl.h"
+#include "services/interferogram/InterferogramServiceImpl.h"
 #include "services/impl/FilterServiceImpl.h"
 #include "services/impl/UnwrappingServiceImpl.h"
 #include "services/impl/GeocodingServiceImpl.h"
@@ -64,8 +62,6 @@ void ApplicationController::createServices()
 {
     mRegistrationSvc = std::make_unique<RegistrationServiceImpl>(this);
     mInterferogramSvc = std::make_unique<InterferogramServiceImpl>(this);
-    mFlatEarthSvc = std::make_unique<FlatEarthServiceImpl>(this);
-    mDifferentialSvc = std::make_unique<DifferentialServiceImpl>(this);
     mFilterSvc = std::make_unique<FilterServiceImpl>(this);
     mUnwrappingSvc = std::make_unique<UnwrappingServiceImpl>(this);
     mGeocodingSvc = std::make_unique<GeocodingServiceImpl>(this);
@@ -348,10 +344,6 @@ IRegistrationService* ApplicationController::registrationService() const
 { return mRegistrationSvc.get(); }
 IInterferogramService* ApplicationController::interferogramService() const
 { return mInterferogramSvc.get(); }
-IFlatEarthService* ApplicationController::flatEarthService() const
-{ return mFlatEarthSvc.get(); }
-IDifferentialService* ApplicationController::differentialService() const
-{ return mDifferentialSvc.get(); }
 IFilterService* ApplicationController::filterService() const
 { return mFilterSvc.get(); }
 IUnwrappingService* ApplicationController::unwrappingService() const

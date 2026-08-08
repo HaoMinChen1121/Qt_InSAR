@@ -19,8 +19,6 @@ class QMenu;
 
 class IRegistrationService;
 class IInterferogramService;
-class IFlatEarthService;
-class IDifferentialService;
 class IFilterService;
 class IUnwrappingService;
 class IGeocodingService;
@@ -48,8 +46,6 @@ public:
     // Service accessors
     IRegistrationService* registrationService() const;
     IInterferogramService* interferogramService() const;
-    IFlatEarthService* flatEarthService() const;
-    IDifferentialService* differentialService() const;
     IFilterService* filterService() const;
     IUnwrappingService* unwrappingService() const;
     IGeocodingService* geocodingService() const;
@@ -77,8 +73,6 @@ private:
 
     std::unique_ptr<IRegistrationService> mRegistrationSvc;
     std::unique_ptr<IInterferogramService> mInterferogramSvc;
-    std::unique_ptr<IFlatEarthService> mFlatEarthSvc;
-    std::unique_ptr<IDifferentialService> mDifferentialSvc;
     std::unique_ptr<IFilterService> mFilterSvc;
     std::unique_ptr<IUnwrappingService> mUnwrappingSvc;
     std::unique_ptr<IGeocodingService> mGeocodingSvc;

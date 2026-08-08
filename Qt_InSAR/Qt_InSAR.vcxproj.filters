@@ -12,6 +12,8 @@
     <Filter Include="Services\Registration"><UniqueIdentifier>{F1A2B3C4-D5E6-7890-ABCD-123456789ABC}</UniqueIdentifier></Filter>
     <Filter Include="Services\Registration\Steps"><UniqueIdentifier>{A2B3C4D5-E6F7-8901-BCDE-23456789ABCD}</UniqueIdentifier></Filter>
     <Filter Include="Services\Registration\Types"><UniqueIdentifier>{B3C4D5E6-F7A8-9012-CDEF-3456789ABCDE}</UniqueIdentifier></Filter>
+    <Filter Include="Services\Interferogram"><UniqueIdentifier>{C1D2E3F4-A5B6-7890-CDEF-4567890ABCDE}</UniqueIdentifier></Filter>
+    <Filter Include="Services\Interferogram\Steps"><UniqueIdentifier>{D2E3F4A5-B6C7-8901-DEFA-5678901ABCDE}</UniqueIdentifier></Filter>
     <Filter Include="Controllers"><UniqueIdentifier>{B8C9D0E1-F2A3-4567-BCDE-678901234567}</UniqueIdentifier></Filter>
     <Filter Include="Renderers"><UniqueIdentifier>{A1B2C3D4-E5F6-7890-ABCD-9876543210FE}</UniqueIdentifier></Filter>
     <Filter Include="UI"><UniqueIdentifier>{C9D0E1F2-A3B4-5678-CDEF-789012345678}</UniqueIdentifier></Filter>
@@ -80,28 +82,36 @@
     <QtMoc Include="services\IProcessingService.h"><Filter>Services</Filter></QtMoc>
     <QtMoc Include="services\IRegistrationService.h"><Filter>Services</Filter></QtMoc>
     <QtMoc Include="services\IInterferogramService.h"><Filter>Services</Filter></QtMoc>
-    <QtMoc Include="services\IFlatEarthService.h"><Filter>Services</Filter></QtMoc>
-    <QtMoc Include="services\IDifferentialService.h"><Filter>Services</Filter></QtMoc>
     <QtMoc Include="services\IFilterService.h"><Filter>Services</Filter></QtMoc>
     <QtMoc Include="services\IUnwrappingService.h"><Filter>Services</Filter></QtMoc>
     <QtMoc Include="services\IGeocodingService.h"><Filter>Services</Filter></QtMoc>
   </ItemGroup>
   <!-- Services\Impl -->
   <ItemGroup>
-    <ClCompile Include="services\impl\InterferogramServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
-    <ClCompile Include="services\impl\FlatEarthServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
-    <ClCompile Include="services\impl\DifferentialServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
+    <ClCompile Include="services\interferogram\InterferogramServiceImpl.cpp"><Filter>Services\Interferogram</Filter></ClCompile>
     <ClCompile Include="services\impl\FilterServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
     <ClCompile Include="services\impl\UnwrappingServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
     <ClCompile Include="services\impl\GeocodingServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
     <ClCompile Include="services\registration\RegistrationServiceImpl.cpp"><Filter>Services\Registration</Filter></ClCompile>
     <QtMoc Include="services\registration\RegistrationServiceImpl.h"><Filter>Services\Registration</Filter></QtMoc>
-    <QtMoc Include="services\impl\InterferogramServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
-    <QtMoc Include="services\impl\FlatEarthServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
-    <QtMoc Include="services\impl\DifferentialServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
+    <QtMoc Include="services\interferogram\InterferogramServiceImpl.h"><Filter>Services\Interferogram</Filter></QtMoc>
     <QtMoc Include="services\impl\FilterServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
     <QtMoc Include="services\impl\UnwrappingServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
     <QtMoc Include="services\impl\GeocodingServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
+  </ItemGroup>
+  <!-- Services\Interferogram -->
+  <ItemGroup>
+    <ClInclude Include="services\interferogram\PipelineContext.h"><Filter>Services\Interferogram</Filter></ClInclude>
+  </ItemGroup>
+  <!-- Services\Interferogram\Steps -->
+  <ItemGroup>
+    <ClCompile Include="services\interferogram\steps\IfgGenerator.cpp"><Filter>Services\Interferogram\Steps</Filter></ClCompile>
+    <ClCompile Include="services\interferogram\steps\FlatEarthRemover.cpp"><Filter>Services\Interferogram\Steps</Filter></ClCompile>
+    <ClCompile Include="services\interferogram\steps\TopoPhaseRemover.cpp"><Filter>Services\Interferogram\Steps</Filter></ClCompile>
+    <ClInclude Include="services\interferogram\steps\IIfgStep.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>
+    <ClInclude Include="services\interferogram\steps\IfgGenerator.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>
+    <ClInclude Include="services\interferogram\steps\FlatEarthRemover.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>
+    <ClInclude Include="services\interferogram\steps\TopoPhaseRemover.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>
   </ItemGroup>
   <!-- Services\Registration -->
   <ItemGroup>
