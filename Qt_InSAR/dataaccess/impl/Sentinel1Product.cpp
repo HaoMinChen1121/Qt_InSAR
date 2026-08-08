@@ -589,14 +589,15 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
                 QString polyStr = fmRates.at(0).toElement()
                     .firstChildElement("azimuthFmRatePolynomial").text().trimmed();
                 QStringList coeffs = polyStr.split(' ', Qt::SkipEmptyParts);
-                if (!coeffs.isEmpty())
-                    mParsedAzimuthFmRate = coeffs[0].toDouble();
+                if (!coeffs.isEmpty() && !swathName.isEmpty())
+                    mParsedAzimuthFmRateBySwath[swathName] = coeffs[0].toDouble();
             }
         }
-        // azimuthSteeringRate (TOPS deburst cut line)
-        QDomElement asrEl = gaList.at(0).toElement().firstChildElement("azimuthSteeringRate");
-        if (!asrEl.isNull())
-            mParsedAzimuthSteeringRate = asrEl.text().trimmed().toDouble();
+        // azimuthSteeringRate (TOPS deburst cut line, per-swath)
+        // 注意: 嵌套在 generalAnnotation → productInformation → azimuthSteeringRate
+        QDomNodeList asrList = gaList.at(0).toElement().elementsByTagName("azimuthSteeringRate");
+        if (!asrList.isEmpty() && !swathName.isEmpty())
+            mParsedAzimuthSteeringRateBySwath[swathName] = asrList.at(0).toElement().text().trimmed().toDouble();
     }
 
     // 采样数 (SLC: samplesPerBurst/linesPerBurst; GRD: numberOfSamples/numberOfLines)
@@ -686,12 +687,14 @@ void Sentinel1Product::discoverMeasurementFiles(const QString& measurementDir) {
                           ? mParsedBurstStartsBySwath.value(b.subSwath, mParsedBurstStarts).size() : 0;
         b.burstStartLines = mParsedBurstStartsBySwath.value(b.subSwath, mParsedBurstStarts);
         b.burstAzimuthTimes = mParsedBurstTimesBySwath.value(b.subSwath, mParsedBurstAzimuthTimes);
-        b.azimuthFmRate      = mParsedAzimuthFmRate;
-        b.azimuthSteeringRate = mParsedAzimuthSteeringRate;
+        b.azimuthFmRate      = mParsedAzimuthFmRateBySwath.value(b.subSwath, 0.0);
+        b.azimuthSteeringRate = mParsedAzimuthSteeringRateBySwath.value(b.subSwath, 0.0);
         b.azimuthFrequency    = mParsedAzimuthFreqBySwath.value(b.subSwath, 0.0);
-        qDebug() << QStringLiteral("[S1Product] band %1 L=%2 bursts=%3 aziFreq=%4 Hz")
+        qDebug() << QStringLiteral("[S1Product] band %1 L=%2 bursts=%3 aziFreq=%4 Hz fmRate=%5 steerRate=%6")
             .arg(b.subSwath).arg(b.linesPerBurst).arg(b.burstCount)
-            .arg(b.azimuthFrequency, 0, 'f', 2);
+            .arg(b.azimuthFrequency, 0, 'f', 2)
+            .arg(b.azimuthFmRate, 0, 'f', 1)
+            .arg(b.azimuthSteeringRate, 0, 'f', 3);
 
         mBands.append(b);
     }

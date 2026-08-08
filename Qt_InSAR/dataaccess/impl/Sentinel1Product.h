@@ -86,9 +86,9 @@ private:
     int mParsedRangeSamples = 0;
     QVector<int> mParsedBurstStarts;
     QVector<QDateTime> mParsedBurstAzimuthTimes;
-    double mParsedAzimuthFmRate = 0.0;
-    double mParsedAzimuthSteeringRate = 0.0;
-    QMap<QString, double> mParsedAzimuthFreqBySwath;      // 每子条带的有效方位向PRF
+    QMap<QString, double> mParsedAzimuthFmRateBySwath;      // 每子条带的方位向调频率 (Hz/s)
+    QMap<QString, double> mParsedAzimuthSteeringRateBySwath; // 每子条带的天线转向速率 (deg/s)
+    QMap<QString, double> mParsedAzimuthFreqBySwath;        // 每子条带的有效方位向PRF (Hz)
     QMap<QString, int>    mParsedLinesPerBurstBySwath;    // 每子条带的burst行数
     QMap<QString, QVector<int>>      mParsedBurstStartsBySwath;   // 每子条带的burst起始行
     QMap<QString, QVector<QDateTime>> mParsedBurstTimesBySwath;   // 每子条带的burst azimuth时间

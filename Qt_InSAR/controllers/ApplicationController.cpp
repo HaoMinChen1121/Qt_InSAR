@@ -547,6 +547,46 @@ void ApplicationController::onSarProductOpenRequested(const QString& path)
         .arg(sensorInfo.relativeOrbit);
     mProductRegistry[path] = prodInfo;
 
+    // ── 控制台转储: 配准相关参数 ──
+    {
+        const auto& bands = product->bands();
+        qDebug() << "========== [Registration Data] Product Loaded ==========";
+        qDebug() << "  Display Name:" << prodInfo.displayName;
+        qDebug() << "  Mission:" << sensorInfo.missionId
+                 << "Mode:" << sensorInfo.acquisitionMode
+                 << "Type:" << sarProductTypeToString(sensorInfo.productType);
+        qDebug() << "  --- Sensor Geometry ---";
+        qDebug() << "    wavelength       =" << sensorInfo.wavelength << "m";
+        qDebug() << "    incidenceAngleMid=" << sensorInfo.incidenceAngleMid << "deg";
+        qDebug() << "    nearRange        =" << sensorInfo.nearRange << "m";
+        qDebug() << "    farRange         =" << sensorInfo.farRange << "m";
+        qDebug() << "    rangeSpacing     =" << sensorInfo.rangeSpacing << "m";
+        qDebug() << "    azimuthSpacing   =" << sensorInfo.azimuthSpacing << "m";
+        qDebug() << "    prf              =" << sensorInfo.prf << "Hz";
+        qDebug() << "    rangeSamples     =" << sensorInfo.rangeSamples;
+        qDebug() << "    azimuthSamples   =" << sensorInfo.azimuthSamples;
+        qDebug() << "    orbitVectors     =" << orbitVectors.size();
+        qDebug() << "    dopplerCentroid  =" << doppler.centroid << "Hz";
+        qDebug() << "  --- Bands (" << bands.size() << "total) ---";
+        for (const auto& b : bands) {
+            qDebug() << "   " << b.subSwath << b.polarization
+                     << QStringLiteral("size=%1×%2").arg(b.rasterSize.width()).arg(b.rasterSize.height());
+            qDebug() << "      azimuthFrequency   =" << b.azimuthFrequency << "Hz";
+            qDebug() << "      azimuthFmRate      =" << b.azimuthFmRate << "Hz/s";
+            qDebug() << "      azimuthSteeringRate=" << b.azimuthSteeringRate << "deg/s";
+            qDebug() << "      burstCount         =" << b.burstCount
+                     << "linesPerBurst=" << b.linesPerBurst;
+            if (!b.burstAzimuthTimes.isEmpty()) {
+                qDebug() << "      burstTime[0]       =" << b.burstAzimuthTimes.first().toString("hh:mm:ss.zzz");
+                qDebug() << "      burstTime[last]    =" << b.burstAzimuthTimes.last().toString("hh:mm:ss.zzz");
+            }
+            if (!b.burstStartLines.isEmpty())
+                qDebug() << "      burstStartLines[0] =" << b.burstStartLines.first()
+                         << "count=" << b.burstStartLines.size();
+        }
+        qDebug() << "==========================================================";
+    }
+
     const auto& bands = product->bands();
     LayerPanel* layerPanel = mMainWindow->layerPanel();
     if (layerPanel && !bands.isEmpty()) {
