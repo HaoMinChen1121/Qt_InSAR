@@ -241,8 +241,9 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         // ── 一次性对整个 burst 做 deramp (并行) ──
         if (doDeramp) {
             qDebug() << QStringLiteral("[Step9] burst %1 deramping...").arg(b+1);
-            QtConcurrent::blockingMap(
-                QVector<int>::fromStdVector(std::vector<int>(L, 0)),
+            QVector<int> rows(L);
+            for (int i = 0; i < L; ++i) rows[i] = i;
+            QtConcurrent::blockingMap(rows,
                 [&](int sr) {
                     int slaveRow = burstRow0 + sr;
                     double eta_S = (slaveRow - b * L - L / 2.0) / prf;
