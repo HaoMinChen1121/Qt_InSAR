@@ -238,25 +238,24 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             0, burstRow0, sW, L,
             fullBurst.data(), sW, L, GDT_CFloat32, 0, 0);
 
-        // ── 一次性对整个 burst 做 deramp (并行) ──
+        // ── 一次性对整个 burst 做 deramp (串行, 32M像素 <1秒) ──
         if (doDeramp) {
-            qDebug() << QStringLiteral("[Step9] burst %1 deramping...").arg(b+1);
-            QVector<int> rows(L);
-            for (int i = 0; i < L; ++i) rows[i] = i;
-            QtConcurrent::blockingMap(rows,
-                [&](int sr) {
-                    int slaveRow = burstRow0 + sr;
-                    double eta_S = (slaveRow - b * L - L / 2.0) / prf;
-                    double dp = -M_PI * kt * eta_S * eta_S;
-                    float dCos = (float)std::cos(dp), dSin = (float)std::sin(dp);
-                    int base = sr * sW, end = base + sW;
-                    for (int idx = base; idx < end; ++idx) {
-                        auto v = fullBurst[idx];
-                        fullBurst[idx] = {
-                            v.real() * dCos - v.imag() * dSin,
-                            v.real() * dSin + v.imag() * dCos};
-                    }
-                });
+            qDebug() << QStringLiteral("[Step9] burst %1 deramping (%2 rows)...").arg(b+1).arg(L);
+            const double ktOver2 = kt * 0.5;
+            const double LHalf = L / 2.0;
+            for (int sr = 0; sr < L; ++sr) {
+                int slaveRow = burstRow0 + sr;
+                double eta_S = (slaveRow - b * L - LHalf) / prf;
+                double dp = -M_PI * kt * eta_S * eta_S;
+                float dCos = (float)std::cos(dp), dSin = (float)std::sin(dp);
+                int base = sr * sW, end = base + sW;
+                for (int idx = base; idx < end; ++idx) {
+                    auto v = fullBurst[idx];
+                    fullBurst[idx] = {
+                        v.real() * dCos - v.imag() * dSin,
+                        v.real() * dSin + v.imag() * dCos};
+                }
+            }
         }
 
         // ── 构建工作项 ──
