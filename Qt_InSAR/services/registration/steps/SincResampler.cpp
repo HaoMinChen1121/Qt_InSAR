@@ -246,7 +246,7 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         writer.copyGeoreferencing(ctx.masterReader->datasetHandle(), QString());
 
     int step = std::max(1, mH / 100);
-    int nThreads = qBound(1, QThread::idealThreadCount(), 4);
+    int nThreads = qBound(1, QThread::idealThreadCount(), 12);
 
     for (int b = 0; b < N; ++b) {
         if (mCancelled) return false;
@@ -263,17 +263,13 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             return false;
         }
 
-        qDebug() << QStringLiteral("[Step9] burst %1 read done, %2 rows in memory").arg(b+1).arg(L);
-
-        // ── 构建工作项 ──
+        // ── 构建工作项 + 分批 ──
         QVector<ResampleWorkItem> items;
         items.reserve(L);
         for (int r = 0; r < L; ++r)
             items.append({burstRow0 + r, burstRow0 + r,
                           br.rangePoly, br.aziPoly});
-        qDebug() << "[Step9] items created:" << items.size();
 
-        // 按线程数分批
         int batchSz = qMax(1, (items.size() + nThreads - 1) / nThreads);
         QList<QVector<ResampleWorkItem>> batches;
         for (int i = 0; i < items.size(); i += batchSz) {
@@ -282,7 +278,6 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
                 batch.append(items[j]);
             batches.append(batch);
         }
-        qDebug() << "[Step9] batches:" << batches.size() << "batchSz:" << batchSz;
 
         // ── 插值 (所有线程共享 fullBurst 只读内存, deramp在worker内做) ──
         ResampleConfig rcfg;
@@ -299,13 +294,14 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         rcfg.burstIdx = b; rcfg.L = L;
         qDebug() << "[Step9] config ready, processing batches serially...";
 
-        // ── 串行处理各批次 ──
+        // ── 并行处理各批次 ──
+        QList<QFuture<QVector<QPair<int, QVector<std::complex<float>>>>>> futures;
+        for (int i = 0; i < batches.size(); ++i)
+            futures.append(QtConcurrent::run(processResampleBatch, batches[i], rcfg));
+
         QVector<QPair<int, QVector<std::complex<float>>>> allRows;
-        for (int i = 0; i < batches.size(); ++i) {
-            qDebug() << "[Step9] processing batch" << i+1 << "/" << batches.size();
-            auto batchResults = processResampleBatch(batches[i], rcfg);
-            allRows += batchResults;  // QVector::operator+= 合并两个向量
-        }
+        for (auto& f : futures)
+            allRows += f.result();
         qDebug() << "[Step9] all batches done, sorting...";
         std::sort(allRows.begin(), allRows.end(),
             [](const auto& a, const auto& b) { return a.first < b.first; });
