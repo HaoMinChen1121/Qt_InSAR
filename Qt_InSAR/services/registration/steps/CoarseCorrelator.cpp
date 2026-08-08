@@ -103,7 +103,7 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     }
 
     // 按线程数分批
-    int nThreads = qBound(1, QThread::idealThreadCount(), 12);
+    int nThreads = qBound(1, QThread::idealThreadCount(), 6);  // FFTW3 mutex, 6线程平衡
     int batchSize = qMax(1, (items.size() + nThreads - 1) / nThreads);
     QList<QVector<CoarseWorkItem>> batches;
     for (int i = 0; i < items.size(); i += batchSize) {
