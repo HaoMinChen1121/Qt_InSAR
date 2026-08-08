@@ -32,24 +32,47 @@ static void applyHammingWindow(std::complex<float>* data, int rows, int cols) {
     }
 }
 
-// ── FFTW3 2D FFT ──
+// ── FFTW3 2D FFT (thread-local plan cache, 避免每次创建/销毁的锁竞争) ──
 static bool fft2D(std::complex<float>* data, int rows, int cols, bool inverse) {
 #if HAS_FFTW
     static bool logged = false;
-    if (!logged) { qDebug() << "[Correlation] FFTW3 ready"; logged = true; }
-    fftwf_plan p;
-    {
-        QMutexLocker lock(&gFftwMutex);
-        p = fftwf_plan_dft_2d(rows, cols,
-            reinterpret_cast<fftwf_complex*>(data),
-            reinterpret_cast<fftwf_complex*>(data),
-            inverse ? FFTW_BACKWARD : FFTW_FORWARD, FFTW_ESTIMATE);
+    if (!logged) { qDebug() << "[Correlation] FFTW3 ready (plan cached)"; logged = true; }
+
+    struct FftCache {
+        int rows = 0, cols = 0;
+        fftwf_plan fwd = nullptr, inv = nullptr;
+        ~FftCache() {
+            if (fwd) fftwf_destroy_plan(fwd);
+            if (inv) fftwf_destroy_plan(inv);
+        }
+    };
+    static thread_local FftCache cache;
+
+    fftwf_plan* pp = inverse ? &cache.inv : &cache.fwd;
+
+    if (cache.rows != rows || cache.cols != cols) {
+        if (cache.fwd) { fftwf_destroy_plan(cache.fwd); cache.fwd = nullptr; }
+        if (cache.inv) { fftwf_destroy_plan(cache.inv); cache.inv = nullptr; }
+        cache.rows = rows; cache.cols = cols;
+        *pp = nullptr;
     }
-    fftwf_execute(p);
-    {
+
+    if (!*pp) {
         QMutexLocker lock(&gFftwMutex);
-        fftwf_destroy_plan(p);
+        fftwf_plan* rp = inverse ? &cache.inv : &cache.fwd;
+        if (!*rp) {
+            *rp = fftwf_plan_dft_2d(rows, cols,
+                reinterpret_cast<fftwf_complex*>(data),
+                reinterpret_cast<fftwf_complex*>(data),
+                inverse ? FFTW_BACKWARD : FFTW_FORWARD,
+                FFTW_ESTIMATE);  // 缓存后数据集不同, ESTIMATE避免覆盖data
+        }
     }
+
+    fftwf_execute_dft(*pp,
+        reinterpret_cast<fftwf_complex*>(data),
+        reinterpret_cast<fftwf_complex*>(data));
+
     if (inverse) {
         float norm = 1.0f / (rows * cols);
         for (int i = 0; i < rows * cols; ++i) data[i] *= norm;
