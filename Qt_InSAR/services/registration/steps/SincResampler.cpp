@@ -241,38 +241,19 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
     int step = std::max(1, mH / 100);
     int nThreads = qBound(1, QThread::idealThreadCount(), 4);
 
-    // ── 打开 slave 一次, 逐burst读取全burst数据到内存 ──
-    GDALDatasetH hSlave = GDALOpen(ctx.slaveBand->rasterPath.toUtf8().constData(), GA_ReadOnly);
-    if (!hSlave) {
-        ctx.errorMessage = QStringLiteral("SincResampler: cannot open slave");
-        return false;
-    }
-
     for (int b = 0; b < N; ++b) {
-        if (mCancelled) { GDALClose(hSlave); return false; }
+        if (mCancelled) return false;
         qDebug() << QStringLiteral("[Step9] burst %1/%2 reading full burst...").arg(b+1).arg(N);
 
         const auto& br = ctx.burstResults[b];
         int burstRow0 = b * L;
 
-        // ── 分块读入整个 burst (避免 /vsizip 大块读取限制) ──
-        QVector<std::complex<float>> fullBurst(sW * L);
-        {
-            GDALRasterBandH hBand = GDALGetRasterBand(hSlave, 1);
-            if (!hBand) {
-                ctx.errorMessage = QStringLiteral("SincResampler: null raster band");
-                GDALClose(hSlave); return false;
-            }
-            const int chunkRows = 64;
-            for (int cr = 0; cr < L; cr += chunkRows) {
-                int h = qMin(chunkRows, L - cr);
-                CPLErr e = GDALRasterIO(hBand, GF_Read, 0, burstRow0 + cr, sW, h,
-                    fullBurst.data() + cr * sW, sW, h, GDT_CFloat32, 0, 0);
-                if (e != CE_None) {
-                    ctx.errorMessage = QStringLiteral("SincResampler: GDALRasterIO error at row %1").arg(cr);
-                    GDALClose(hSlave); return false;
-                }
-            }
+        // ── 使用已打开的 slaveReader 一次读入整个 burst ──
+        QVector<std::complex<float>> fullBurst =
+            ctx.slaveReader->readBandWindow(0, 0, burstRow0, sW, L);
+        if (fullBurst.isEmpty()) {
+            ctx.errorMessage = QStringLiteral("SincResampler: readBandWindow empty");
+            return false;
         }
 
         qDebug() << QStringLiteral("[Step9] burst %1 read done, %2 rows in memory").arg(b+1).arg(L);
@@ -325,7 +306,6 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         }
         QApplication::processEvents();
     }
-    GDALClose(hSlave);
     return true;
 }
 
