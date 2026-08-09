@@ -31,6 +31,20 @@ void BurstCacheSoA::loadFromCfloat32(const CFloat32* src, int w, int h)
     mLoaded = true;
 }
 
+void BurstCacheSoA::loadFromRawStrips(const void* src, int w, int h)
+{
+    int n = w * h;
+    mData.alloc(n);
+    const int16_t* s = static_cast<const int16_t*>(src);
+    for (int i = 0; i < n; ++i) {
+        mData.re[i] = static_cast<float>(s[i * 2]);
+        mData.im[i] = static_cast<float>(s[i * 2 + 1]);
+    }
+    mWidth = w;
+    mHeight = h;
+    mLoaded = true;
+}
+
 void BurstCacheSoA::applyDeramp(double prf, double kt, int burstRow0, int burstIdx)
 {
     if (!mLoaded) return;

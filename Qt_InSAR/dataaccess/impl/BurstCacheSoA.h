@@ -18,6 +18,10 @@ public:
     // 从已完整读取的 CFloat32 缓冲区中提取指定行范围的 SoA 数据 (预加载路径)
     void loadFromCfloat32(const CFloat32* src, int w, int h);
 
+    // 从原始 CInt16 strip 数据直接转换为 SoA (跳过 GDAL RasterIO)
+    // src 指向 row0 的第一个像素: int16 交织对 {re, im, re, im, ...}
+    void loadFromRawStrips(const void* src, int w, int h);
+
     // 原地 TOPS deramp
     void applyDeramp(double prf, double kt, int burstRow0, int burstIdx);
 
