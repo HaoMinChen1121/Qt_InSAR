@@ -554,10 +554,15 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
             mParsedLinesPerBurstBySwath[swathName] = mParsedLinesPerBurst;
     }
     nl = root.elementsByTagName("samplesPerBurst");
-    if (!nl.isEmpty())
-        mParsedRangeSamples = nl.at(0).toElement().text().toInt();
+    if (!nl.isEmpty()) {
+        mParsedSamplesPerBurst = nl.at(0).toElement().text().toInt();
+        if (!swathName.isEmpty())
+            mParsedSamplesPerBurstBySwath[swathName] = mParsedSamplesPerBurst;
+    }
+    mParsedRangeSamples = mParsedSamplesPerBurst;
     mParsedBurstStarts.clear();
     mParsedBurstAzimuthTimes.clear();
+    mParsedBurstByteOffsets.clear();
 
     // 查找 burstList
     QDomNodeList blList = root.elementsByTagName("burstList");
@@ -565,8 +570,16 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
         QDomNodeList bursts = blList.at(0).toElement().elementsByTagName("burst");
         for (int i = 0; i < bursts.size(); ++i) {
             QDomElement be = bursts.at(i).toElement();
+
+            // firstLine (行偏移) 或 byteOffset (字节偏移)
             int firstLine = be.firstChildElement("firstLine").text().toInt();
+            qint64 byteOff = be.firstChildElement("byteOffset").text().toLongLong();
+            if (firstLine == 0 && byteOff > 0 && mParsedSamplesPerBurst > 0) {
+                // 从 byteOffset 反算 firstLine: 每行 = samplesPerBurst × 4 bytes (CInt16)
+                firstLine = static_cast<int>(byteOff / (mParsedSamplesPerBurst * 4LL));
+            }
             mParsedBurstStarts.append(firstLine);
+            mParsedBurstByteOffsets.append(byteOff);
 
             QString atText = be.firstChildElement("azimuthTime").text().trimmed();
             QDateTime at = atText.isEmpty()
@@ -577,6 +590,7 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
         if (!swathName.isEmpty()) {
             mParsedBurstStartsBySwath[swathName] = mParsedBurstStarts;
             mParsedBurstTimesBySwath[swathName]  = mParsedBurstAzimuthTimes;
+            mParsedBurstByteOffsetsBySwath[swathName] = mParsedBurstByteOffsets;
         }
     }
 
@@ -688,6 +702,8 @@ void Sentinel1Product::discoverMeasurementFiles(const QString& measurementDir) {
                           ? mParsedBurstStartsBySwath.value(b.subSwath, mParsedBurstStarts).size() : 0;
         b.burstStartLines = mParsedBurstStartsBySwath.value(b.subSwath, mParsedBurstStarts);
         b.burstAzimuthTimes = mParsedBurstTimesBySwath.value(b.subSwath, mParsedBurstAzimuthTimes);
+        b.burstByteOffsets  = mParsedBurstByteOffsetsBySwath.value(b.subSwath, mParsedBurstByteOffsets);
+        b.samplesPerBurst   = mParsedSamplesPerBurstBySwath.value(b.subSwath, mParsedSamplesPerBurst);
         b.azimuthFmRate      = mParsedAzimuthFmRateBySwath.value(b.subSwath, 0.0);
         b.azimuthSteeringRate = mParsedAzimuthSteeringRateBySwath.value(b.subSwath, 0.0);
         b.azimuthFrequency    = mParsedAzimuthFreqBySwath.value(b.subSwath, 0.0);

@@ -2,6 +2,7 @@
 #include "../PipelineContext.h"
 #include "algorithms/Correlation.h"
 #include "dataaccess/impl/GdalSlcReader.h"
+#include "dataaccess/impl/SentinelDataReader.h"
 #include <QCoreApplication>
 #include <QDebug>
 #include <QElapsedTimer>
@@ -38,6 +39,9 @@ struct FineProfile {
 struct FineConfig {
     QString masterPath, slavePath;
     int sW, sH, winSize;
+    SentinelDataReader* masterSdr = nullptr;
+    SentinelDataReader* slaveSdr  = nullptr;
+    bool useBurstCache = false;
 };
 
 static QVector<OffsetPoint> processFineBatch(
@@ -46,62 +50,112 @@ static QVector<OffsetPoint> processFineBatch(
     thread_local GdalSlcReader tlMaster, tlSlave;
     thread_local QString tlMasterPath, tlSlavePath;
     thread_local FineProfile prof;
-    if (tlMasterPath != cfg.masterPath) {
-        tlMaster.close(); if (!tlMaster.open(cfg.masterPath)) return {};
-        tlMasterPath = cfg.masterPath;
-    }
-    if (tlSlavePath != cfg.slavePath) {
-        tlSlave.close(); if (!tlSlave.open(cfg.slavePath)) return {};
-        tlSlavePath = cfg.slavePath;
-    }
-    GdalSlcReader& mR = tlMaster;
-    GdalSlcReader& sR = tlSlave;
 
     int half = cfg.winSize / 2;
     QVector<OffsetPoint> results;
     results.reserve(batch.size());
     QElapsedTimer t;
 
-    for (const auto& w : batch) {
-        OffsetPoint pt; pt.row = w.row; pt.col = w.col;
-        pt.rangeOff = w.rangeOff; pt.aziOff = w.aziOff; pt.origIdx = w.origIdx;
-
-        int mX0 = w.col - half, mY0 = w.row - half;
-        t.start();
-        auto mWin = mR.readBandWindow(0, mX0, mY0, cfg.winSize, cfg.winSize);
-        qint64 readTime = t.nsecsElapsed() / 1000;
-        if (mWin.size() < cfg.winSize * cfg.winSize) continue;
-
-        int sX0 = w.col + (int)w.rangeOff - half;
-        int sY0 = w.row + (int)w.aziOff - half;
-        if (sX0 < 0) sX0 = 0; if (sY0 < 0) sY0 = 0;
-        if (sX0 + cfg.winSize > cfg.sW) sX0 = cfg.sW - cfg.winSize;
-        if (sY0 + cfg.winSize > cfg.sH) sY0 = cfg.sH - cfg.winSize;
-        if (sX0 < 0 || sY0 < 0) continue;
-        t.start();
-        auto sWin = sR.readBandWindow(0, sX0, sY0, cfg.winSize, cfg.winSize);
-        readTime += t.nsecsElapsed() / 1000;
-        if (sWin.size() < cfg.winSize * cfg.winSize) continue;
-
-        int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
-        QVector<float> surf(outRows * outCols);
-        t.start();
-        float maxV = fftAmpCorrelate(mWin.data(), sWin.data(), surf.data(), cfg.winSize, cfg.winSize);
-        qint64 fftTime = t.nsecsElapsed() / 1000;
-
-        t.start();
-        double subDx, subDy;
-        findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
-        qint64 peakTime = t.nsecsElapsed() / 1000;
-
-        if (std::abs(subDx) > 5.0 || std::abs(subDy) > 3.0) {
-            pt.correlation = -1.0;
-        } else {
-            pt.rangeOff += subDx; pt.aziOff += subDy;
-            pt.correlation = maxV;
+    if (!cfg.useBurstCache) {
+        // ── 原有路径: thread_local GdalSlcReader ──
+        if (tlMasterPath != cfg.masterPath) {
+            tlMaster.close(); if (!tlMaster.open(cfg.masterPath)) return {};
+            tlMasterPath = cfg.masterPath;
         }
-        prof.add(readTime, fftTime, peakTime);
-        results.append(pt);
+        if (tlSlavePath != cfg.slavePath) {
+            tlSlave.close(); if (!tlSlave.open(cfg.slavePath)) return {};
+            tlSlavePath = cfg.slavePath;
+        }
+        GdalSlcReader& mR = tlMaster;
+        GdalSlcReader& sR = tlSlave;
+
+        for (const auto& w : batch) {
+            OffsetPoint pt; pt.row = w.row; pt.col = w.col;
+            pt.rangeOff = w.rangeOff; pt.aziOff = w.aziOff; pt.origIdx = w.origIdx;
+
+            int mX0 = w.col - half, mY0 = w.row - half;
+            t.start();
+            auto mWin = mR.readBandWindow(0, mX0, mY0, cfg.winSize, cfg.winSize);
+            qint64 readTime = t.nsecsElapsed() / 1000;
+            if (mWin.size() < cfg.winSize * cfg.winSize) continue;
+
+            int sX0 = w.col + (int)w.rangeOff - half;
+            int sY0 = w.row + (int)w.aziOff - half;
+            if (sX0 < 0) sX0 = 0; if (sY0 < 0) sY0 = 0;
+            if (sX0 + cfg.winSize > cfg.sW) sX0 = cfg.sW - cfg.winSize;
+            if (sY0 + cfg.winSize > cfg.sH) sY0 = cfg.sH - cfg.winSize;
+            if (sX0 < 0 || sY0 < 0) continue;
+            t.start();
+            auto sWin = sR.readBandWindow(0, sX0, sY0, cfg.winSize, cfg.winSize);
+            readTime += t.nsecsElapsed() / 1000;
+            if (sWin.size() < cfg.winSize * cfg.winSize) continue;
+
+            int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
+            QVector<float> surf(outRows * outCols);
+            t.start();
+            float maxV = fftAmpCorrelate(mWin.data(), sWin.data(), surf.data(), cfg.winSize, cfg.winSize);
+            qint64 fftTime = t.nsecsElapsed() / 1000;
+
+            t.start();
+            double subDx, subDy;
+            findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
+            qint64 peakTime = t.nsecsElapsed() / 1000;
+
+            if (std::abs(subDx) > 5.0 || std::abs(subDy) > 3.0) {
+                pt.correlation = -1.0;
+            } else {
+                pt.rangeOff += subDx; pt.aziOff += subDy;
+                pt.correlation = maxV;
+            }
+            prof.add(readTime, fftTime, peakTime);
+            results.append(pt);
+        }
+    } else {
+        // ── 新路径: SentinelDataReader 缓存读取 ──
+        SentinelDataReader& mSdr = *cfg.masterSdr;
+        SentinelDataReader& sSdr = *cfg.slaveSdr;
+
+        for (const auto& w : batch) {
+            OffsetPoint pt; pt.row = w.row; pt.col = w.col;
+            pt.rangeOff = w.rangeOff; pt.aziOff = w.aziOff; pt.origIdx = w.origIdx;
+
+            int mX0 = w.col - half, mY0 = w.row - half;
+            QVector<std::complex<float>> mWin(cfg.winSize * cfg.winSize);
+            t.start();
+            if (!mSdr.readWindow(mX0, mY0, cfg.winSize, cfg.winSize, mWin.data())) continue;
+            qint64 readTime = t.nsecsElapsed() / 1000;
+
+            int sX0 = w.col + (int)w.rangeOff - half;
+            int sY0 = w.row + (int)w.aziOff - half;
+            if (sX0 < 0) sX0 = 0; if (sY0 < 0) sY0 = 0;
+            if (sX0 + cfg.winSize > cfg.sW) sX0 = cfg.sW - cfg.winSize;
+            if (sY0 + cfg.winSize > cfg.sH) sY0 = cfg.sH - cfg.winSize;
+            if (sX0 < 0 || sY0 < 0) continue;
+            QVector<std::complex<float>> sWin(cfg.winSize * cfg.winSize);
+            t.start();
+            if (!sSdr.readWindow(sX0, sY0, cfg.winSize, cfg.winSize, sWin.data())) continue;
+            readTime += t.nsecsElapsed() / 1000;
+
+            int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
+            QVector<float> surf(outRows * outCols);
+            t.start();
+            float maxV = fftAmpCorrelate(mWin.data(), sWin.data(), surf.data(), cfg.winSize, cfg.winSize);
+            qint64 fftTime = t.nsecsElapsed() / 1000;
+
+            t.start();
+            double subDx, subDy;
+            findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
+            qint64 peakTime = t.nsecsElapsed() / 1000;
+
+            if (std::abs(subDx) > 5.0 || std::abs(subDy) > 3.0) {
+                pt.correlation = -1.0;
+            } else {
+                pt.rangeOff += subDx; pt.aziOff += subDy;
+                pt.correlation = maxV;
+            }
+            prof.add(readTime, fftTime, peakTime);
+            results.append(pt);
+        }
     }
 
     if (prof.count > 0) {
@@ -145,6 +199,9 @@ bool FineCorrelator::execute(PipelineContext& ctx) {
     cfg.masterPath = ctx.masterLocalPath.isEmpty() ? ctx.masterBand->rasterPath : ctx.masterLocalPath;
     cfg.slavePath  = ctx.slaveLocalPath.isEmpty()  ? ctx.slaveBand->rasterPath  : ctx.slaveLocalPath;
     cfg.sW = sW; cfg.sH = sH; cfg.winSize = winSize;
+    cfg.masterSdr = ctx.masterSdr;
+    cfg.slaveSdr  = ctx.slaveSdr;
+    cfg.useBurstCache = ctx.useBurstCache;
 
     QList<QFuture<QVector<OffsetPoint>>> futures;
     for (int i = 0; i < batches.size(); ++i)

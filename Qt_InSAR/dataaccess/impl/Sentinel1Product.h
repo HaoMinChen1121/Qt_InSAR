@@ -84,14 +84,18 @@ private:
     // Burst 解析暂存 (每次 parseAnnotation 更新，供 discoverMeasurementFiles 使用)
     int mParsedLinesPerBurst = 0;
     int mParsedRangeSamples = 0;
+    int mParsedSamplesPerBurst = 0;
     QVector<int> mParsedBurstStarts;
     QVector<QDateTime> mParsedBurstAzimuthTimes;
+    QVector<qint64> mParsedBurstByteOffsets;
     QMap<QString, double> mParsedAzimuthFmRateBySwath;      // 每子条带的方位向调频率 (Hz/s)
     QMap<QString, double> mParsedAzimuthSteeringRateBySwath; // 每子条带的天线转向速率 (deg/s)
     QMap<QString, double> mParsedAzimuthFreqBySwath;        // 每子条带的有效方位向PRF (Hz)
     QMap<QString, int>    mParsedLinesPerBurstBySwath;    // 每子条带的burst行数
+    QMap<QString, int>    mParsedSamplesPerBurstBySwath;  // 每子条带的burst列数
     QMap<QString, QVector<int>>      mParsedBurstStartsBySwath;   // 每子条带的burst起始行
     QMap<QString, QVector<QDateTime>> mParsedBurstTimesBySwath;   // 每子条带的burst azimuth时间
+    QMap<QString, QVector<qint64>>   mParsedBurstByteOffsetsBySwath; // 每子条带的burst字节偏移
 };
 
 #endif // SENTINEL1PRODUCT_H

@@ -1,6 +1,7 @@
 #include "DataReader.h"
 #include "../PipelineContext.h"
 #include "dataaccess/impl/GdalSlcReader.h"
+#include "dataaccess/impl/SentinelDataReader.h"
 #include "preprocess/TiffTiler.h"
 #include <QDebug>
 #include <QDir>
@@ -54,7 +55,7 @@ static void listVsizipRecursive(const QString& dir, QStringList& files) {
     CSLDestroy(entries);
 }
 
-// ── /vsizip → 提取到ZIP同目录 ──
+// ── /vsizip → 提取到ZIP同目录 (非TOPSAR回退路径保留) ──
 static QString extractVsizip(const QString& vsiPath)
 {
     if (!vsiPath.startsWith("/vsizip/")) return vsiPath;
@@ -71,7 +72,6 @@ static QString extractVsizip(const QString& vsiPath)
     QString extractRoot = zipInfo.absolutePath() + "/" + zipInfo.completeBaseName() + "_extracted";
     QString safeDir = extractRoot + "/" + safeName;
 
-    // 记录需要清理的目录 (无论是否刚提取)
     extractedDirs().insert(QDir::cleanPath(extractRoot));
 
     if (!QFileInfo::exists(safeDir)) {
@@ -97,10 +97,58 @@ static QString extractVsizip(const QString& vsiPath)
 }
 
 bool DataReader::execute(PipelineContext& ctx) {
+    bool isTopsar = (ctx.masterBand->burstCount > 1);
+
+    if (isTopsar) {
+        // ═══════════════════════════════════════════
+        //  TOPSAR 路径: SentinelDataReader (延迟burst缓存)
+        //  不提取ZIP, 不Tile, 直接从VSI读取
+        // ═══════════════════════════════════════════
+        QString masterPath = ctx.masterBand->rasterPath;
+        QString slavePath  = ctx.slaveBand->rasterPath;
+
+        qDebug() << QStringLiteral("[DataReader] TOPSAR: SDR master=%1").arg(masterPath);
+        auto* mSdr = new SentinelDataReader();
+        if (!mSdr->open(masterPath, *ctx.masterBand)) {
+            ctx.errorMessage = QStringLiteral("DataReader: SentinelDataReader master open fail");
+            delete mSdr; return false;
+        }
+
+        qDebug() << QStringLiteral("[DataReader] TOPSAR: SDR slave=%1").arg(slavePath);
+        auto* sSdr = new SentinelDataReader();
+        if (!sSdr->open(slavePath, *ctx.slaveBand)) {
+            ctx.errorMessage = QStringLiteral("DataReader: SentinelDataReader slave open fail");
+            delete mSdr; delete sSdr; return false;
+        }
+
+        ctx.masterSdr = mSdr;
+        ctx.slaveSdr  = sSdr;
+        ctx.useBurstCache = true;
+
+        auto& d = ctx.data;
+        d.masterWidth  = mSdr->width();
+        d.masterHeight = mSdr->height();
+        d.slaveWidth   = sSdr->width();
+        d.slaveHeight  = sSdr->height();
+        d.burstCount    = ctx.masterBand->burstCount;
+        d.linesPerBurst = ctx.masterBand->linesPerBurst;
+        d.samplesPerBurst = ctx.masterBand->samplesPerBurst;
+        d.burstStartLines    = ctx.masterBand->burstStartLines;
+        d.masterBurstTimes   = ctx.masterBand->burstAzimuthTimes;
+        d.slaveBurstTimes    = ctx.slaveBand->burstAzimuthTimes;
+        d.slaveAzimuthFmRate       = ctx.slaveBand->azimuthFmRate;
+        d.slaveAzimuthSteeringRate = ctx.slaveBand->azimuthSteeringRate;
+        d.masterAzimuthFrequency   = ctx.masterBand->azimuthFrequency;
+        ctx.isTopsar = true;
+        return true;
+    }
+
+    // ═══════════════════════════════════════════
+    //  非TOPSAR 回退路径: 原有 extractVsizip + TiffTiler + GdalSlcReader
+    // ═══════════════════════════════════════════
     QString masterLocal = extractVsizip(ctx.masterBand->rasterPath);
     QString slaveLocal  = extractVsizip(ctx.slaveBand->rasterPath);
 
-    // ── Strip TIFF → 256×256 Tiled TIFF 转换 ──
     QString cacheDir = QFileInfo(masterLocal).absolutePath() + "/../_tiled_cache";
     extractedDirs().insert(QDir::cleanPath(cacheDir));
     masterLocal = TiffTiler::ensureTiled(masterLocal, cacheDir);
@@ -112,7 +160,6 @@ bool DataReader::execute(PipelineContext& ctx) {
         ctx.errorMessage = QStringLiteral("DataReader: master open fail");
         delete mR; return false;
     }
-    qDebug() << "[DataReader] master opened ok";
 
     qDebug() << QStringLiteral("[DataReader] opening slave: %1").arg(slaveLocal);
     auto* sR = new GdalSlcReader();
@@ -120,11 +167,9 @@ bool DataReader::execute(PipelineContext& ctx) {
         ctx.errorMessage = QStringLiteral("DataReader: slave open fail");
         delete mR; delete sR; return false;
     }
-    qDebug() << "[DataReader] slave opened ok";
 
     ctx.masterLocalPath = masterLocal;
     ctx.slaveLocalPath  = slaveLocal;
-
     ctx.masterReader = mR;
     ctx.slaveReader  = sR;
 
@@ -149,7 +194,6 @@ void DataReader::cleanupExtracted() {
     QSet<QString> failed;
     for (const auto& dir : extractedDirs()) {
         QDir d(dir);
-        // 先清理只读属性
         QFileInfoList list = d.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
         for (const auto& fi : list) {
             if (fi.isDir()) QDir(fi.absoluteFilePath()).removeRecursively();
@@ -160,8 +204,8 @@ void DataReader::cleanupExtracted() {
             qDebug() << "[DataReader] cleanup ok:" << dir;
         } else {
             qWarning() << "[DataReader] cleanup failed (locked):" << dir;
-            failed.insert(dir);  // 保留记录, 下次删除
+            failed.insert(dir);
         }
     }
-    extractedDirs() = failed;  // 只保留没删掉的
+    extractedDirs() = failed;
 }

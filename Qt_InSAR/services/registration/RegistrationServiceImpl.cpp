@@ -1,5 +1,6 @@
 #include "RegistrationServiceImpl.h"
 #include "PipelineContext.h"
+#include "dataaccess/impl/SentinelDataReader.h"
 
 #include "steps/DataReader.h"
 #include "steps/BurstMatcher.h"
@@ -128,6 +129,17 @@ void RegistrationServiceImpl::execute() {
             ctx.slaveReader->close();
             delete ctx.slaveReader;
             ctx.slaveReader = nullptr;
+        }
+        // 清理 SentinelDataReader
+        if (ctx.masterSdr) {
+            ctx.masterSdr->close();
+            delete ctx.masterSdr;
+            ctx.masterSdr = nullptr;
+        }
+        if (ctx.slaveSdr) {
+            ctx.slaveSdr->close();
+            delete ctx.slaveSdr;
+            ctx.slaveSdr = nullptr;
         }
         qDeleteAll(steps);
         steps.clear();

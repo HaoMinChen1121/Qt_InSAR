@@ -6,6 +6,7 @@
 #include "types/RegistrationTypes.h"
 
 class GdalSlcReader;
+class SentinelDataReader;
 
 struct PipelineContext {
     const RegistrationParams* params = nullptr;
@@ -20,6 +21,9 @@ struct PipelineContext {
     QString slaveLocalPath;
     GdalSlcReader* masterReader = nullptr;
     GdalSlcReader* slaveReader  = nullptr;
+    SentinelDataReader* masterSdr = nullptr;  // TOPSAR 缓存路径
+    SentinelDataReader* slaveSdr  = nullptr;
+    bool useBurstCache = false;
 
     // ── Step 2: Burst ──
     QVector<BurstMatchPair> burstPairs;

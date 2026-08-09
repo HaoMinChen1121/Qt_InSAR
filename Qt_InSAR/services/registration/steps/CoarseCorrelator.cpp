@@ -2,6 +2,7 @@
 #include "../PipelineContext.h"
 #include "algorithms/Correlation.h"
 #include "dataaccess/impl/GdalSlcReader.h"
+#include "dataaccess/impl/SentinelDataReader.h"
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
@@ -36,6 +37,9 @@ struct CoarseConfig {
     int sW, sH, winSize;
     bool useNcc;
     int searchHalf;
+    SentinelDataReader* masterSdr = nullptr;
+    SentinelDataReader* slaveSdr  = nullptr;
+    bool useBurstCache = false;
 };
 
 struct CoarseProfile {
@@ -52,75 +56,136 @@ static QVector<OffsetPoint> processCoarseBatch(
     thread_local GdalSlcReader tlMaster, tlSlave;
     thread_local QString tlMasterPath, tlSlavePath;
     thread_local CoarseProfile prof;
-    if (tlMasterPath != cfg.masterPath) {
-        tlMaster.close();
-        if (!tlMaster.open(cfg.masterPath)) return {};
-        tlMasterPath = cfg.masterPath;
-    }
-    if (tlSlavePath != cfg.slavePath) {
-        tlSlave.close();
-        if (!tlSlave.open(cfg.slavePath)) return {};
-        tlSlavePath = cfg.slavePath;
-    }
-    GdalSlcReader& mR = tlMaster;
-    GdalSlcReader& sR = tlSlave;
 
     int half = cfg.winSize / 2;
     QVector<OffsetPoint> results;
     results.reserve(batch.size());
     QElapsedTimer t;
 
-    for (const auto& w : batch) {
-        OffsetPoint pt;
-        pt.row = w.row; pt.col = w.col;
-        pt.rangeOff = w.initRangeOff;
-        pt.aziOff   = w.initAziOff;
-
-        int mX0 = w.col - half, mY0 = w.row - half;
-        t.start();
-        auto mWin = mR.readBandWindow(0, mX0, mY0, cfg.winSize, cfg.winSize);
-        qint64 readTime = t.nsecsElapsed() / 1000;
-        if (mWin.size() < cfg.winSize * cfg.winSize) continue;
-
-        if (cfg.useNcc) {
-            int slaveWinSz = cfg.winSize + 2 * cfg.searchHalf;
-            int sX0 = w.col + (int)w.initRangeOff - half - cfg.searchHalf;
-            int sY0 = w.row + (int)w.initAziOff - half - cfg.searchHalf;
-            if (sX0 < 0 || sY0 < 0 || sX0 + slaveWinSz > cfg.sW || sY0 + slaveWinSz > cfg.sH) continue;
-            t.start();
-            auto sWin = sR.readBandWindow(0, sX0, sY0, slaveWinSz, slaveWinSz);
-            readTime += t.nsecsElapsed() / 1000;
-            if (sWin.size() < slaveWinSz * slaveWinSz) continue;
-            t.start();
-            int bestDx, bestDy; double subDx, subDy;
-            nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
-                         slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
-            qint64 fftTime = t.nsecsElapsed() / 1000;
-            pt.rangeOff += subDx; pt.aziOff += subDy; pt.correlation = 1.0;
-            prof.add(readTime, fftTime, 0);
-        } else {
-            int sX0c = w.col + (int)w.initRangeOff - half;
-            int sY0c = w.row + (int)w.initAziOff - half;
-            if (sX0c < 0 || sY0c < 0 || sX0c + cfg.winSize > cfg.sW || sY0c + cfg.winSize > cfg.sH) continue;
-            t.start();
-            auto sWinC = sR.readBandWindow(0, sX0c, sY0c, cfg.winSize, cfg.winSize);
-            readTime += t.nsecsElapsed() / 1000;
-            if (sWinC.size() < cfg.winSize * cfg.winSize) continue;
-
-            int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
-            QVector<float> surf(outRows * outCols);
-            t.start();
-            float maxV = fftAmpCorrelate(mWin.data(), sWinC.data(), surf.data(), cfg.winSize, cfg.winSize);
-            qint64 fftTime = t.nsecsElapsed() / 1000;
-            t.start();
-            double subDx, subDy;
-            findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
-            qint64 peakTime = t.nsecsElapsed() / 1000;
-            pt.rangeOff += subDx; pt.aziOff += subDy;
-            pt.correlation = maxV;
-            prof.add(readTime, fftTime, peakTime);
+    if (!cfg.useBurstCache) {
+        // ── 原有路径: thread_local GdalSlcReader ──
+        if (tlMasterPath != cfg.masterPath) {
+            tlMaster.close();
+            if (!tlMaster.open(cfg.masterPath)) return {};
+            tlMasterPath = cfg.masterPath;
         }
-        results.append(pt);
+        if (tlSlavePath != cfg.slavePath) {
+            tlSlave.close();
+            if (!tlSlave.open(cfg.slavePath)) return {};
+            tlSlavePath = cfg.slavePath;
+        }
+        GdalSlcReader& mR = tlMaster;
+        GdalSlcReader& sR = tlSlave;
+
+        for (const auto& w : batch) {
+            OffsetPoint pt;
+            pt.row = w.row; pt.col = w.col;
+            pt.rangeOff = w.initRangeOff;
+            pt.aziOff   = w.initAziOff;
+
+            int mX0 = w.col - half, mY0 = w.row - half;
+            t.start();
+            auto mWin = mR.readBandWindow(0, mX0, mY0, cfg.winSize, cfg.winSize);
+            qint64 readTime = t.nsecsElapsed() / 1000;
+            if (mWin.size() < cfg.winSize * cfg.winSize) continue;
+
+            if (cfg.useNcc) {
+                int slaveWinSz = cfg.winSize + 2 * cfg.searchHalf;
+                int sX0 = w.col + (int)w.initRangeOff - half - cfg.searchHalf;
+                int sY0 = w.row + (int)w.initAziOff - half - cfg.searchHalf;
+                if (sX0 < 0 || sY0 < 0 || sX0 + slaveWinSz > cfg.sW || sY0 + slaveWinSz > cfg.sH) continue;
+                t.start();
+                auto sWin = sR.readBandWindow(0, sX0, sY0, slaveWinSz, slaveWinSz);
+                readTime += t.nsecsElapsed() / 1000;
+                if (sWin.size() < slaveWinSz * slaveWinSz) continue;
+                t.start();
+                int bestDx, bestDy; double subDx, subDy;
+                nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
+                             slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
+                qint64 fftTime = t.nsecsElapsed() / 1000;
+                pt.rangeOff += subDx; pt.aziOff += subDy; pt.correlation = 1.0;
+                prof.add(readTime, fftTime, 0);
+            } else {
+                int sX0c = w.col + (int)w.initRangeOff - half;
+                int sY0c = w.row + (int)w.initAziOff - half;
+                if (sX0c < 0 || sY0c < 0 || sX0c + cfg.winSize > cfg.sW || sY0c + cfg.winSize > cfg.sH) continue;
+                t.start();
+                auto sWinC = sR.readBandWindow(0, sX0c, sY0c, cfg.winSize, cfg.winSize);
+                readTime += t.nsecsElapsed() / 1000;
+                if (sWinC.size() < cfg.winSize * cfg.winSize) continue;
+
+                int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
+                QVector<float> surf(outRows * outCols);
+                t.start();
+                float maxV = fftAmpCorrelate(mWin.data(), sWinC.data(), surf.data(), cfg.winSize, cfg.winSize);
+                qint64 fftTime = t.nsecsElapsed() / 1000;
+                t.start();
+                double subDx, subDy;
+                findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
+                qint64 peakTime = t.nsecsElapsed() / 1000;
+                pt.rangeOff += subDx; pt.aziOff += subDy;
+                pt.correlation = maxV;
+                prof.add(readTime, fftTime, peakTime);
+            }
+            results.append(pt);
+        }
+    } else {
+        // ── 新路径: SentinelDataReader 缓存读取 ──
+        SentinelDataReader& mSdr = *cfg.masterSdr;
+        SentinelDataReader& sSdr = *cfg.slaveSdr;
+
+        for (const auto& w : batch) {
+            OffsetPoint pt;
+            pt.row = w.row; pt.col = w.col;
+            pt.rangeOff = w.initRangeOff;
+            pt.aziOff   = w.initAziOff;
+
+            int mX0 = w.col - half, mY0 = w.row - half;
+            QVector<std::complex<float>> mWin(cfg.winSize * cfg.winSize);
+            t.start();
+            if (!mSdr.readWindow(mX0, mY0, cfg.winSize, cfg.winSize, mWin.data())) continue;
+            qint64 readTime = t.nsecsElapsed() / 1000;
+
+            if (cfg.useNcc) {
+                int slaveWinSz = cfg.winSize + 2 * cfg.searchHalf;
+                int sX0 = w.col + (int)w.initRangeOff - half - cfg.searchHalf;
+                int sY0 = w.row + (int)w.initAziOff - half - cfg.searchHalf;
+                if (sX0 < 0 || sY0 < 0 || sX0 + slaveWinSz > cfg.sW || sY0 + slaveWinSz > cfg.sH) continue;
+                QVector<std::complex<float>> sWin(slaveWinSz * slaveWinSz);
+                t.start();
+                if (!sSdr.readWindow(sX0, sY0, slaveWinSz, slaveWinSz, sWin.data())) continue;
+                readTime += t.nsecsElapsed() / 1000;
+                t.start();
+                int bestDx, bestDy; double subDx, subDy;
+                nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
+                             slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
+                qint64 fftTime = t.nsecsElapsed() / 1000;
+                pt.rangeOff += subDx; pt.aziOff += subDy; pt.correlation = 1.0;
+                prof.add(readTime, fftTime, 0);
+            } else {
+                int sX0c = w.col + (int)w.initRangeOff - half;
+                int sY0c = w.row + (int)w.initAziOff - half;
+                if (sX0c < 0 || sY0c < 0 || sX0c + cfg.winSize > cfg.sW || sY0c + cfg.winSize > cfg.sH) continue;
+                QVector<std::complex<float>> sWinC(cfg.winSize * cfg.winSize);
+                t.start();
+                if (!sSdr.readWindow(sX0c, sY0c, cfg.winSize, cfg.winSize, sWinC.data())) continue;
+                readTime += t.nsecsElapsed() / 1000;
+
+                int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
+                QVector<float> surf(outRows * outCols);
+                t.start();
+                float maxV = fftAmpCorrelate(mWin.data(), sWinC.data(), surf.data(), cfg.winSize, cfg.winSize);
+                qint64 fftTime = t.nsecsElapsed() / 1000;
+                t.start();
+                double subDx, subDy;
+                findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
+                qint64 peakTime = t.nsecsElapsed() / 1000;
+                pt.rangeOff += subDx; pt.aziOff += subDy;
+                pt.correlation = maxV;
+                prof.add(readTime, fftTime, peakTime);
+            }
+            results.append(pt);
+        }
     }
 
     if (prof.count > 0) {
@@ -180,6 +245,9 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     cfg.winSize = winSize;
     cfg.useNcc = useNcc;
     cfg.searchHalf = searchHalf;
+    cfg.masterSdr = ctx.masterSdr;
+    cfg.slaveSdr  = ctx.slaveSdr;
+    cfg.useBurstCache = ctx.useBurstCache;
 
     qint64 dispatchUs = stepTimer.nsecsElapsed() / 1000;
 

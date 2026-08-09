@@ -1,6 +1,7 @@
 #include "EsdCorrector.h"
 #include "../PipelineContext.h"
 #include "dataaccess/impl/GdalSlcReader.h"
+#include "dataaccess/impl/SentinelDataReader.h"
 #include <QDebug>
 #include <QtGlobal>
 #include <cmath>
@@ -47,10 +48,22 @@ bool EsdCorrector::execute(PipelineContext& ctx) {
         lineA = qBound(halfW, lineA, mH - halfW);
         lineB = qBound(halfW, lineB, mH - halfW);
 
-        auto mA = ctx.masterReader->readBandWindow(0, col0, lineA - ovLines/2, colW, ovLines);
-        auto sA = ctx.slaveReader->readBandWindow(0, col0, lineA - ovLines/2, colW, ovLines);
-        auto mB = ctx.masterReader->readBandWindow(0, col0, lineB - ovLines/2, colW, ovLines);
-        auto sB = ctx.slaveReader->readBandWindow(0, col0, lineB - ovLines/2, colW, ovLines);
+        QVector<std::complex<float>> mA(colW * ovLines);
+        QVector<std::complex<float>> sA(colW * ovLines);
+        QVector<std::complex<float>> mB(colW * ovLines);
+        QVector<std::complex<float>> sB(colW * ovLines);
+
+        if (ctx.useBurstCache) {
+            ctx.masterSdr->readWindow(col0, lineA - ovLines/2, colW, ovLines, mA.data());
+            ctx.slaveSdr->readWindow(col0, lineA - ovLines/2, colW, ovLines, sA.data());
+            ctx.masterSdr->readWindow(col0, lineB - ovLines/2, colW, ovLines, mB.data());
+            ctx.slaveSdr->readWindow(col0, lineB - ovLines/2, colW, ovLines, sB.data());
+        } else {
+            mA = ctx.masterReader->readBandWindow(0, col0, lineA - ovLines/2, colW, ovLines);
+            sA = ctx.slaveReader->readBandWindow(0, col0, lineA - ovLines/2, colW, ovLines);
+            mB = ctx.masterReader->readBandWindow(0, col0, lineB - ovLines/2, colW, ovLines);
+            sB = ctx.slaveReader->readBandWindow(0, col0, lineB - ovLines/2, colW, ovLines);
+        }
 
         if (mA.size() < colW*ovLines || sA.size() < colW*ovLines
             || mB.size() < colW*ovLines || sB.size() < colW*ovLines) {

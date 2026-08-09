@@ -24,8 +24,10 @@ struct SarBandDescriptor {
     // TOPSAR burst 信息 (Sentinel-1 IW)
     int     linesPerBurst = 0;    // 每个 burst 方位向行数
     int     burstCount = 0;       // burst 数 (通常 9)
+    int     samplesPerBurst = 0;  // 每个 burst 距离向采样数
     QVector<int> burstStartLines; // 每个 burst 在整体影像中的起行号
     QVector<QDateTime> burstAzimuthTimes; // 每个 burst 的方位向零多普勒时间
+    QVector<qint64> burstByteOffsets;     // 每个 burst 在 TIFF 中的字节偏移
     double  azimuthFmRate = 0.0;          // 方位向调频率 (Hz/s, 用于TOPS deramping)
     double  azimuthSteeringRate = 0.0;     // 天线转向速率 (deg/s, TOPS deburst)
     double  azimuthFrequency = 0.0;        // 有效方位向PRF (Hz, 每子条带不同)

@@ -6,6 +6,7 @@
 #include "algorithms/DerampCore.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/GdalSlcWriter.h"
+#include "dataaccess/impl/SentinelDataReader.h"
 #include <QCoreApplication>
 #include <QDebug>
 #include <QElapsedTimer>
@@ -231,8 +232,13 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
     if (!writer.create(ctx.outputPath, mW, mH, 1)) {
         ctx.errorMessage = QStringLiteral("SincResampler: create output fail"); return false;
     }
-    if (ctx.masterReader)
-        writer.copyGeoreferencing(ctx.masterReader->datasetHandle(), QString());
+    {
+        void* geoRefHandle = ctx.useBurstCache
+            ? (ctx.masterSdr ? ctx.masterSdr->datasetHandle() : nullptr)
+            : (ctx.masterReader ? ctx.masterReader->datasetHandle() : nullptr);
+        if (geoRefHandle)
+            writer.copyGeoreferencing(geoRefHandle, QString());
+    }
 
     int step = std::max(1, mH / 100);
     int nThreads = qBound(1, QThread::idealThreadCount(), 12);
@@ -247,31 +253,50 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         const auto& br = ctx.burstResults[b];
         int burstRow0 = b * L;
 
-        // ── 读入整个 burst ──
-        QElapsedTimer rt; rt.start();
-        QVector<std::complex<float>> fullBurst =
-            ctx.slaveReader->readBandWindow(0, 0, burstRow0, sW, L);
-        qint64 readUs = rt.nsecsElapsed() / 1000;
-        if (fullBurst.isEmpty()) {
-            ctx.errorMessage = QStringLiteral("SincResampler: readBandWindow empty");
-            return false;
-        }
+        // ── 获取 burst SoA 数据 ──
+        qint64 readUs = 0, derampUs = 0;
+        sar::ComplexSoA soaBurst;          // 拥有内存 (非缓存路径)
+        sar::ComplexSoAView burstView;     // 最终使用的视图
+        int actualBurstH = L;              // 实际 burst 行数 (末 burst 可能少于 L)
 
-        // ── AoS → SoA (一次, AVX2加速) + Deramp (SoA SIMD) ──
-        qint64 derampUs = 0;
-        rt.start();
-        sar::ComplexSoA soaBurst;
-        soaBurst.fromAos(fullBurst.constData(), sW * L);  // AVX2 deinterleave
-        if (doDeramp)
-            sar::applyDeramp_SoA(soaBurst, sW, L, burstRow0, b, prf, kt);
-        derampUs = rt.nsecsElapsed() / 1000;
-        // fullBurst不再需要, 释放AoS内存
-        fullBurst.clear();
+        if (ctx.useBurstCache && ctx.slaveSdr) {
+            // ── 缓存路径: 零拷贝, 数据已 deinterleaved + deramped ──
+            burstView = ctx.slaveSdr->burstSoaView(b);
+            if (!burstView.re || !burstView.im) {
+                ctx.errorMessage = QStringLiteral("SincResampler: null cached burst view");
+                return false;
+            }
+            actualBurstH = burstView.size / sW;
+            if (actualBurstH <= 0 || actualBurstH > L) {
+                qWarning() << QStringLiteral("[Step9] Invalid burst view b=%1 size=%2 sW=%3 L=%4")
+                    .arg(b).arg(burstView.size).arg(sW).arg(L);
+                ctx.errorMessage = QStringLiteral("SincResampler: invalid cached burst view");
+                return false;
+            }
+        } else {
+            // ── 原有路径: AoS 读取 + AVX2 deinterleave + deramp ──
+            QElapsedTimer rt; rt.start();
+            QVector<std::complex<float>> fullBurst =
+                ctx.slaveReader->readBandWindow(0, 0, burstRow0, sW, L);
+            readUs = rt.nsecsElapsed() / 1000;
+            if (fullBurst.isEmpty()) {
+                ctx.errorMessage = QStringLiteral("SincResampler: readBandWindow empty");
+                return false;
+            }
+            actualBurstH = fullBurst.size() / sW;
+            rt.start();
+            soaBurst.fromAos(fullBurst.constData(), fullBurst.size());
+            if (doDeramp)
+                sar::applyDeramp_SoA(soaBurst, sW, actualBurstH, burstRow0, b, prf, kt);
+            derampUs = rt.nsecsElapsed() / 1000;
+            fullBurst.clear();
+            burstView = soaBurst.view(0, sW * actualBurstH);
+        }
 
         // ── 构建工作项 + 分批 ──
         QVector<ResampleWorkItem> items;
-        items.reserve(L);
-        for (int r = 0; r < L; ++r)
+        items.reserve(actualBurstH);
+        for (int r = 0; r < actualBurstH; ++r)
             items.append({burstRow0 + r, burstRow0 + r,
                           br.rangePoly, br.aziPoly});
 
@@ -284,10 +309,10 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             batches.append(batch);
         }
 
-        // ── SoA直传: 所有线程共享 soaBurst 只读视图 ──
+        // ── SoA直传: 所有线程共享 burst 只读视图 ──
         ResampleConfig rcfg;
-        rcfg.fullBurstSoA = soaBurst.view(0, sW * L);
-        rcfg.sW = sW; rcfg.burstH = L; rcfg.burstRow0 = burstRow0;
+        rcfg.fullBurstSoA = burstView;
+        rcfg.sW = sW; rcfg.burstH = actualBurstH; rcfg.burstRow0 = burstRow0;
         rcfg.sH = sH;
         rcfg.mW = mW; rcfg.mH = mH;
         rcfg.sincW = sincW; rcfg.beta = beta;

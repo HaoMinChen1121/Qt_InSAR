@@ -60,6 +60,7 @@ struct SlcDataBundle {
     int slaveHeight   = 0;
     int burstCount    = 0;
     int linesPerBurst = 0;
+    int samplesPerBurst = 0;
     QVector<int>       burstStartLines;
     QVector<QDateTime> masterBurstTimes;
     QVector<QDateTime> slaveBurstTimes;

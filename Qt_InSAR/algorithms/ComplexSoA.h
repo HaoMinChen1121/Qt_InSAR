@@ -74,13 +74,24 @@ struct ComplexSoA {
     }
 
     // AoS -> SoA: 从 CFloat32 interleaved 数组转换
+    // CFloat32 与 std::complex<float> 布局相同, 复用 AVX2 去交错
     void fromCfloat32(const void* src, int n) {
         alloc(n);
         const float* f = static_cast<const float*>(src);
+#ifdef __AVX2__
+        int vecEnd = n & ~7;
+        for (int i = 0; i < vecEnd; i += 8)
+            aosToSoa8(f + i * 2, re + i, im + i);
+        for (int i = vecEnd; i < n; ++i) {
+            re[i] = f[i * 2];
+            im[i] = f[i * 2 + 1];
+        }
+#else
         for (int i = 0; i < n; ++i) {
             re[i] = f[i * 2];
             im[i] = f[i * 2 + 1];
         }
+#endif
     }
 
     // SoA -> AoS
