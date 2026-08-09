@@ -101,22 +101,35 @@ bool DataReader::execute(PipelineContext& ctx) {
 
     if (isTopsar) {
         // ═══════════════════════════════════════════
-        //  TOPSAR 路径: SentinelDataReader (延迟burst缓存)
-        //  不提取ZIP, 不Tile, 直接从VSI读取
+        //  TOPSAR 路径: SentinelDataReader
+        //  直接从 ZIP 读取 TIFF → zlib 解压 → SoA 缓存
+        //  GDAL 仅用于 TIFF 元数据 (地理参考)
         // ═══════════════════════════════════════════
-        QString masterPath = ctx.masterBand->rasterPath;
-        QString slavePath  = ctx.slaveBand->rasterPath;
+        auto parseVsiPath = [](const QString& vsiPath) -> QPair<QString,QString> {
+            // /vsizip/F:/x.zip/S1A_xxx.SAFE/measurement/iw1-vv.tiff
+            // → zipPath=F:/x.zip, entry=S1A_xxx.SAFE/measurement/iw1-vv.tiff
+            if (!vsiPath.startsWith("/vsizip/")) return {vsiPath, QString()};
+            QString inner = vsiPath.mid(8);
+            int zipEnd = inner.indexOf(".zip/", 0, Qt::CaseInsensitive);
+            if (zipEnd < 0) return {vsiPath, QString()};
+            return {inner.left(zipEnd + 4), inner.mid(zipEnd + 5)};
+        };
 
-        qDebug() << QStringLiteral("[DataReader] TOPSAR: SDR master=%1").arg(masterPath);
+        auto [masterZip, masterEntry] = parseVsiPath(ctx.masterBand->rasterPath);
+        auto [slaveZip,  slaveEntry]  = parseVsiPath(ctx.slaveBand->rasterPath);
+
+        qDebug() << QStringLiteral("[DataReader] SDR master zip=%1 entry=%2")
+            .arg(masterZip, masterEntry);
         auto* mSdr = new SentinelDataReader();
-        if (!mSdr->open(masterPath, *ctx.masterBand)) {
+        if (!mSdr->open(masterZip, masterEntry, *ctx.masterBand)) {
             ctx.errorMessage = QStringLiteral("DataReader: SentinelDataReader master open fail");
             delete mSdr; return false;
         }
 
-        qDebug() << QStringLiteral("[DataReader] TOPSAR: SDR slave=%1").arg(slavePath);
+        qDebug() << QStringLiteral("[DataReader] SDR slave zip=%1 entry=%2")
+            .arg(slaveZip, slaveEntry);
         auto* sSdr = new SentinelDataReader();
-        if (!sSdr->open(slavePath, *ctx.slaveBand)) {
+        if (!sSdr->open(slaveZip, slaveEntry, *ctx.slaveBand)) {
             ctx.errorMessage = QStringLiteral("DataReader: SentinelDataReader slave open fail");
             delete mSdr; delete sSdr; return false;
         }
