@@ -52,7 +52,7 @@ private:
 
     QVector<int> mBurstStartLines;
     std::vector<BurstCacheSoA> mCaches;
-    std::vector<unsigned char> mRawTiff;  // TIFF 完整字节 (ZIP解压后)
+    std::vector<unsigned char> mRawTiff;  // 完整 TIFF (供 GDAL /vsimem/ 地理参考)
 };
 
 #endif // SENTINELDATAREADER_H

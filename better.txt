@@ -1,0 +1,589 @@
+Qt_InSAR SentinelDataReader 后续优化设计总结
+
+当前状态：
+
+已经完成：
+
+1. 自研 ZIP parser + zlib 解压
+2. 绕过 GDAL /vsizip
+3. 绕过 GDAL RasterIO
+4. TIFF Strip直接解析
+5. CInt16 → SoA直接转换
+6. Burst级SoA缓存
+7. AVX2 SIMD优化
+
+
+当前性能：
+
+初始：
+8分39秒
+
+当前：
+3分52秒
+
+
+主要耗时：
+
+DataReader:
+10~13s / pair
+
+SincResampler:
+17~20s / pair
+
+
+当前瓶颈：
+
+1. DataReader:
+    ZIP解压 + 数据加载
+
+2. Sinc:
+    内存带宽限制
+
+
+==================================================
+
+优化方向1：删除mRawTiff完整缓存（最高优先级）
+
+
+当前流程：
+
+ZIP
+
+↓
+
+zlib inflate
+
+↓
+
+完整TIFF(mRawTiff)
+
+约1.15GB
+
+↓
+
+解析Strip
+
+↓
+
+BurstCacheSoA
+
+
+
+问题：
+
+mRawTiff只是作为TIFF数据临时容器。
+
+存在：
+
+- 额外1GB以上内存占用
+- 一次完整inflate
+- 一次完整内存保存
+
+
+
+优化后：
+
+ZIP Reader
+
+↓
+
+TIFF Strip Reader
+
+↓
+
+直接读取目标Strip
+
+↓
+
+CInt16 → SoA
+
+↓
+
+BurstCacheSoA
+
+
+
+去除：
+
+mRawTiff
+
+
+
+效果：
+
+内存：
+
+当前：
+
+单影像：
+
+约3.45GB
+
+
+优化后：
+
+约2.3GB以下
+
+
+
+收益：
+
+- 降低内存压力
+- 支持多IW、多极化
+- 架构更接近SNAP/GAMMA
+
+
+==================================================
+
+优化方向2：实现流式Burst读取
+
+
+当前：
+
+open()
+
+阶段：
+
+一次加载：
+
+所有burst
+
+
+例如：
+
+IW1:
+
+9个burst
+
+全部：
+
+SoA cache
+
+
+
+问题：
+
+一次占满内存。
+
+
+
+优化：
+
+Burst Streaming
+
+
+设计：
+
+
+BurstManager
+
+
+缓存：
+
+current burst
+
++
+
+next burst
+
+
+
+流程：
+
+
+处理Burst N
+
+↓
+
+后台读取Burst N+1
+
+↓
+
+计算Burst N
+
+↓
+
+释放Burst N-1
+
+
+
+类似：
+
+producer-consumer pipeline
+
+
+
+效果：
+
+内存降低：
+
+50%~80%
+
+
+
+速度：
+
+可能提升：
+
+10%~20%
+
+
+原因：
+
+减少等待IO。
+
+
+==================================================
+
+优化方向3：优化ZIP解压
+
+
+当前：
+
+zlib
+
+
+500MB ZIP:
+
+约4~5s
+
+
+
+优化：
+
+替换：
+
+zlib
+
+↓
+
+libdeflate
+
+
+
+预期：
+
+4~5s
+
+↓
+
+1~2s
+
+
+
+收益：
+
+DataReader:
+
+10~13s
+
+↓
+
+7~10s
+
+
+
+说明：
+
+不是最大瓶颈，但实现成本低。
+
+
+
+==================================================
+
+优化方向4：完善SentinelReader结构
+
+
+当前：
+
+SentinelDataReader
+
+
+建议拆分：
+
+SentinelProduct
+
+
+├── SafeReader
+
+│
+│  解析：
+│
+│  manifest.safe
+│  annotation XML
+│
+│
+├── ZipReader
+
+│
+│  负责：
+│
+│  ZIP central directory
+│  entry定位
+│  inflate
+
+
+├── TiffStripReader
+
+│
+│  负责：
+│
+│  TIFF Header
+│  IFD
+│  StripOffsets
+│  StripByteCounts
+
+
+├── BurstManager
+
+│
+│  负责：
+│
+│  burst定位
+│  cache管理
+
+
+└── ComplexSoA
+
+
+    负责：
+
+    SIMD数据布局
+
+
+==================================================
+
+优化方向5：SincResampler进一步优化
+
+
+当前：
+
+17~20s
+
+
+已经：
+
+- AVX2
+- 12线程
+
+
+瓶颈：
+
+内存带宽。
+
+
+进一步优化：
+
+1. Cache blocking
+
+
+当前：
+
+大块访问：
+
+整幅SoA
+
+
+优化：
+
+按burst/block处理
+
+
+减少：
+
+cache miss
+
+
+
+2. 数据预取
+
+
+增加：
+
+CPU prefetch
+
+
+
+3. 减少写回
+
+
+避免：
+
+重复SoA/AoS转换
+
+
+
+预计：
+
+10%~20%提升。
+
+
+
+==================================================
+
+优化方向6：多线程模型优化
+
+
+避免：
+
+多个线程同时随机读取ZIP。
+
+
+推荐：
+
+
+读取线程：
+
+ZIP inflate
+
+↓
+
+Buffer Queue
+
+
+计算线程：
+
+Sinc
+
+↓
+
+输出
+
+
+
+形成：
+
+IO + Compute pipeline
+
+
+
+例如：
+
+Thread 1:
+
+DataReader
+
+
+Thread 2~N:
+
+Registration
+
+
+
+==================================================
+
+最终推荐开发路线
+
+
+Phase 1：
+
+删除mRawTiff
+
+实现：
+
+ZIP → TIFF Strip → BurstCache
+
+
+目标：
+
+降低内存
+
+
+↓
+
+Phase 2：
+
+Burst Streaming
+
+
+目标：
+
+大幅降低内存
+
+
+↓
+
+Phase 3：
+
+libdeflate替换zlib
+
+
+目标：
+
+降低ZIP解压时间
+
+
+↓
+
+Phase 4：
+
+Sinc cache blocking
+
+
+目标：
+
+优化内存带宽
+
+
+
+==================================================
+
+最终目标架构：
+
+
+Sentinel-1 ZIP
+
+↓
+
+SentinelProduct
+
+↓
+
+Annotation XML解析
+
+↓
+
+ZipReader
+
+↓
+
+TiffStripReader
+
+↓
+
+BurstManager
+
+↓
+
+BurstCacheSoA
+
+↓
+
+SincResampler
+
+
+
+目标：
+
+速度：
+
+3分52秒
+
+↓
+
+1~2分钟级
+
+
+内存：
+
+6~7GB
+
+↓
+
+3~4GB以下
+
+
+
+最终达到接近：
+
+SNAP / GAMMA Sentinel-1 SLC读取性能。

@@ -306,14 +306,23 @@ bool SentinelDataReader::open(const QString& zipPath, const QString& entryName,
 {
     close();
 
-    // ═══ Step 1: 直接 ZIP 解析 + zlib 解压 TIFF entry ═══
+    // ═══ Step 1: ZIP 解压完整的 TIFF ═══
     mRawTiff = readZipEntry(zipPath, entryName);
     if (mRawTiff.empty()) {
         qWarning() << "[SDR] readZipEntry failed:" << zipPath << entryName;
         return false;
     }
 
-    // ═══ Step 2: /vsimem/ → GDAL 仅用于元数据 (宽/高/地理参考) ═══
+    // ═══ Step 2: 解析 TIFF IFD → 获取 strip 偏移 ═══
+    uint32_t firstStripOff = 0, stripByteCount = 0;
+    if (!parseTiffStripOffset(mRawTiff.data(), mRawTiff.size(),
+            &firstStripOff, &stripByteCount)) {
+        qWarning() << "[SDR] TIFF IFD parse failed";
+        close();
+        return false;
+    }
+
+    // ═══ Step 3: /vsimem/ → GDAL 读宽/高/地理参考 ═══
     mMemPath = QString("/vsimem/_sdr_%1.tif").arg(
         reinterpret_cast<quintptr>(this), 0, 16);
     VSIFCloseL(VSIFileFromMemBuffer(mMemPath.toUtf8().constData(),
@@ -337,15 +346,6 @@ bool SentinelDataReader::open(const QString& zipPath, const QString& entryName,
     mPrf           = band.azimuthFrequency;
 
     if (mBurstCount <= 0) return true;
-
-    // ═══ Step 3: 解析 TIFF IFD → 获取 strip 偏移 ═══
-    uint32_t firstStripOff = 0, stripByteCount = 0;
-    if (!parseTiffStripOffset(mRawTiff.data(), mRawTiff.size(),
-            &firstStripOff, &stripByteCount)) {
-        qWarning() << "[SDR] TIFF IFD parse failed";
-        close();
-        return false;
-    }
 
     // ═══ Step 4: 直接 strip → CInt16→SoA, 切分 burst ═══
     mCaches.resize(mBurstCount);
