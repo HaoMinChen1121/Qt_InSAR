@@ -21,6 +21,11 @@ int main(int argc, char *argv[])
     QgsApplication::setPrefixPath("E:/GIS_QT/apps/qgis-ltr", true);
     QgsApplication::initQgis();
 
+    // 清空 profiling 文件 (在 QApp 创建之后)
+    QString exeDir = QCoreApplication::applicationDirPath();
+    for (const auto& fn : {"profile_coarse.txt", "profile_fine.txt", "profile_sinc.txt"})
+        QFile(exeDir + "/" + fn).remove();
+
     MainWindow mainWindow;
     ApplicationController controller(&mainWindow);
     mainWindow.setAppController(&controller);
@@ -28,7 +33,8 @@ int main(int argc, char *argv[])
     mainWindow.show();
 
     int ret = app.exec();
-    DataReader::cleanupExtracted();
     QgsApplication::exitQgis();
+    GDALDestroyDriverManager();
+    DataReader::cleanupExtracted();
     return ret;
 }

@@ -96,7 +96,7 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
     form3->addRow(tr("重采样方法:"), mResamplingMethod);
     mSincWindow = new QSpinBox;
     mSincWindow->setRange(4, 64);
-    mSincWindow->setValue(16);
+    mSincWindow->setValue(8);
     form3->addRow(tr("Sinc 窗半径:"), mSincWindow);
     mSincBeta = new QDoubleSpinBox;
     mSincBeta->setRange(1.0, 10.0);

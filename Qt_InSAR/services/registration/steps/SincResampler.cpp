@@ -1,11 +1,17 @@
 #include "SincResampler.h"
 #include "../PipelineContext.h"
 #include "algorithms/SincInterpolator.h"
+#include "algorithms/SincInterpCore.h"
 #include "algorithms/ComplexSoA.h"
 #include "algorithms/DerampCore.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/GdalSlcWriter.h"
+#include <QCoreApplication>
 #include <QDebug>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QMutex>
+#include <QTextStream>
 #include <QApplication>
 #include <QThread>
 #include <QtConcurrent>
@@ -13,6 +19,17 @@
 #include <gdal_priv.h>
 #include <algorithm>
 #include <cmath>
+
+static QMutex gSincProfileMutex;
+static void sincProfileLog(const QString& msg) {
+    qDebug() << msg;
+    QMutexLocker lock(&gSincProfileMutex);
+    QString path = QCoreApplication::applicationDirPath() + "/profile_sinc.txt";
+    QFile f(path);
+    if (f.open(QIODevice::Append | QIODevice::WriteOnly)) {
+        QTextStream ts(&f); ts << msg << "\n";
+    }
+}
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -78,10 +95,9 @@ static std::complex<float> interpFromStrip(const QVector<std::complex<float>>& s
                    : bilinearInterp2D(strip, sW, sH, sx, sy);
 }
 
-// ── 从全burst缓冲区提取条带 ──
-// sY0/sYH 是全局 slave 行坐标, burstRow0 是当前 burst 在 slave 中的起始行
-static QVector<std::complex<float>> extractStrip(
-    const QVector<std::complex<float>>& fullBurst,
+// ── 从SoA burst缓冲区零拷贝提取条带视图 ──
+static sar::ComplexSoAView extractSoaView(
+    const sar::ComplexSoAView& soaBurst,
     int sW, int burstH, int burstRow0, int sY0, int sYH)
 {
     if (sYH <= 0) return {};
@@ -89,10 +105,8 @@ static QVector<std::complex<float>> extractStrip(
     int localY1 = qMin(sY0 + sYH, burstRow0 + burstH) - burstRow0;
     int h = localY1 - localY0;
     if (h <= 0) return {};
-    QVector<std::complex<float>> strip(sW * h);
-    memcpy(strip.data(), fullBurst.data() + localY0 * sW,
-           sW * h * sizeof(std::complex<float>));
-    return strip;
+    int offset = localY0 * sW;
+    return {soaBurst.re + offset, soaBurst.im + offset, sW * h};
 }
 
 // ── 计算一行的 slave 坐标 ──
@@ -133,76 +147,49 @@ struct ResampleWorkItem {
 };
 
 struct ResampleConfig {
-    const QVector<std::complex<float>>* fullBurst = nullptr;  // 全burst内存缓冲区(未deramp)
-    int sW, burstH, burstRow0, sH, mW, mH, readR;
-    bool useFastSinc;
+    sar::ComplexSoAView fullBurstSoA;  // SoA burst缓冲区(已deramp)
+    int sW, burstH, burstRow0, sH, mW, mH;
     int sincW; double beta;
     QVector<QVector<float>>* sincLUT;
-    // deramp 参数 (worker 内对 strip 做 deramp)
-    bool doDeramp;
-    double prf, kt;
-    int burstIdx, L;  // burstIdx = 当前burst索引 (0-based), L = linesPerBurst
 };
 
 static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
     QVector<ResampleWorkItem> batch, ResampleConfig cfg)
 {
     QVector<QPair<int, QVector<std::complex<float>>>> results;
-    QVector<std::complex<float>> tempBuf;
+    sar::ComplexSoA tempSoA;
     QVector<double> syBuf;
 
     for (const auto& w : batch) {
         auto rc = computeRowCoords(w.gRowSrc, cfg.mW, cfg.mH, cfg.sH,
-            w.rangePoly, w.aziPoly, cfg.readR);
+            w.rangePoly, w.aziPoly, cfg.sincW);  // readR = sincW
 
         QVector<std::complex<float>> rowBuf(cfg.mW);
-        int actualStripH = rc.sYH;
+        if (rc.sYH <= 0) {
+            rowBuf.fill({0, 0});
+            results.append({w.gRowOut, std::move(rowBuf)});
+            continue;
+        }
+
+        // 零拷贝SoA视图
+        auto stripView = extractSoaView(cfg.fullBurstSoA, cfg.sW,
+            cfg.burstH, cfg.burstRow0, rc.sY0, rc.sYH);
+        int actualStripH = stripView.size / cfg.sW;
         if (actualStripH <= 0) {
             rowBuf.fill({0, 0});
-        } else {
-            auto strip = extractStrip(*cfg.fullBurst, cfg.sW,
-                cfg.burstH, cfg.burstRow0, rc.sY0, rc.sYH);
-            // extractStrip 可能在边界裁剪，用实际 strip 高度替代 rc.sYH
-            actualStripH = strip.size() / cfg.sW;
-            if (actualStripH <= 0) {
-                rowBuf.fill({0, 0});
-                results.append({w.gRowOut, std::move(rowBuf)});
-                continue;
-            }
-
-            // 对提取的 strip 做 deramp
-            if (cfg.doDeramp) {
-                for (int sr = 0; sr < actualStripH; ++sr) {
-                    int slaveRow = rc.sY0 + sr;
-                    int sbIdx = qBound(0, slaveRow / cfg.L, cfg.burstIdx + 1);
-                    double eta_S = (slaveRow - sbIdx * cfg.L - cfg.L / 2.0) / cfg.prf;
-                    double dp = -M_PI * cfg.kt * eta_S * eta_S;
-                    float dCos = (float)std::cos(dp), dSin = (float)std::sin(dp);
-                    int base = sr * cfg.sW, end = base + cfg.sW;
-                    for (int idx = base; idx < end; ++idx) {
-                        auto v = strip[idx];
-                        strip[idx] = {
-                            v.real() * dCos - v.imag() * dSin,
-                            v.real() * dSin + v.imag() * dCos};
-                    }
-                }
-            }
-
-            if (cfg.useFastSinc) {
-                double syFracInStrip = rc.syFrac + (rc.sY0 - qMax(rc.sY0, cfg.burstRow0));
-                syBuf.resize(cfg.mW);
-                syBuf.fill(syFracInStrip + cfg.readR);
-                sincInterp1D_Horizontal(strip, cfg.sW, actualStripH, rc.sx,
-                    *cfg.sincLUT, cfg.sincW, tempBuf, cfg.mW);
-                sincInterp1D_Vertical(tempBuf, actualStripH, cfg.mW, syBuf,
-                    *cfg.sincLUT, cfg.sincW, rowBuf.data());
-            } else {
-                for (int c = 0; c < cfg.mW; ++c) {
-                    rowBuf[c] = interpFromStrip(strip, cfg.sW, actualStripH,
-                        rc.sx[c], rc.syFrac, true, cfg.sincW, cfg.beta);
-                }
-            }
+            results.append({w.gRowOut, std::move(rowBuf)});
+            continue;
         }
+
+        // SoA直传: Horizontal SoA → tempSoA (SoA) → Vertical SoA → rowBuf (AoS)
+        sar::sincInterp1D_Horizontal_SoA(stripView, cfg.sW, actualStripH, rc.sx,
+            *cfg.sincLUT, cfg.sincW, tempSoA, cfg.mW);
+        syBuf.resize(cfg.mW);
+        syBuf.fill(rc.syFrac + cfg.sincW);
+        sar::sincInterp1D_Vertical_SoA(
+            tempSoA.view(0, actualStripH * cfg.mW),
+            actualStripH, cfg.mW, syBuf, *cfg.sincLUT, cfg.sincW, rowBuf.data());
+
         results.append({w.gRowOut, std::move(rowBuf)});
     }
     return results;
@@ -250,6 +237,9 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
     int step = std::max(1, mH / 100);
     int nThreads = qBound(1, QThread::idealThreadCount(), 12);
 
+    QElapsedTimer totalTimer; totalTimer.start();
+    qint64 totalReadUs = 0, totalDerampUs = 0, totalSincUs = 0, totalWriteUs = 0;
+
     for (int b = 0; b < N; ++b) {
         if (mCancelled) return false;
         qDebug() << QStringLiteral("[Step9] burst %1/%2 reading full burst...").arg(b+1).arg(N);
@@ -257,21 +247,26 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         const auto& br = ctx.burstResults[b];
         int burstRow0 = b * L;
 
-        // ── 使用已打开的 slaveReader 一次读入整个 burst ──
+        // ── 读入整个 burst ──
+        QElapsedTimer rt; rt.start();
         QVector<std::complex<float>> fullBurst =
             ctx.slaveReader->readBandWindow(0, 0, burstRow0, sW, L);
+        qint64 readUs = rt.nsecsElapsed() / 1000;
         if (fullBurst.isEmpty()) {
             ctx.errorMessage = QStringLiteral("SincResampler: readBandWindow empty");
             return false;
         }
 
-        // ── Deramp: 整个burst一次性完成 (修复原per-strip的33x冗余) ──
-        if (doDeramp) {
-            sar::ComplexSoA soa;
-            soa.fromAos(fullBurst.constData(), sW * L);
-            sar::applyDeramp_SoA(soa, sW, L, burstRow0, b, prf, kt);
-            soa.toAos(fullBurst.data(), sW * L);
-        }
+        // ── AoS → SoA (一次, AVX2加速) + Deramp (SoA SIMD) ──
+        qint64 derampUs = 0;
+        rt.start();
+        sar::ComplexSoA soaBurst;
+        soaBurst.fromAos(fullBurst.constData(), sW * L);  // AVX2 deinterleave
+        if (doDeramp)
+            sar::applyDeramp_SoA(soaBurst, sW, L, burstRow0, b, prf, kt);
+        derampUs = rt.nsecsElapsed() / 1000;
+        // fullBurst不再需要, 释放AoS内存
+        fullBurst.clear();
 
         // ── 构建工作项 + 分批 ──
         QVector<ResampleWorkItem> items;
@@ -289,22 +284,17 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             batches.append(batch);
         }
 
-        // ── 插值 (所有线程共享 fullBurst 只读内存, deramp在worker内做) ──
+        // ── SoA直传: 所有线程共享 soaBurst 只读视图 ──
         ResampleConfig rcfg;
-        rcfg.fullBurst   = &fullBurst;
+        rcfg.fullBurstSoA = soaBurst.view(0, sW * L);
         rcfg.sW = sW; rcfg.burstH = L; rcfg.burstRow0 = burstRow0;
         rcfg.sH = sH;
         rcfg.mW = mW; rcfg.mH = mH;
-        rcfg.readR = readR;
-        rcfg.useFastSinc = useFastSinc;
         rcfg.sincW = sincW; rcfg.beta = beta;
         rcfg.sincLUT = &sincLUT;
-        rcfg.doDeramp = false;   // 已在burst级预deramp
-        rcfg.prf = prf; rcfg.kt = kt;
-        rcfg.burstIdx = b; rcfg.L = L;
-        qDebug() << "[Step9] config ready, processing batches serially...";
 
-        // ── 并行处理各批次 ──
+        // ── Sinc插值并行 (纯SoA, 零拷贝) ──
+        QElapsedTimer st; st.start();
         QList<QFuture<QVector<QPair<int, QVector<std::complex<float>>>>>> futures;
         for (int i = 0; i < batches.size(); ++i)
             futures.append(QtConcurrent::run(processResampleBatch, batches[i], rcfg));
@@ -312,16 +302,28 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         QVector<QPair<int, QVector<std::complex<float>>>> allRows;
         for (auto& f : futures)
             allRows += f.result();
-        qDebug() << "[Step9] all batches done, sorting...";
         std::sort(allRows.begin(), allRows.end(),
             [](const auto& a, const auto& b) { return a.first < b.first; });
+        qint64 sincUs = st.nsecsElapsed() / 1000;
 
+        // ── 写出 ──
+        st.start();
         for (const auto& row : allRows) {
             writer.writeRow(row.first, row.second);
             if (row.first % step == 0) QApplication::processEvents();
         }
+        qint64 writeUs = st.nsecsElapsed() / 1000;
         QApplication::processEvents();
+
+        totalReadUs += readUs; totalDerampUs += derampUs;
+        totalSincUs += sincUs; totalWriteUs += writeUs;
+        sincProfileLog(QStringLiteral("[Step9 PROFILE] burst %1 | read:%2ms deramp:%3ms sinc:%4ms write:%5ms")
+            .arg(b+1).arg(readUs/1000).arg(derampUs/1000).arg(sincUs/1000).arg(writeUs/1000));
     }
+
+    qint64 totalMs = totalTimer.nsecsElapsed() / 1000000;
+    sincProfileLog(QStringLiteral("[Step9 TIMING] %1 bursts | read:%2ms deramp:%3ms sinc:%4ms write:%5ms total:%6ms")
+        .arg(N).arg(totalReadUs/1000).arg(totalDerampUs/1000).arg(totalSincUs/1000).arg(totalWriteUs/1000).arg(totalMs));
     return true;
 }
 

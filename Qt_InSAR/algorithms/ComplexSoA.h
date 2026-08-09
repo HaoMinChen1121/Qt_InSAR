@@ -9,6 +9,20 @@ namespace sar {
 
 constexpr int kSimdAlign = 32;
 
+// ── AVX2 加速 deinterleave/interleave (前置声明, 供 fromAos/toAos 使用) ──
+#ifdef __AVX2__
+inline void aosToSoa8(const float* __restrict aos,
+                      float* __restrict reOut, float* __restrict imOut) {
+    __m256 ab = _mm256_loadu_ps(aos);
+    __m256 cd = _mm256_loadu_ps(aos + 8);
+    __m256 re_tmp = _mm256_shuffle_ps(ab, cd, 0x88);
+    __m256 im_tmp = _mm256_shuffle_ps(ab, cd, 0xDD);
+    __m256i idx = _mm256_setr_epi32(0, 1, 4, 5, 2, 3, 6, 7);
+    _mm256_store_ps(reOut, _mm256_permutevar8x32_ps(re_tmp, idx));
+    _mm256_store_ps(imOut, _mm256_permutevar8x32_ps(im_tmp, idx));
+}
+#endif
+
 // ── 非拥有视图, 指向外部内存 ──
 struct ComplexSoAView {
     float* re = nullptr;
@@ -42,10 +56,21 @@ struct ComplexSoA {
     // AoS -> SoA: 从 std::complex<float> interleaved 数组转换
     void fromAos(const std::complex<float>* src, int n) {
         alloc(n);
+#ifdef __AVX2__
+        int vecEnd = n & ~7;
+        const float* sf = reinterpret_cast<const float*>(src);
+        for (int i = 0; i < vecEnd; i += 8)
+            aosToSoa8(sf + i * 2, re + i, im + i);
+        for (int i = vecEnd; i < n; ++i) {
+            re[i] = src[i].real();
+            im[i] = src[i].imag();
+        }
+#else
         for (int i = 0; i < n; ++i) {
             re[i] = src[i].real();
             im[i] = src[i].imag();
         }
+#endif
     }
 
     // AoS -> SoA: 从 CFloat32 interleaved 数组转换
@@ -83,43 +108,6 @@ struct ComplexSoA {
     ComplexSoA(const ComplexSoA&) = delete;
     ComplexSoA& operator=(const ComplexSoA&) = delete;
 };
-
-// ── AVX2 加速 deinterleave (8个复数: AoS{re,im} → 两个 __m256) ──
-#ifdef __AVX2__
-
-inline void aosToSoa8(const float* __restrict aos,
-                      float* __restrict reOut, float* __restrict imOut) {
-    // 加载 2×256-bit = 8个{re,im}对
-    __m256 ab = _mm256_loadu_ps(aos);         // {r0,i0,r1,i1, r2,i2,r3,i3}
-    __m256 cd = _mm256_loadu_ps(aos + 8);     // {r4,i4,r5,i5, r6,i6,r7,i7}
-
-    // 提取实部/虚部
-    __m256 re_tmp = _mm256_shuffle_ps(ab, cd, 0x88); // {r0,r1,r4,r5 | r2,r3,r6,r7}
-    __m256 im_tmp = _mm256_shuffle_ps(ab, cd, 0xDD); // {i0,i1,i4,i5 | i2,i3,i6,i7}
-
-    // 重排128-bit lane至正确顺序
-    __m256i idx = _mm256_setr_epi32(0, 1, 4, 5, 2, 3, 6, 7);
-    _mm256_store_ps(reOut, _mm256_permutevar8x32_ps(re_tmp, idx));
-    _mm256_store_ps(imOut, _mm256_permutevar8x32_ps(im_tmp, idx));
-}
-
-inline void soaToAos8(const float* __restrict reIn, const float* __restrict imIn,
-                      float* __restrict aosOut) {
-    __m256 reVec = _mm256_load_ps(reIn);
-    __m256 imVec = _mm256_load_ps(imIn);
-
-    // interleave: {r0,i0,r1,i1,...} 和 {r4,i4,...} → 两寄存器
-    // 分开低/高 128-bit
-    __m256 lo = _mm256_unpacklo_ps(reVec, imVec); // {r0,i0,r1,i1, r4,i4,r5,i5}
-    __m256 hi = _mm256_unpackhi_ps(reVec, imVec); // {r2,i2,r3,i3, r6,i6,r7,i7}
-
-    // 重排 lane
-    __m256i idx = _mm256_setr_epi32(0, 1, 4, 5, 2, 3, 6, 7);
-    _mm256_storeu_ps(aosOut,     _mm256_permutevar8x32_ps(lo, idx));
-    _mm256_storeu_ps(aosOut + 8, _mm256_permutevar8x32_ps(hi, idx));
-}
-
-#endif // __AVX2__
 
 } // namespace sar
 

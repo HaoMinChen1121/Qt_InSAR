@@ -2,10 +2,29 @@
 #include "../PipelineContext.h"
 #include "algorithms/Correlation.h"
 #include "dataaccess/impl/GdalSlcReader.h"
+#include <QCoreApplication>
 #include <QDebug>
+#include <QDir>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QTextStream>
 #include <QThread>
 #include <QtConcurrent>
 #include <QFuture>
+#include <QMutex>
+
+// ── profiling 文件日志 ──
+static QMutex gProfileMutex;
+static bool gProfileFileOpened = false;
+static void profileLog(const QString& msg) {
+    qDebug() << msg;
+    QMutexLocker lock(&gProfileMutex);
+    QString path = QCoreApplication::applicationDirPath() + "/profile_coarse.txt";
+    QFile f(path);
+    if (f.open(QIODevice::Append | QIODevice::WriteOnly)) {
+        QTextStream ts(&f); ts << msg << "\n";
+    }
+}
 
 struct CoarseWorkItem {
     int row, col;
@@ -19,11 +38,20 @@ struct CoarseConfig {
     int searchHalf;
 };
 
+struct CoarseProfile {
+    qint64 readUs = 0;
+    qint64 fftUs  = 0;
+    qint64 peakUs = 0;
+    int    count  = 0;
+    void add(qint64 r, qint64 f, qint64 p) { readUs += r; fftUs += f; peakUs += p; ++count; }
+};
+
 static QVector<OffsetPoint> processCoarseBatch(
     QVector<CoarseWorkItem> batch, CoarseConfig cfg)
 {
     thread_local GdalSlcReader tlMaster, tlSlave;
     thread_local QString tlMasterPath, tlSlavePath;
+    thread_local CoarseProfile prof;
     if (tlMasterPath != cfg.masterPath) {
         tlMaster.close();
         if (!tlMaster.open(cfg.masterPath)) return {};
@@ -40,6 +68,7 @@ static QVector<OffsetPoint> processCoarseBatch(
     int half = cfg.winSize / 2;
     QVector<OffsetPoint> results;
     results.reserve(batch.size());
+    QElapsedTimer t;
 
     for (const auto& w : batch) {
         OffsetPoint pt;
@@ -48,7 +77,9 @@ static QVector<OffsetPoint> processCoarseBatch(
         pt.aziOff   = w.initAziOff;
 
         int mX0 = w.col - half, mY0 = w.row - half;
+        t.start();
         auto mWin = mR.readBandWindow(0, mX0, mY0, cfg.winSize, cfg.winSize);
+        qint64 readTime = t.nsecsElapsed() / 1000;
         if (mWin.size() < cfg.winSize * cfg.winSize) continue;
 
         if (cfg.useNcc) {
@@ -56,38 +87,56 @@ static QVector<OffsetPoint> processCoarseBatch(
             int sX0 = w.col + (int)w.initRangeOff - half - cfg.searchHalf;
             int sY0 = w.row + (int)w.initAziOff - half - cfg.searchHalf;
             if (sX0 < 0 || sY0 < 0 || sX0 + slaveWinSz > cfg.sW || sY0 + slaveWinSz > cfg.sH) continue;
+            t.start();
             auto sWin = sR.readBandWindow(0, sX0, sY0, slaveWinSz, slaveWinSz);
+            readTime += t.nsecsElapsed() / 1000;
             if (sWin.size() < slaveWinSz * slaveWinSz) continue;
-
-            int bestDx, bestDy;
-            double subDx, subDy;
-            double nccVal = nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
-                                         slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
-            pt.rangeOff += subDx;
-            pt.aziOff   += subDy;
-            pt.correlation = nccVal;
+            t.start();
+            int bestDx, bestDy; double subDx, subDy;
+            nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
+                         slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
+            qint64 fftTime = t.nsecsElapsed() / 1000;
+            pt.rangeOff += subDx; pt.aziOff += subDy; pt.correlation = 1.0;
+            prof.add(readTime, fftTime, 0);
         } else {
             int sX0c = w.col + (int)w.initRangeOff - half;
             int sY0c = w.row + (int)w.initAziOff - half;
             if (sX0c < 0 || sY0c < 0 || sX0c + cfg.winSize > cfg.sW || sY0c + cfg.winSize > cfg.sH) continue;
+            t.start();
             auto sWinC = sR.readBandWindow(0, sX0c, sY0c, cfg.winSize, cfg.winSize);
+            readTime += t.nsecsElapsed() / 1000;
             if (sWinC.size() < cfg.winSize * cfg.winSize) continue;
 
             int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
             QVector<float> surf(outRows * outCols);
+            t.start();
             float maxV = fftAmpCorrelate(mWin.data(), sWinC.data(), surf.data(), cfg.winSize, cfg.winSize);
+            qint64 fftTime = t.nsecsElapsed() / 1000;
+            t.start();
             double subDx, subDy;
             findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
-            pt.rangeOff += subDx;
-            pt.aziOff   += subDy;
+            qint64 peakTime = t.nsecsElapsed() / 1000;
+            pt.rangeOff += subDx; pt.aziOff += subDy;
             pt.correlation = maxV;
+            prof.add(readTime, fftTime, peakTime);
         }
         results.append(pt);
+    }
+
+    if (prof.count > 0) {
+        QString msg = QStringLiteral("[Step4 PROFILE] thread %1 | points: %2 | read: %3ms | fft: %4ms | peak: %5ms | avg/point: %6ms")
+            .arg((quintptr)QThread::currentThreadId() % 1000).arg(prof.count)
+            .arg(prof.readUs / 1000).arg(prof.fftUs / 1000).arg(prof.peakUs / 1000)
+            .arg((prof.readUs + prof.fftUs + prof.peakUs) / prof.count / 1000);
+        profileLog(msg); prof = CoarseProfile{};
     }
     return results;
 }
 
 bool CoarseCorrelator::execute(PipelineContext& ctx) {
+    QElapsedTimer stepTimer;
+    stepTimer.start();
+
     const auto& p = *ctx.params;
     int sW = ctx.data.slaveWidth, sH = ctx.data.slaveHeight;
     int w = ctx.data.masterWidth, h = ctx.data.masterHeight;
@@ -132,6 +181,10 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     cfg.useNcc = useNcc;
     cfg.searchHalf = searchHalf;
 
+    qint64 dispatchUs = stepTimer.nsecsElapsed() / 1000;
+
+    QElapsedTimer futureTimer;
+    futureTimer.start();
     QList<QFuture<QVector<OffsetPoint>>> futures;
     for (int i = 0; i < batches.size(); ++i)
         futures.append(QtConcurrent::run(processCoarseBatch, batches[i], cfg));
@@ -140,8 +193,8 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     ctx.offsetPoints.reserve(items.size());
     for (auto& f : futures)
         ctx.offsetPoints.append(f.result());
+    qint64 computeUs = futureTimer.nsecsElapsed() / 1000;
 
-    // 统计
     int validN = 0;
     double minR=1e9, maxR=-1e9, minA=1e9, maxA=-1e9, sumR=0, sumA=0;
     for (const auto& pt : ctx.offsetPoints) {
@@ -154,6 +207,10 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
             sumR += pt.rangeOff; sumA += pt.aziOff;
         }
     }
+    qint64 totalUs = stepTimer.nsecsElapsed() / 1000;
+    QString timingMsg = QStringLiteral("[Step4 TIMING] dispatch:%1ms compute+wait:%2ms total:%3ms")
+        .arg(dispatchUs / 1000).arg(computeUs / 1000).arg(totalUs / 1000);
+    profileLog(timingMsg);
     qDebug() << QStringLiteral("[Step4] %1 coarse %2/%3 valid range:[%4,%5]avg=%6 azi:[%7,%8]avg=%9")
         .arg(useNcc ? "NCC" : "FFT").arg(validN).arg(ctx.offsetPoints.size())
         .arg(minR,0,'f',2).arg(maxR,0,'f',2).arg(validN>0?sumR/validN:0,0,'f',2)

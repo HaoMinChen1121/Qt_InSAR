@@ -3,9 +3,26 @@
 
 #include "ComplexSoA.h"
 #include "SimdMath.h"
+#include <QCoreApplication>
+#include <QDebug>
+#include <QFile>
+#include <QMutex>
+#include <QTextStream>
 #include <QVector>
 #include <QtGlobal>
 #include <cmath>
+
+// 复用 SimdMath.h 中的 simdPathLog (inline, 定义在SimdMath.h)
+// 这里可以直接用 qDebug+文件写入
+namespace { inline void corePathLog(const QString& msg) {
+    qDebug() << msg;
+    static QMutex m; QMutexLocker lock(&m);
+    QString path = QCoreApplication::applicationDirPath() + "/profile_sinc.txt";
+    QFile f(path);
+    if (f.open(QIODevice::Append | QIODevice::WriteOnly)) {
+        QTextStream ts(&f); ts << msg << "\n";
+    }
+}}
 #include <algorithm>
 
 namespace sar {
@@ -96,6 +113,10 @@ inline void sincInterp1D_Vertical_SoA(
     for (int c = 1; c < width && uniformSy; ++c)
         uniformSy = (sy[c] == sy0);
 
+    static bool logUniform=false, logNonUniform=false;
+    if(uniformSy && !logUniform){corePathLog("[SincInterp] Vertical uniformSy=TRUE, using AVX2/SSE2 path");logUniform=true;}
+    if(!uniformSy && !logNonUniform){corePathLog("[SincInterp] Vertical uniformSy=FALSE, fallback to SCALAR");logNonUniform=true;}
+
     if (uniformSy) {
         int iy = static_cast<int>(std::floor(sy0));
         int fi = static_cast<int>((sy0 - iy) * 256.0);
@@ -105,6 +126,7 @@ inline void sincInterp1D_Vertical_SoA(
         // AVX2: 8输出列并行
 #ifdef __AVX2__
         if (gSimdLevel >= SimdLevel::AVX2) {
+            static bool once = false; if (!once) { corePathLog("[SincInterp] Vertical AVX2 path ACTIVE"); once = true; }
             int vecCols = width & ~7;
             for (int col = 0; col < vecCols; col += 8) {
                 __m256 accRe = _mm256_setzero_ps();

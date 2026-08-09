@@ -53,7 +53,7 @@ struct RegistrationParams
     QString   resamplingMethod = "Sinc";    // "Sinc" / "Bilinear" / "Bicubic"
     double    outputResolutionRange = 0;    // 0=保持原始
     double    outputResolutionAzimuth = 0;
-    int       sincWindowSize = 16;
+    int       sincWindowSize = 8;   // 33→17 taps, 计算量减半
     double    sincBeta = 2.5;
 
     // ── 输出 ──

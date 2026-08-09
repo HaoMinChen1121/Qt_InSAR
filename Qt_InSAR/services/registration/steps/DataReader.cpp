@@ -1,6 +1,7 @@
 #include "DataReader.h"
 #include "../PipelineContext.h"
 #include "dataaccess/impl/GdalSlcReader.h"
+#include "preprocess/TiffTiler.h"
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
@@ -53,7 +54,7 @@ static void listVsizipRecursive(const QString& dir, QStringList& files) {
     CSLDestroy(entries);
 }
 
-// ── /vsizip → GDAL VSI 逐文件提取到ZIP同目录 ──
+// ── /vsizip → 提取到ZIP同目录 ──
 static QString extractVsizip(const QString& vsiPath)
 {
     if (!vsiPath.startsWith("/vsizip/")) return vsiPath;
@@ -70,6 +71,9 @@ static QString extractVsizip(const QString& vsiPath)
     QString extractRoot = zipInfo.absolutePath() + "/" + zipInfo.completeBaseName() + "_extracted";
     QString safeDir = extractRoot + "/" + safeName;
 
+    // 记录需要清理的目录 (无论是否刚提取)
+    extractedDirs().insert(QDir::cleanPath(extractRoot));
+
     if (!QFileInfo::exists(safeDir)) {
         QDir().mkpath(extractRoot);
         qDebug() << "[DataReader] extracting (GDAL VSI)" << zipPath << "->" << extractRoot;
@@ -79,14 +83,12 @@ static QString extractVsizip(const QString& vsiPath)
         listVsizipRecursive(vsiRoot, files);
 
         for (const auto& vsiFile : files) {
-            // /vsizip/F:/zip.zip/SAFE/manifest.safe → 去掉 /vsizip/ + zip部分
-            QString relPath = vsiFile.mid(vsiRoot.length() + 1); // /SAFE/manifest.safe → SAFE/manifest.safe
+            QString relPath = vsiFile.mid(vsiRoot.length() + 1);
             QString dstPath = extractRoot + "/" + relPath;
             QDir().mkpath(QFileInfo(dstPath).absolutePath());
             vsiCopyFile(vsiFile, dstPath);
         }
         qDebug() << "[DataReader] extract done:" << files.size() << "files";
-        extractedDirs().insert(QDir::cleanPath(extractRoot));
     }
 
     if (safeEnd > 0 && safeEnd + 1 < innerPath.length())
@@ -97,6 +99,12 @@ static QString extractVsizip(const QString& vsiPath)
 bool DataReader::execute(PipelineContext& ctx) {
     QString masterLocal = extractVsizip(ctx.masterBand->rasterPath);
     QString slaveLocal  = extractVsizip(ctx.slaveBand->rasterPath);
+
+    // ── Strip TIFF → 256×256 Tiled TIFF 转换 ──
+    QString cacheDir = QFileInfo(masterLocal).absolutePath() + "/../_tiled_cache";
+    extractedDirs().insert(QDir::cleanPath(cacheDir));
+    masterLocal = TiffTiler::ensureTiled(masterLocal, cacheDir);
+    slaveLocal  = TiffTiler::ensureTiled(slaveLocal, cacheDir);
 
     qDebug() << QStringLiteral("[DataReader] opening master: %1").arg(masterLocal);
     auto* mR = new GdalSlcReader();
@@ -138,9 +146,22 @@ bool DataReader::execute(PipelineContext& ctx) {
 }
 
 void DataReader::cleanupExtracted() {
+    QSet<QString> failed;
     for (const auto& dir : extractedDirs()) {
+        QDir d(dir);
+        // 先清理只读属性
+        QFileInfoList list = d.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const auto& fi : list) {
+            if (fi.isDir()) QDir(fi.absoluteFilePath()).removeRecursively();
+            else { QFile f(fi.absoluteFilePath()); f.setPermissions(QFile::ReadOwner|QFile::WriteOwner); f.remove(); }
+        }
         qDebug() << "[DataReader] cleanup:" << dir;
-        QDir(dir).removeRecursively();
+        if (QDir(dir).removeRecursively()) {
+            qDebug() << "[DataReader] cleanup ok:" << dir;
+        } else {
+            qWarning() << "[DataReader] cleanup failed (locked):" << dir;
+            failed.insert(dir);  // 保留记录, 下次删除
+        }
     }
-    extractedDirs().clear();
+    extractedDirs() = failed;  // 只保留没删掉的
 }

@@ -2,6 +2,11 @@
 #define SIMDMATH_H
 
 #include <cstdint>
+#include <QCoreApplication>
+#include <QDebug>
+#include <QFile>
+#include <QMutex>
+#include <QTextStream>
 #ifdef _M_X64
 #include <intrin.h>   // __cpuidex, _xgetbv
 #endif
@@ -12,6 +17,17 @@ namespace sar {
 enum class SimdLevel : int { Scalar = 0, SSE2 = 1, AVX2 = 2 };
 
 inline SimdLevel gSimdLevel = SimdLevel::Scalar;
+
+// ── AVX2 路径日志 (同时写控制台+文件) ──
+inline void simdPathLog(const QString& msg) {
+    qDebug() << msg;
+    static QMutex m; QMutexLocker lock(&m);
+    QString path = QCoreApplication::applicationDirPath() + "/profile_sinc.txt";
+    QFile f(path);
+    if (f.open(QIODevice::Append | QIODevice::WriteOnly)) {
+        QTextStream ts(&f); ts << msg << "\n";
+    }
+}
 
 // 编译期最高支持等级
 #ifdef __AVX2__
@@ -151,10 +167,12 @@ inline void tap8(const float* reData, const float* imData,
                  float& reSum, float& imSum) {
 #ifdef __AVX2__
     if (gSimdLevel >= SimdLevel::AVX2) {
+        static bool once = false; if (!once) { simdPathLog("[SincInterp] Horizontal tap8 AVX2 path ACTIVE"); once = true; }
         tap8AVX2(reData, imData, weight8, reSum, imSum);
         return;
     }
 #endif
+    static bool onceS = false; if (!onceS) { simdPathLog("[SincInterp] Horizontal tap8 SCALAR path (no AVX2)"); onceS = true; }
     tap8Scalar(reData, imData, weight8, reSum, imSum);
 }
 
