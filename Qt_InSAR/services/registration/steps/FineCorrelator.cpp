@@ -65,10 +65,8 @@ static QVector<OffsetPoint> processFineBatch(
 
         double subDx, subDy;
         findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
-        // 合理性检查: FFT 精化偏移应在粗配准附近 (<5px)
-        // 超过阈值说明找到了旁瓣或错误峰, 保留原始粗配准值
         if (std::abs(subDx) > 5.0 || std::abs(subDy) > 3.0) {
-            pt.correlation = -1.0;  // 标记为不可信
+            pt.correlation = -1.0;
         } else {
             pt.rangeOff += subDx;
             pt.aziOff   += subDy;
@@ -89,7 +87,6 @@ bool FineCorrelator::execute(PipelineContext& ctx) {
     int N = ctx.offsetPoints.size();
     if (N == 0) return true;
 
-    // 收集工作项
     QVector<FineWorkItem> items;
     items.reserve(N);
     for (int i = 0; i < N; ++i) {
@@ -97,7 +94,6 @@ bool FineCorrelator::execute(PipelineContext& ctx) {
         items.append({op.row, op.col, i, op.rangeOff, op.aziOff});
     }
 
-    // 分批
     int nThreads = qBound(1, QThread::idealThreadCount(), 12);
     int batchSize = qMax(1, (N + nThreads * 4 - 1) / (nThreads * 4));
     QList<QVector<FineWorkItem>> batches;
@@ -118,12 +114,9 @@ bool FineCorrelator::execute(PipelineContext& ctx) {
     cfg.winSize = winSize;
 
     QList<QFuture<QVector<OffsetPoint>>> futures;
-    for (int i = 0; i < batches.size(); ++i) {
-        futures.append(QtConcurrent::run(
-            processFineBatch, batches[i], cfg));
-    }
+    for (int i = 0; i < batches.size(); ++i)
+        futures.append(QtConcurrent::run(processFineBatch, batches[i], cfg));
 
-    // 收集 + 写回 (correlation>0=精化, <0=越界保留粗值, 0=failed)
     int refined = 0, rejected = 0, failed = 0;
     for (auto& f : futures) {
         for (const auto& r : f.result()) {
@@ -131,7 +124,7 @@ bool FineCorrelator::execute(PipelineContext& ctx) {
             if (r.correlation > 0) {
                 ctx.offsetPoints[r.origIdx] = r; ++refined;
             } else if (r.correlation < 0) {
-                ++rejected;  // 越过阈值，保留原始粗配准值
+                ++rejected;
             } else {
                 ++failed;
             }

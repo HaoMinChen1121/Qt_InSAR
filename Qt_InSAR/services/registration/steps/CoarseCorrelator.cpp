@@ -1,11 +1,11 @@
 #include "CoarseCorrelator.h"
 #include "../PipelineContext.h"
 #include "algorithms/Correlation.h"
+#include "dataaccess/impl/GdalSlcReader.h"
 #include <QDebug>
 #include <QThread>
 #include <QtConcurrent>
 #include <QFuture>
-#include "dataaccess/impl/GdalSlcReader.h"
 
 struct CoarseWorkItem {
     int row, col;
@@ -22,7 +22,6 @@ struct CoarseConfig {
 static QVector<OffsetPoint> processCoarseBatch(
     QVector<CoarseWorkItem> batch, CoarseConfig cfg)
 {
-    // thread_local: 每个工作线程复用同一个reader, 避免重复GDALOpenShared
     thread_local GdalSlcReader tlMaster, tlSlave;
     thread_local QString tlMasterPath, tlSlavePath;
     if (tlMasterPath != cfg.masterPath) {
@@ -63,8 +62,7 @@ static QVector<OffsetPoint> processCoarseBatch(
             int bestDx, bestDy;
             double subDx, subDy;
             double nccVal = nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
-                                         slaveWinSz, slaveWinSz,
-                                         bestDx, bestDy, subDx, subDy);
+                                         slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
             pt.rangeOff += subDx;
             pt.aziOff   += subDy;
             pt.correlation = nccVal;
@@ -99,7 +97,6 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     bool useNcc = (p.route == RegRoute::Route2_NCC_FFTW);
     int searchHalf = useNcc ? p.coarseSearchWindow : 0;
 
-    // 收集所有工作项
     QVector<CoarseWorkItem> items;
     items.reserve(N * nPerBurst);
     for (int b = 0; b < N; ++b) {
@@ -114,7 +111,6 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
         }
     }
 
-    // 按线程数分批
     int nThreads = qBound(1, QThread::idealThreadCount(), 12);
     int batchSize = qMax(1, (items.size() + nThreads * 4 - 1) / (nThreads * 4));
     QList<QVector<CoarseWorkItem>> batches;
@@ -137,20 +133,13 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     cfg.searchHalf = searchHalf;
 
     QList<QFuture<QVector<OffsetPoint>>> futures;
-    for (int i = 0; i < batches.size(); ++i) {
-        futures.append(QtConcurrent::run(
-            processCoarseBatch, batches[i], cfg));
-    }
+    for (int i = 0; i < batches.size(); ++i)
+        futures.append(QtConcurrent::run(processCoarseBatch, batches[i], cfg));
 
-    // 收集结果
-    qDebug() << "[Step4] waiting for" << futures.size() << "batches to finish...";
     ctx.offsetPoints.clear();
     ctx.offsetPoints.reserve(items.size());
-    for (int fi = 0; fi < futures.size(); ++fi) {
-        if (fi % 10 == 0) qDebug() << "[Step4] collecting batch" << fi << "/" << futures.size();
-        ctx.offsetPoints.append(futures[fi].result());
-    }
-    qDebug() << "[Step4] all" << futures.size() << "batches collected, total" << ctx.offsetPoints.size() << "points";
+    for (auto& f : futures)
+        ctx.offsetPoints.append(f.result());
 
     // 统计
     int validN = 0;

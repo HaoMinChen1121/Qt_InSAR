@@ -129,6 +129,7 @@
     <ClCompile Include="services\registration\steps\QualityEvaluator.cpp" />
     <ClCompile Include="services\registration\steps\SincResampler.cpp" />
     <!-- Data access stubs -->
+    <ClCompile Include="dataaccess\impl\BurstCache.cpp" />
     <ClCompile Include="dataaccess\impl\GdalSlcReader.cpp" />
     <ClCompile Include="dataaccess\impl\GdalSlcWriter.cpp" />
     <ClCompile Include="dataaccess\impl\GdalInterferogramReader.cpp" />
@@ -197,6 +198,7 @@
     <QtMoc Include="ui\OverviewWidget.h" />
     <QtMoc Include="ui\SarMetadataPanel.h" />
     <!-- Headers -->
+    <ClInclude Include="dataaccess\impl\BurstCache.h" />
     <ClInclude Include="algorithms\ComplexSoA.h" />
     <ClInclude Include="algorithms\Correlation.h" />
     <ClInclude Include="algorithms\DerampCore.h" />

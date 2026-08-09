@@ -8,7 +8,7 @@ class DataReader : public IRegStep {
 public:
     bool execute(PipelineContext& ctx) override;
     QString name() const override { return QStringLiteral("1. Data Reader"); }
-    static void cleanupExtracted();  // 程序退出时删除解压目录
+    static void cleanupExtracted();
 };
 
 #endif

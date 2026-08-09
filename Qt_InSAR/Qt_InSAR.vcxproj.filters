@@ -69,6 +69,7 @@
   </ItemGroup>
   <!-- DataAccess\Impl -->
   <ItemGroup>
+    <ClCompile Include="dataaccess\impl\BurstCache.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\GdalSlcReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\GdalSlcWriter.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\GdalInterferogramReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
@@ -78,6 +79,7 @@
     <ClCompile Include="dataaccess\impl\Sentinel1Product.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\GdalVsiProcessor.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\QsarIO.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClInclude Include="dataaccess\impl\BurstCache.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\GdalVsiProcessor.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\QsarIO.h"><Filter>DataAccess\Impl</Filter></ClInclude>

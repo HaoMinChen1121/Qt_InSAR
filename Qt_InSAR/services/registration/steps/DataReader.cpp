@@ -4,8 +4,10 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
-#include <QProcess>
 #include <QSet>
+#include <gdal_priv.h>
+#include <cpl_vsi.h>
+#include <cpl_conv.h>
 
 // ── 退出时清理的解压目录 ──
 static QSet<QString>& extractedDirs() {
@@ -13,10 +15,47 @@ static QSet<QString>& extractedDirs() {
     return dirs;
 }
 
-// ── /vsizip 路径 → 解压到ZIP同目录, 返回本地路径 ──
+// ── GDAL VSI 复制文件 (顺序单线程, 线程安全) ──
+static bool vsiCopyFile(const QString& srcVsi, const QString& dstPath) {
+    VSILFILE* src = VSIFOpenExL(srcVsi.toUtf8().constData(), "rb", TRUE);
+    if (!src) return false;
+    VSILFILE* dst = VSIFOpenExL(dstPath.toUtf8().constData(), "wb", FALSE);
+    if (!dst) { VSIFCloseL(src); return false; }
+
+    QByteArray buf(1024 * 1024, Qt::Uninitialized); // 1MB buffer
+    bool ok = true;
+    while (true) {
+        vsi_l_offset n = VSIFReadL(buf.data(), 1, buf.size(), src);
+        if (n == 0) break;
+        if (VSIFWriteL(buf.data(), 1, n, dst) != n) { ok = false; break; }
+    }
+    VSIFCloseL(src);
+    VSIFCloseL(dst);
+    return ok;
+}
+
+// ── 递归列出 /vsizip 内的所有文件 ──
+static void listVsizipRecursive(const QString& dir, QStringList& files) {
+    char** entries = VSIReadDir(dir.toUtf8().constData());
+    if (!entries) return;
+    for (int i = 0; entries[i]; ++i) {
+        QString name = QString::fromUtf8(entries[i]);
+        if (name == "." || name == "..") continue;
+        QString full = dir + "/" + name;
+        VSIStatBufL st;
+        if (VSIStatL(full.toUtf8().constData(), &st) == 0) {
+            if (VSI_ISDIR(st.st_mode))
+                listVsizipRecursive(full, files);
+            else
+                files.append(full);
+        }
+    }
+    CSLDestroy(entries);
+}
+
+// ── /vsizip → GDAL VSI 逐文件提取到ZIP同目录 ──
 static QString extractVsizip(const QString& vsiPath)
 {
-    // 格式: /vsizip/F:/path/to/file.zip/internal/path
     if (!vsiPath.startsWith("/vsizip/")) return vsiPath;
 
     QString inner = vsiPath.mid(8);
@@ -27,24 +66,27 @@ static QString extractVsizip(const QString& vsiPath)
     int safeEnd = innerPath.indexOf('/');
     QString safeName = (safeEnd > 0) ? innerPath.left(safeEnd) : innerPath;
 
-    // 解压到ZIP同目录:  F:/data/xxx.zip → F:/data/xxx_extracted/
     QFileInfo zipInfo(zipPath);
-    QString extractDir = zipInfo.absolutePath() + "/" + zipInfo.completeBaseName() + "_extracted";
-    QString safeDir = extractDir + "/" + safeName;
+    QString extractRoot = zipInfo.absolutePath() + "/" + zipInfo.completeBaseName() + "_extracted";
+    QString safeDir = extractRoot + "/" + safeName;
 
     if (!QFileInfo::exists(safeDir)) {
-        QDir().mkpath(extractDir);
-        qDebug() << "[DataReader] extracting" << zipPath << "->" << extractDir;
+        QDir().mkpath(extractRoot);
+        qDebug() << "[DataReader] extracting (GDAL VSI)" << zipPath << "->" << extractRoot;
 
-        QProcess proc;
-        proc.start("tar", {"-xf", zipPath, "-C", extractDir});
-        if (!proc.waitForFinished(120000) || proc.exitCode() != 0) {
-            qWarning() << "[DataReader] tar extract failed, fallback to /vsizip";
-            QDir(extractDir).removeRecursively();
-            return vsiPath;
+        QString vsiRoot = "/vsizip/" + zipPath;
+        QStringList files;
+        listVsizipRecursive(vsiRoot, files);
+
+        for (const auto& vsiFile : files) {
+            // /vsizip/F:/zip.zip/SAFE/manifest.safe → 去掉 /vsizip/ + zip部分
+            QString relPath = vsiFile.mid(vsiRoot.length() + 1); // /SAFE/manifest.safe → SAFE/manifest.safe
+            QString dstPath = extractRoot + "/" + relPath;
+            QDir().mkpath(QFileInfo(dstPath).absolutePath());
+            vsiCopyFile(vsiFile, dstPath);
         }
-        qDebug() << "[DataReader] extract done";
-        extractedDirs().insert(QDir::cleanPath(extractDir));
+        qDebug() << "[DataReader] extract done:" << files.size() << "files";
+        extractedDirs().insert(QDir::cleanPath(extractRoot));
     }
 
     if (safeEnd > 0 && safeEnd + 1 < innerPath.length())
@@ -53,7 +95,6 @@ static QString extractVsizip(const QString& vsiPath)
 }
 
 bool DataReader::execute(PipelineContext& ctx) {
-    // ── ZIP 预解压: /vsizip → 临时目录 ──
     QString masterLocal = extractVsizip(ctx.masterBand->rasterPath);
     QString slaveLocal  = extractVsizip(ctx.slaveBand->rasterPath);
 
@@ -73,7 +114,6 @@ bool DataReader::execute(PipelineContext& ctx) {
     }
     qDebug() << "[DataReader] slave opened ok";
 
-    // 存储解压后的本地路径, 后续步骤从此读取
     ctx.masterLocalPath = masterLocal;
     ctx.slaveLocalPath  = slaveLocal;
 
