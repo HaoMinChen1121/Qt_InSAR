@@ -2,6 +2,7 @@
 #include "../PipelineContext.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/GdalDemReader.h"
+#include "domain/SarComplexTypes.h"
 
 #include <gdal_priv.h>
 
@@ -80,7 +81,7 @@ bool TopoPhaseRemover::execute(IfgPipelineContext& ctx)
             rowBuf[col] = diffVal;
             rowPhase[col] = std::atan2(diffVal.imag(), diffVal.real());
         }
-        GDALRasterIO(GDALGetRasterBand(hOut,1), GF_Write, 0, row, w, 1, rowBuf.data(), w, 1, GDT_CFloat32, 0, 0);
+        GDALRasterIO(GDALGetRasterBand(hOut,1), GF_Write, 0, row, w, 1, reinterpret_cast<CFloat32*>(rowBuf.data()), w, 1, GDT_CFloat32, 0, 0);
         GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, w, 1, rowPhase.data(), w, 1, GDT_Float32, 0, 0);
     }
     GDALClose(hOut); GDALClose(hPh); reader.close(); dem.close();

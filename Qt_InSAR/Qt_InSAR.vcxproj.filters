@@ -38,15 +38,20 @@
     <ClCompile Include="algorithms\OrbitInterpolator.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\PolynomialFit.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\SincInterpolator.cpp"><Filter>Algorithms</Filter></ClCompile>
+    <ClInclude Include="algorithms\ComplexSoA.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\Correlation.h"><Filter>Algorithms</Filter></ClInclude>
+    <ClInclude Include="algorithms\DerampCore.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\OrbitInterpolator.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\PolynomialFit.h"><Filter>Algorithms</Filter></ClInclude>
+    <ClInclude Include="algorithms\SimdMath.h"><Filter>Algorithms</Filter></ClInclude>
+    <ClInclude Include="algorithms\SincInterpCore.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\SincInterpolator.h"><Filter>Algorithms</Filter></ClInclude>
   </ItemGroup>
   <!-- Domain -->
   <ItemGroup>
     <ClInclude Include="domain\OrbitInfo.h"><Filter>Domain</Filter></ClInclude>
     <ClInclude Include="domain\QsarProduct.h"><Filter>Domain</Filter></ClInclude>
+    <ClInclude Include="domain\SarComplexTypes.h"><Filter>Domain</Filter></ClInclude>
     <ClInclude Include="domain\SarProductType.h"><Filter>Domain</Filter></ClInclude>
     <ClInclude Include="domain\SarSensorInfo.h"><Filter>Domain</Filter></ClInclude>
   </ItemGroup>

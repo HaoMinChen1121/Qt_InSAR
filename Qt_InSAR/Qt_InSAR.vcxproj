@@ -60,10 +60,10 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
-    <LocalDebuggerEnvironment>PATH=E:\GIS_QT\apps\Qt5\bin;E:\GIS_QT\bin;E:\GIS_QT\apps\qgis-ltr\bin;F:\SARibbon\bin_qt5.15.13_MSVC_x64\bin;$(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
+    <LocalDebuggerEnvironment>PATH=F:\vcpkg\installed\x64-windows\bin;E:\GIS_QT\apps\Qt5\bin;E:\GIS_QT\bin;E:\GIS_QT\apps\qgis-ltr\bin;F:\SARibbon\bin_qt5.15.13_MSVC_x64\bin;$(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
-    <LocalDebuggerEnvironment>PATH=E:\GIS_QT\apps\Qt5\bin;E:\GIS_QT\bin;E:\GIS_QT\apps\qgis-ltr\bin;F:\SARibbon\bin_qt5.15.13_MSVC_x64\bin;$(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
+    <LocalDebuggerEnvironment>PATH=F:\vcpkg\installed\x64-windows\bin;E:\GIS_QT\apps\Qt5\bin;E:\GIS_QT\bin;E:\GIS_QT\apps\qgis-ltr\bin;F:\SARibbon\bin_qt5.15.13_MSVC_x64\bin;$(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">
     <ClCompile>
@@ -72,15 +72,16 @@
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <PreprocessorDefinitions>_USE_MATH_DEFINES;_SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>E:\GIS_QT\include;E:\GIS_QT\apps\qgis-ltr\include;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include\SARibbonBar;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include\QWindowKit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>SIMD_AVX2;_USE_MATH_DEFINES;_SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>E:\GIS_QT\include;E:\GIS_QT\apps\qgis-ltr\include;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include\SARibbonBar;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include\QWindowKit;F:\vcpkg\installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>E:\GIS_QT\lib;E:\GIS_QT\apps\qgis-ltr\lib;F:\SARibbon\bin_qt5.15.13_MSVC_x64\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>gdal_i.lib;qgis_core.lib;qgis_gui.lib;qgis_analysis.lib;SARibbonBar.lib;QWKCore.lib;QWKWidgets.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>E:\GIS_QT\lib;E:\GIS_QT\apps\qgis-ltr\lib;F:\SARibbon\bin_qt5.15.13_MSVC_x64\lib;F:\vcpkg\installed\x64-windows\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>fftw3f.lib;gdal_i.lib;qgis_core.lib;qgis_gui.lib;qgis_analysis.lib;SARibbonBar.lib;QWKCore.lib;QWKWidgets.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="Configuration">
@@ -92,17 +93,18 @@
       <LanguageStandard>stdcpp17</LanguageStandard>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <PreprocessorDefinitions>_USE_MATH_DEFINES;_SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>E:\GIS_QT\include;E:\GIS_QT\apps\qgis-ltr\include;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include\SARibbonBar;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include\QWindowKit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>SIMD_AVX2;_USE_MATH_DEFINES;_SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>E:\GIS_QT\include;E:\GIS_QT\apps\qgis-ltr\include;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include\SARibbonBar;F:\SARibbon\bin_qt5.15.13_MSVC_x64\include\QWindowKit;F:\vcpkg\installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalLibraryDirectories>E:\GIS_QT\lib;E:\GIS_QT\apps\qgis-ltr\lib;F:\SARibbon\bin_qt5.15.13_MSVC_x64\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>gdal_i.lib;qgis_core.lib;qgis_gui.lib;qgis_analysis.lib;SARibbonBar.lib;QWKCore.lib;QWKWidgets.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>E:\GIS_QT\lib;E:\GIS_QT\apps\qgis-ltr\lib;F:\SARibbon\bin_qt5.15.13_MSVC_x64\lib;F:\vcpkg\installed\x64-windows\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>fftw3f.lib;gdal_i.lib;qgis_core.lib;qgis_gui.lib;qgis_analysis.lib;SARibbonBar.lib;QWKCore.lib;QWKWidgets.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -195,12 +197,17 @@
     <QtMoc Include="ui\OverviewWidget.h" />
     <QtMoc Include="ui\SarMetadataPanel.h" />
     <!-- Headers -->
+    <ClInclude Include="algorithms\ComplexSoA.h" />
     <ClInclude Include="algorithms\Correlation.h" />
+    <ClInclude Include="algorithms\DerampCore.h" />
     <ClInclude Include="algorithms\OrbitInterpolator.h" />
     <ClInclude Include="algorithms\PolynomialFit.h" />
+    <ClInclude Include="algorithms\SimdMath.h" />
+    <ClInclude Include="algorithms\SincInterpCore.h" />
     <ClInclude Include="algorithms\SincInterpolator.h" />
     <ClInclude Include="domain\OrbitInfo.h" />
     <ClInclude Include="domain\QsarProduct.h" />
+    <ClInclude Include="domain\SarComplexTypes.h" />
     <ClInclude Include="domain\SarProductType.h" />
     <ClInclude Include="domain\SarSensorInfo.h" />
     <ClInclude Include="domain\params\DeformationParams.h" />

@@ -1,14 +1,20 @@
 #include "mainwindow.h"
 #include "controllers/ApplicationController.h"
 #include "controllers/WorkerManager.h"
+#include "algorithms/SimdMath.h"
 #include <qgsapplication.h>
 #include <gdal_priv.h>
+#include <QDebug>
 
 int main(int argc, char *argv[])
 {
     GDALAllRegister();
     CPLSetConfigOption("GDAL_CACHEMAX", "512");
     CPLSetConfigOption("GDAL_NUM_THREADS", "ALL_CPUS");
+
+    sar::gSimdLevel = sar::detectSimdLevel();
+    qDebug() << "[SIMD] detected level:" << static_cast<int>(sar::gSimdLevel)
+             << "(0=Scalar 1=SSE2 2=AVX2   max=" << static_cast<int>(sar::kMaxSimd) << ")";
     QgsApplication app(argc, argv, true);
     QgsApplication::setApplicationName("InSAR Processor");
     QgsApplication::setPrefixPath("E:/GIS_QT/apps/qgis-ltr", true);

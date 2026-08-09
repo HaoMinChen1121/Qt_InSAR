@@ -12,6 +12,7 @@
 #include <cpl_port.h>
 #include <cpl_vsi.h>
 #include <cpl_string.h>
+#include "domain/SarComplexTypes.h"
 
 // ──────────────────────────────────────────────────────────
 // 构造/析构
@@ -736,7 +737,7 @@ QVector<std::complex<float>> Sentinel1Product::readComplexSamples(
 
     data.resize(w * h);
     CPLErr err = GDALRasterIO(GDALGetRasterBand(hDS, 1), GF_Read,
-        x0, y0, w, h, data.data(), w, h, GDT_CFloat32, 0, 0);
+        x0, y0, w, h, reinterpret_cast<CFloat32*>(data.data()), w, h, GDT_CFloat32, 0, 0);
     GDALClose(hDS);
 
     if (err != CE_None)

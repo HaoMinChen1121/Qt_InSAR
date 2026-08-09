@@ -1,6 +1,8 @@
 #include "SincResampler.h"
 #include "../PipelineContext.h"
 #include "algorithms/SincInterpolator.h"
+#include "algorithms/ComplexSoA.h"
+#include "algorithms/DerampCore.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/GdalSlcWriter.h"
 #include <QDebug>
@@ -263,6 +265,14 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             return false;
         }
 
+        // ── Deramp: 整个burst一次性完成 (修复原per-strip的33x冗余) ──
+        if (doDeramp) {
+            sar::ComplexSoA soa;
+            soa.fromAos(fullBurst.constData(), sW * L);
+            sar::applyDeramp_SoA(soa, sW, L, burstRow0, b, prf, kt);
+            soa.toAos(fullBurst.data(), sW * L);
+        }
+
         // ── 构建工作项 + 分批 ──
         QVector<ResampleWorkItem> items;
         items.reserve(L);
@@ -270,7 +280,7 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             items.append({burstRow0 + r, burstRow0 + r,
                           br.rangePoly, br.aziPoly});
 
-        int batchSz = qMax(1, (items.size() + nThreads - 1) / nThreads);
+        int batchSz = qMax(1, (items.size() + nThreads * 4 - 1) / (nThreads * 4));
         QList<QVector<ResampleWorkItem>> batches;
         for (int i = 0; i < items.size(); i += batchSz) {
             QVector<ResampleWorkItem> batch;
@@ -289,7 +299,7 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         rcfg.useFastSinc = useFastSinc;
         rcfg.sincW = sincW; rcfg.beta = beta;
         rcfg.sincLUT = &sincLUT;
-        rcfg.doDeramp = doDeramp;
+        rcfg.doDeramp = false;   // 已在burst级预deramp
         rcfg.prf = prf; rcfg.kt = kt;
         rcfg.burstIdx = b; rcfg.L = L;
         qDebug() << "[Step9] config ready, processing batches serially...";

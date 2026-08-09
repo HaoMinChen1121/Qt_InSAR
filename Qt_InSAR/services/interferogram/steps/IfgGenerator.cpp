@@ -1,6 +1,7 @@
 #include "IfgGenerator.h"
 #include "../PipelineContext.h"
 #include "dataaccess/impl/GdalSlcReader.h"
+#include "domain/SarComplexTypes.h"
 
 #include <gdal_priv.h>
 
@@ -185,7 +186,7 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                     rowCoh[col] = static_cast<float>(std::abs(crossSum) / denom);
                 }
 
-                GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, outRow, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
+                GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, outRow, outW, 1, reinterpret_cast<CFloat32*>(rowComplex.data()), outW, 1, GDT_CFloat32, 0, 0);
                 GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, outRow, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
                 GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, outRow, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
             }
@@ -203,7 +204,7 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
             if (actualH == 0) {
                 rowComplex.fill(std::complex<float>(0,0));
                 rowPhase.fill(0); rowCoh.fill(0);
-                GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, row, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
+                GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, row, outW, 1, reinterpret_cast<CFloat32*>(rowComplex.data()), outW, 1, GDT_CFloat32, 0, 0);
                 GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
                 GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
                 continue;
@@ -252,7 +253,7 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                 rowCoh[col] = static_cast<float>(std::abs(crossSum) / denom);
             }
 
-            GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, row, outW, 1, rowComplex.data(), outW, 1, GDT_CFloat32, 0, 0);
+            GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, row, outW, 1, reinterpret_cast<CFloat32*>(rowComplex.data()), outW, 1, GDT_CFloat32, 0, 0);
             GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
             GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
         }

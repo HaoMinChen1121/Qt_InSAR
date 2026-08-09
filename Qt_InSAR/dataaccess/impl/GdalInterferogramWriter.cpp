@@ -1,6 +1,7 @@
 #include "GdalInterferogramWriter.h"
 #include <gdal_priv.h>
 #include <QVector>
+#include "domain/SarComplexTypes.h"
 
 GdalInterferogramWriter::GdalInterferogramWriter() = default;
 GdalInterferogramWriter::~GdalInterferogramWriter() { close(); }
@@ -39,7 +40,7 @@ bool GdalInterferogramWriter::writeComplex(const QVector<std::complex<float>>& d
     if (data.size() < w * h) return false;
     GDALRasterBand* band = ds->GetRasterBand(1);
     CPLErr err = band->RasterIO(GF_Write, 0, 0, w, h,
-        const_cast<std::complex<float>*>(data.constData()),
+        reinterpret_cast<CFloat32*>(const_cast<std::complex<float>*>(data.constData())),
         w, h, GDT_CFloat32, 0, 0);
     return err == CE_None;
 }

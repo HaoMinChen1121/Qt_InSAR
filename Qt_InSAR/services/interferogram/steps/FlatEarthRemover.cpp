@@ -1,6 +1,7 @@
 #include "FlatEarthRemover.h"
 #include "../PipelineContext.h"
 #include "dataaccess/impl/GdalSlcReader.h"
+#include "domain/SarComplexTypes.h"
 
 #include <gdal_priv.h>
 
@@ -63,7 +64,7 @@ bool FlatEarthRemover::execute(IfgPipelineContext& ctx)
             rowBuf[col] = flatVal;
             rowPhase[col] = std::atan2(flatVal.imag(), flatVal.real());
         }
-        GDALRasterIO(GDALGetRasterBand(hOut,1), GF_Write, 0, row, w, 1, rowBuf.data(), w, 1, GDT_CFloat32, 0, 0);
+        GDALRasterIO(GDALGetRasterBand(hOut,1), GF_Write, 0, row, w, 1, reinterpret_cast<CFloat32*>(rowBuf.data()), w, 1, GDT_CFloat32, 0, 0);
         GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, w, 1, rowPhase.data(), w, 1, GDT_Float32, 0, 0);
     }
     GDALClose(hOut); GDALClose(hPh);

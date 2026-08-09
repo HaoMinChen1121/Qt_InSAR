@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QTextStream>
 #include <QDebug>
+#include "domain/SarComplexTypes.h"
 
 // ---- file-scope: GDAL pixel function for complex-to-amplitude conversion ----
 
@@ -227,7 +228,7 @@ static bool createAmplitudeGeoTiff(const QString& vsiPath,
         for (int y = 0; y < h; y += blockYSize) {
             int rows = (y + blockYSize <= h) ? blockYSize : (h - y);
             if (GDALRasterIO(srcBand, GF_Read, 0, y, w, rows,
-                             srcBuf.data(), w, rows, GDT_CFloat32, 0, 0)
+                             reinterpret_cast<CFloat32*>(srcBuf.data()), w, rows, GDT_CFloat32, 0, 0)
                 != CE_None) break;
 
             int n = w * rows;

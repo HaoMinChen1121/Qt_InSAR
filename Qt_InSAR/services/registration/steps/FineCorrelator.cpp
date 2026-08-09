@@ -87,8 +87,8 @@ bool FineCorrelator::execute(PipelineContext& ctx) {
     }
 
     // 分批
-    int nThreads = qBound(1, QThread::idealThreadCount(), 6);  // FFTW3 mutex, 6线程平衡
-    int batchSize = qMax(1, (N + nThreads - 1) / nThreads);
+    int nThreads = qBound(1, QThread::idealThreadCount(), 12);
+    int batchSize = qMax(1, (N + nThreads * 4 - 1) / (nThreads * 4));
     QList<QVector<FineWorkItem>> batches;
     for (int i = 0; i < N; i += batchSize) {
         QVector<FineWorkItem> batch;

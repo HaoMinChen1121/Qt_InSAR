@@ -1,6 +1,7 @@
 #include "GdalInterferogramReader.h"
 #include <gdal_priv.h>
 #include <QVector>
+#include "domain/SarComplexTypes.h"
 
 GdalInterferogramReader::GdalInterferogramReader() = default;
 GdalInterferogramReader::~GdalInterferogramReader() { close(); }
@@ -31,7 +32,7 @@ QVector<std::complex<float>> GdalInterferogramReader::readComplex()
     QVector<std::complex<float>> buf(mWidth * mHeight);
     GDALRasterBandH band = GDALGetRasterBand(static_cast<GDALDatasetH>(mDataset), 1);
     CPLErr err = GDALRasterIO(band, GF_Read, 0, 0, mWidth, mHeight,
-        buf.data(), mWidth, mHeight, GDT_CFloat32, 0, 0);
+        reinterpret_cast<CFloat32*>(buf.data()), mWidth, mHeight, GDT_CFloat32, 0, 0);
     if (err != CE_None) buf.clear();
     return buf;
 }

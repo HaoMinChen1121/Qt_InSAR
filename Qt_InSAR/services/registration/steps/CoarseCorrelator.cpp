@@ -103,8 +103,8 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     }
 
     // 按线程数分批
-    int nThreads = qBound(1, QThread::idealThreadCount(), 6);  // FFTW3 mutex, 6线程平衡
-    int batchSize = qMax(1, (items.size() + nThreads - 1) / nThreads);
+    int nThreads = qBound(1, QThread::idealThreadCount(), 12);
+    int batchSize = qMax(1, (items.size() + nThreads * 4 - 1) / (nThreads * 4));
     QList<QVector<CoarseWorkItem>> batches;
     for (int i = 0; i < items.size(); i += batchSize) {
         QVector<CoarseWorkItem> batch;
@@ -132,10 +132,14 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     }
 
     // 收集结果
+    qDebug() << "[Step4] waiting for" << futures.size() << "batches to finish...";
     ctx.offsetPoints.clear();
     ctx.offsetPoints.reserve(items.size());
-    for (auto& f : futures)
-        ctx.offsetPoints.append(f.result());
+    for (int fi = 0; fi < futures.size(); ++fi) {
+        if (fi % 10 == 0) qDebug() << "[Step4] collecting batch" << fi << "/" << futures.size();
+        ctx.offsetPoints.append(futures[fi].result());
+    }
+    qDebug() << "[Step4] all" << futures.size() << "batches collected, total" << ctx.offsetPoints.size() << "points";
 
     // 统计
     int validN = 0;

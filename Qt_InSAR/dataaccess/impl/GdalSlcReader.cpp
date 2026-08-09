@@ -5,6 +5,7 @@
 #include <cpl_port.h>
 #include <QVector>
 #include <algorithm>
+#include "domain/SarComplexTypes.h"
 
 GdalSlcReader::GdalSlcReader() = default;
 GdalSlcReader::~GdalSlcReader() { close(); }
@@ -48,7 +49,7 @@ QVector<std::complex<float>> GdalSlcReader::readBand(int bandIndex)
     GDALRasterBand* band = ds->GetRasterBand(bandIndex + 1);
 
     CPLErr err = band->RasterIO(GF_Read, 0, 0, mWidth, mHeight,
-        buffer.data(), mWidth, mHeight, GDT_CFloat32, 0, 0);
+        reinterpret_cast<CFloat32*>(buffer.data()), mWidth, mHeight, GDT_CFloat32, 0, 0);
 
     if (err != CE_None)
         buffer.clear();
@@ -73,7 +74,7 @@ QVector<std::complex<float>> GdalSlcReader::readBandWindow(int bandIndex,
     GDALRasterBand* band = ds->GetRasterBand(bandIndex + 1);
 
     CPLErr err = band->RasterIO(GF_Read, colStart, rowStart,
-        colSize, rowSize, buffer.data(), colSize, rowSize,
+        colSize, rowSize, reinterpret_cast<CFloat32*>(buffer.data()), colSize, rowSize,
         GDT_CFloat32, 0, 0);
 
     if (err != CE_None)

@@ -1,11 +1,14 @@
 #include "Correlation.h"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <memory>
 #include <QDebug>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QThread>
 
 #if __has_include(<fftw3.h>)
   #define HAS_FFTW 1
@@ -19,8 +22,6 @@
 #endif
 
 static int nextPow2(int n) { int p = 1; while (p < n) p <<= 1; return p; }
-static QMutex gFftwMutex;  // FFTW3 plan创建不是线程安全的
-
 // ── Hamming 窗 ──
 static void applyHammingWindow(std::complex<float>* data, int rows, int cols) {
     for (int r = 0; r < rows; ++r) {
@@ -32,33 +33,75 @@ static void applyHammingWindow(std::complex<float>* data, int rows, int cols) {
     }
 }
 
-// ── FFTW3 2D FFT ──
-static bool fft2D(std::complex<float>* data, int rows, int cols, bool inverse) {
+// ── FFTW3 thread_local plan cache (fftw3[threads], execute_dft零拷贝) ──
 #if HAS_FFTW
-    static bool logged = false;
-    if (!logged) { qDebug() << "[Correlation] FFTW3 ready"; logged = true; }
-    fftwf_plan p;
-    {
-        QMutexLocker lock(&gFftwMutex);
-        p = fftwf_plan_dft_2d(rows, cols,
-            reinterpret_cast<fftwf_complex*>(data),
-            reinterpret_cast<fftwf_complex*>(data),
-            inverse ? FFTW_BACKWARD : FFTW_FORWARD, FFTW_ESTIMATE);
+struct FftwPlanEntry {
+    int r, c; bool inv;
+    fftwf_plan plan;
+};
+
+struct FftwPlanCache {
+    QVector<FftwPlanEntry> entries;
+
+    fftwf_plan get(int rows, int cols, bool inverse) const {
+        for (const auto& e : entries)
+            if (e.r == rows && e.c == cols && e.inv == inverse)
+                return e.plan;
+        return nullptr;
     }
-    fftwf_execute(p);
-    {
-        QMutexLocker lock(&gFftwMutex);
-        fftwf_destroy_plan(p);
+
+    void put(int rows, int cols, bool inverse, fftwf_plan p) {
+        entries.append({rows, cols, inverse, p});
     }
+
+    ~FftwPlanCache() {
+        for (auto& e : entries)
+            if (e.plan) fftwf_destroy_plan(e.plan);
+    }
+};
+static thread_local FftwPlanCache tlFftwCache;
+static QMutex gFftwCreateLock;  // 仅序列化 plan 创建
+static std::atomic<int> gFftwCallCount{0};
+
+static bool fft2D(std::complex<float>* data, int rows, int cols, bool inverse) {
+    int N = rows * cols;
+    auto* cd = reinterpret_cast<fftwf_complex*>(data);
+
+    fftwf_plan p = tlFftwCache.get(rows, cols, inverse);
+    if (!p) {
+        QMutexLocker lock(&gFftwCreateLock);
+        p = tlFftwCache.get(rows, cols, inverse);  // double-check
+        if (!p) {
+            // MESURE需执行FFT测速 → 用临时buffer, 避免破坏调用者data
+            fftwf_complex* tmp = fftwf_alloc_complex(N);
+            int sign = inverse ? FFTW_BACKWARD : FFTW_FORWARD;
+            p = fftwf_plan_dft_2d(rows, cols, tmp, tmp, sign, FFTW_MEASURE);
+            fftwf_free(tmp);
+            tlFftwCache.put(rows, cols, inverse, p);
+        }
+    }
+
+    // execute_dft 直接操作 data buffer, 零拷贝
+    fftwf_execute_dft(p, cd, cd);
+
+    int callId = ++gFftwCallCount;
+    if (callId <= 10 || callId % 50 == 0) {
+        qDebug() << "[FFTW] call#" << callId << "|" << rows << "x" << cols
+                 << (inverse ? "inv" : "fwd")
+                 << "| thread" << (quintptr)QThread::currentThreadId() % 1000;
+    }
+
     if (inverse) {
-        float norm = 1.0f / (rows * cols);
-        for (int i = 0; i < rows * cols; ++i) data[i] *= norm;
+        float norm = 1.0f / N;
+        for (int i = 0; i < N; ++i) data[i] *= norm;
     }
     return true;
-#else
-    Q_UNUSED(data); Q_UNUSED(rows); Q_UNUSED(cols); Q_UNUSED(inverse); return false;
-#endif
 }
+#else
+static bool fft2D(std::complex<float>* data, int rows, int cols, bool inverse) {
+    Q_UNUSED(data); Q_UNUSED(rows); Q_UNUSED(cols); Q_UNUSED(inverse); return false;
+}
+#endif
 
 // ── FFTW3 相位相关 (复数域 + Hamming窗 + 归一化互功率谱) ──
 float fftPhaseCorrelate(const std::complex<float>* a,
