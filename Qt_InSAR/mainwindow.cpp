@@ -459,8 +459,8 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mRegParams.fineMethod = "FFT";
     mRegParams.resamplingMethod = "Sinc";
     mRegParams.outputPrefix = "registered";
-    mRegParams.coarseWindowSize = 256;
-    mRegParams.offsetPerBurst = 64;
+    mRegParams.coarseWindowSize = 128;
+    mRegParams.offsetPerBurst = 8;
     mRegParams.enableEsd = true;
 }
 
@@ -492,7 +492,7 @@ RegistrationParams MainWindow::collectRegParams() const
         if (mEsdCheck) p.enableEsd = mEsdCheck->isChecked();
         if (mFineFftCheck) p.enableFineFFT = mFineFftCheck->isChecked();
         if (mFineFftWinSpin) p.fineFFTWindow = mFineFftWinSpin->value();
-        p.offsetPerBurst = 64;
+        p.offsetPerBurst = 8;
         break;
     case RegRoute::Route3_FFT_FFTW:
         p.coarseMethod = "FFT";
@@ -501,7 +501,7 @@ RegistrationParams MainWindow::collectRegParams() const
         if (mEsdCheck) p.enableEsd = mEsdCheck->isChecked();
         if (mFineFftCheck) p.enableFineFFT = mFineFftCheck->isChecked();
         if (mFineFftWinSpin) p.fineFFTWindow = mFineFftWinSpin->value();
-        p.offsetPerBurst = 64;
+        p.offsetPerBurst = 8;
         break;
     }
     return p;

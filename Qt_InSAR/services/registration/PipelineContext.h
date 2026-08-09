@@ -16,6 +16,8 @@ struct PipelineContext {
 
     // ── Step 1: 数据 ──
     SlcDataBundle  data;
+    QString masterLocalPath;   // ZIP解压后的本地路径
+    QString slaveLocalPath;
     GdalSlcReader* masterReader = nullptr;
     GdalSlcReader* slaveReader  = nullptr;
 

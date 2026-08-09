@@ -2,6 +2,7 @@
 #include "controllers/ApplicationController.h"
 #include "controllers/WorkerManager.h"
 #include "algorithms/SimdMath.h"
+#include "services/registration/steps/DataReader.h"
 #include <qgsapplication.h>
 #include <gdal_priv.h>
 #include <QDebug>
@@ -27,6 +28,7 @@ int main(int argc, char *argv[])
     mainWindow.show();
 
     int ret = app.exec();
+    DataReader::cleanupExtracted();
     QgsApplication::exitQgis();
     return ret;
 }

@@ -20,9 +20,20 @@ struct FineConfig {
 static QVector<OffsetPoint> processFineBatch(
     QVector<FineWorkItem> batch, FineConfig cfg)
 {
-    GdalSlcReader mR, sR;
-    if (!mR.open(cfg.masterPath) || !sR.open(cfg.slavePath))
-        return {};
+    thread_local GdalSlcReader tlMaster, tlSlave;
+    thread_local QString tlMasterPath, tlSlavePath;
+    if (tlMasterPath != cfg.masterPath) {
+        tlMaster.close();
+        if (!tlMaster.open(cfg.masterPath)) return {};
+        tlMasterPath = cfg.masterPath;
+    }
+    if (tlSlavePath != cfg.slavePath) {
+        tlSlave.close();
+        if (!tlSlave.open(cfg.slavePath)) return {};
+        tlSlavePath = cfg.slavePath;
+    }
+    GdalSlcReader& mR = tlMaster;
+    GdalSlcReader& sR = tlSlave;
 
     int half = cfg.winSize / 2;
     QVector<OffsetPoint> results;
@@ -100,10 +111,9 @@ bool FineCorrelator::execute(PipelineContext& ctx) {
     qDebug() << QStringLiteral("[Step7] Parallel fine: %1 points, %2 threads, %3 batches")
         .arg(N).arg(nThreads).arg(batches.size());
 
-    // 并行
     FineConfig cfg;
-    cfg.masterPath = ctx.masterBand->rasterPath;
-    cfg.slavePath  = ctx.slaveBand->rasterPath;
+    cfg.masterPath = ctx.masterLocalPath.isEmpty() ? ctx.masterBand->rasterPath : ctx.masterLocalPath;
+    cfg.slavePath  = ctx.slaveLocalPath.isEmpty()  ? ctx.slaveBand->rasterPath  : ctx.slaveLocalPath;
     cfg.sW = sW; cfg.sH = sH;
     cfg.winSize = winSize;
 

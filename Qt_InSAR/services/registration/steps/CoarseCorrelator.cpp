@@ -22,9 +22,21 @@ struct CoarseConfig {
 static QVector<OffsetPoint> processCoarseBatch(
     QVector<CoarseWorkItem> batch, CoarseConfig cfg)
 {
-    GdalSlcReader mR, sR;
-    if (!mR.open(cfg.masterPath) || !sR.open(cfg.slavePath))
-        return {};
+    // thread_local: 每个工作线程复用同一个reader, 避免重复GDALOpenShared
+    thread_local GdalSlcReader tlMaster, tlSlave;
+    thread_local QString tlMasterPath, tlSlavePath;
+    if (tlMasterPath != cfg.masterPath) {
+        tlMaster.close();
+        if (!tlMaster.open(cfg.masterPath)) return {};
+        tlMasterPath = cfg.masterPath;
+    }
+    if (tlSlavePath != cfg.slavePath) {
+        tlSlave.close();
+        if (!tlSlave.open(cfg.slavePath)) return {};
+        tlSlavePath = cfg.slavePath;
+    }
+    GdalSlcReader& mR = tlMaster;
+    GdalSlcReader& sR = tlSlave;
 
     int half = cfg.winSize / 2;
     QVector<OffsetPoint> results;
@@ -116,10 +128,9 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     qDebug() << QStringLiteral("[Step4] Parallel coarse: %1 points, %2 threads, %3 batches")
         .arg(items.size()).arg(nThreads).arg(batches.size());
 
-    // 并行: 每批一个 QFuture
     CoarseConfig cfg;
-    cfg.masterPath = ctx.masterBand->rasterPath;
-    cfg.slavePath  = ctx.slaveBand->rasterPath;
+    cfg.masterPath = ctx.masterLocalPath.isEmpty() ? ctx.masterBand->rasterPath : ctx.masterLocalPath;
+    cfg.slavePath  = ctx.slaveLocalPath.isEmpty()  ? ctx.slaveBand->rasterPath  : ctx.slaveLocalPath;
     cfg.sW = sW; cfg.sH = sH;
     cfg.winSize = winSize;
     cfg.useNcc = useNcc;

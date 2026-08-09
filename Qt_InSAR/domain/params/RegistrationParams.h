@@ -39,7 +39,7 @@ struct RegistrationParams
     int       coarseControlPoints = 64;
     int       coarseSearchWindow = 64;
     int       coarseWindowSize  = 32;       // NCC窗口
-    int       offsetPerBurst    = 64;       // 每burst采样点数
+    int       offsetPerBurst    = 8;        // 每burst采样点数
     // ── 精配准 ──
     QString   fineMethod = "SubPixel";      // "SubPixel" / "Oversample"
     int       fineWindowSize = 32;

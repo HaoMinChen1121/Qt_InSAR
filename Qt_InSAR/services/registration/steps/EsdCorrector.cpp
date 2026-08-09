@@ -11,7 +11,6 @@
 #endif
 
 bool EsdCorrector::execute(PipelineContext& ctx) {
-    qDebug() << "[Step8] ESD Corrector starting, isTopsar=" << ctx.isTopsar << "enableEsd=" << ctx.params->enableEsd;
     if (ctx.params->route == RegRoute::Route1_OrbitFFT) return true;
     if (!ctx.isTopsar || !ctx.params->enableEsd) return true;
 
@@ -48,29 +47,22 @@ bool EsdCorrector::execute(PipelineContext& ctx) {
         lineA = qBound(halfW, lineA, mH - halfW);
         lineB = qBound(halfW, lineB, mH - halfW);
 
-        // 合并读取: 两窗口在 burst 边界处相邻, 一次大窗口覆盖
-        // 用 ceiling division 避免 ovLines 为奇数时合并窗口少1行
-        int halfLo = ovLines / 2;
-        int halfHi = ovLines - halfLo;
-        int mergeStart = lineA - halfLo;
-        int mergeH     = (lineB + halfHi) - mergeStart;
-        int offsetB    = lineB - lineA;  // B窗口在合并缓冲中的行偏移
+        auto mA = ctx.masterReader->readBandWindow(0, col0, lineA - ovLines/2, colW, ovLines);
+        auto sA = ctx.slaveReader->readBandWindow(0, col0, lineA - ovLines/2, colW, ovLines);
+        auto mB = ctx.masterReader->readBandWindow(0, col0, lineB - ovLines/2, colW, ovLines);
+        auto sB = ctx.slaveReader->readBandWindow(0, col0, lineB - ovLines/2, colW, ovLines);
 
-        auto mMerged = ctx.masterReader->readBandWindow(0, col0, mergeStart, colW, mergeH);
-        auto sMerged = ctx.slaveReader->readBandWindow(0, col0, mergeStart, colW, mergeH);
-
-        if (mMerged.size() < colW * mergeH || sMerged.size() < colW * mergeH) {
+        if (mA.size() < colW*ovLines || sA.size() < colW*ovLines
+            || mB.size() < colW*ovLines || sB.size() < colW*ovLines) {
             relCorr[b] = 0; continue;
         }
 
         std::complex<double> esdSum(0, 0);
-        int baseB = offsetB * colW;
-        int nPix = colW * ovLines;
-        for (int k = 0; k < nPix; ++k) {
-            auto ifgA = std::complex<double>(mMerged[k].real(), mMerged[k].imag())
-                       * std::complex<double>(sMerged[k].real(), -sMerged[k].imag());
-            auto ifgB = std::complex<double>(mMerged[baseB + k].real(), mMerged[baseB + k].imag())
-                       * std::complex<double>(sMerged[baseB + k].real(), -sMerged[baseB + k].imag());
+        for (int k = 0; k < colW * ovLines; ++k) {
+            auto ifgA = std::complex<double>(mA[k].real(), mA[k].imag())
+                       * std::complex<double>(sA[k].real(), -sA[k].imag());
+            auto ifgB = std::complex<double>(mB[k].real(), mB[k].imag())
+                       * std::complex<double>(sB[k].real(), -sB[k].imag());
             esdSum += ifgA * std::conj(ifgB);
         }
         double phase = std::arg(esdSum);
