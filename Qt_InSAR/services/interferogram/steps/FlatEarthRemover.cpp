@@ -8,6 +8,7 @@
 #include <QtMath>
 #include <QDir>
 #include <QFileInfo>
+#include <cmath>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -40,8 +41,10 @@ bool FlatEarthRemover::execute(IfgPipelineContext& ctx)
     double wavelength = ctx.params->wavelength;
     double nearRange = ctx.params->nearRange;
     double rangeSpacing = ctx.params->rangeSpacing;
-    double incRad = ctx.params->incidenceAngle * M_PI / 180.0;
     double Bpar = ctx.params->baselinePar;
+    // 入射角沿 range 线性变化: nearInc ~ farInc (mid±5°)
+    double incMidDeg = ctx.params->incidenceAngle;
+    double incNearDeg = incMidDeg - 5.0, incFarDeg = incMidDeg + 5.0;
 
     QVector<std::complex<float>> rowBuf(w);
     QVector<float> rowPhase(w);
@@ -50,11 +53,10 @@ bool FlatEarthRemover::execute(IfgPipelineContext& ctx)
         if (mCancelled) { GDALClose(hOut); GDALClose(hPh); return false; }
         auto rowData = reader.readBandWindow(0, 0, row, w, 1);
         for (int col = 0; col < w; ++col) {
-            double R = nearRange + col * rangeSpacing;
-            double phiFlat = 0;
-            if (R > 0) {
-                phiFlat = -4.0 * M_PI / wavelength * Bpar * std::sin(incRad);
-            }
+            // 距离变平板相位: φ_flat(R) = -4π/λ * B∥ * sin(θ(R))
+            double incDeg = incNearDeg + (incFarDeg - incNearDeg) * col / (w - 1 + 1e-9);
+            double incRad = incDeg * M_PI / 180.0;
+            double phiFlat = -4.0 * M_PI / wavelength * Bpar * std::sin(incRad);
             float c = std::cos(static_cast<float>(phiFlat));
             float s = std::sin(static_cast<float>(phiFlat));
             auto v = rowData.size() > col ? rowData[col] : std::complex<float>(0,0);
@@ -64,8 +66,10 @@ bool FlatEarthRemover::execute(IfgPipelineContext& ctx)
             rowBuf[col] = flatVal;
             rowPhase[col] = std::atan2(flatVal.imag(), flatVal.real());
         }
-        GDALRasterIO(GDALGetRasterBand(hOut,1), GF_Write, 0, row, w, 1, reinterpret_cast<CFloat32*>(rowBuf.data()), w, 1, GDT_CFloat32, 0, 0);
-        GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, w, 1, rowPhase.data(), w, 1, GDT_Float32, 0, 0);
+        GDALRasterIO(GDALGetRasterBand(hOut,1), GF_Write, 0, row, w, 1,
+            reinterpret_cast<CFloat32*>(rowBuf.data()), w, 1, GDT_CFloat32, 0, 0);
+        GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, w, 1,
+            rowPhase.data(), w, 1, GDT_Float32, 0, 0);
     }
     GDALClose(hOut); GDALClose(hPh);
 
