@@ -361,8 +361,6 @@ bool Sentinel1Product::parseManifest(const QString& manifestPath) {
                 mSensorInfo.rangeSpacing   = 2.3;
                 mSensorInfo.azimuthSpacing = 14.0;
             }
-            if (!swathName.isEmpty())
-                mParsedRangeSpacingBySwath[swathName] = mSensorInfo.rangeSpacing;
         }
     }
 
@@ -710,7 +708,7 @@ void Sentinel1Product::discoverMeasurementFiles(const QString& measurementDir) {
         b.burstByteOffsets  = mParsedBurstByteOffsetsBySwath.value(b.subSwath, mParsedBurstByteOffsets);
         b.samplesPerBurst   = mParsedSamplesPerBurstBySwath.value(b.subSwath, mParsedSamplesPerBurst);
         b.nearRange         = mParsedNearRangeBySwath.value(b.subSwath, 0.0);
-        b.rangeSpacing      = mParsedRangeSpacingBySwath.value(b.subSwath, 0.0);
+        b.rangeSpacing      = mSensorInfo.rangeSpacing;  // 所有 IW 共享
         b.azimuthFmRate      = mParsedAzimuthFmRateBySwath.value(b.subSwath, 0.0);
         b.azimuthSteeringRate = mParsedAzimuthSteeringRateBySwath.value(b.subSwath, 0.0);
         b.azimuthFrequency    = mParsedAzimuthFreqBySwath.value(b.subSwath, 0.0);
