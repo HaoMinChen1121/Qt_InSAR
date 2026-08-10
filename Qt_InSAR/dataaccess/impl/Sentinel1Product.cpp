@@ -191,16 +191,7 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
             ? QStringLiteral("Ascending") : QStringLiteral("Descending");
     }
 
-    // Sentinel-1 IW GRD 近似采样间距
-    if (mAcquisitionMode == "IW") {
-        if (mProductType == SarProductType::GRD) {
-            mSensorInfo.rangeSpacing   = 10.0;
-            mSensorInfo.azimuthSpacing = 10.0;
-        } else {
-            mSensorInfo.rangeSpacing   = 2.3;
-            mSensorInfo.azimuthSpacing = 14.0;
-        }
-    }
+    // 采样间距在 parseAnnotation() 中从 XML 读取
 
     // 通过 VSI 读取 manifest 到临时文件用于 QDomDocument 解析
     QString manifestVsi = safRoot + "/manifest.safe";
@@ -352,16 +343,7 @@ bool Sentinel1Product::parseManifest(const QString& manifestPath) {
             mSensorInfo.orbitDirection = (mOrbitNumberRel % 2 == 1)
                 ? QStringLiteral("Ascending") : QStringLiteral("Descending");
         }
-        // 近似采样间距
-        if (mAcquisitionMode == "IW") {
-            if (mProductType == SarProductType::GRD) {
-                mSensorInfo.rangeSpacing   = 10.0;
-                mSensorInfo.azimuthSpacing = 10.0;
-            } else {
-                mSensorInfo.rangeSpacing   = 2.3;
-                mSensorInfo.azimuthSpacing = 14.0;
-            }
-        }
+        // 采样间距在 parseAnnotation() 中从 XML 读取
     }
 
     // 从 XML 中提取 productType (更可靠)
@@ -420,10 +402,7 @@ bool Sentinel1Product::parseManifest(const QString& manifestPath) {
     mSensorInfo.annotationDir   = fi.dir().absolutePath() + "/annotation";
     mSensorInfo.measurementDir  = fi.dir().absolutePath() + "/measurement";
 
-    // 波长: Sentinel-1 C-band = 5.405 GHz → 0.0555 m
-    mSensorInfo.wavelength = 0.05546576;
-    mSensorInfo.centerFreq = 5405000000.0;
-
+    // 波长/频率 在 parseAnnotation() 中从 XML radarFrequency 读取
     return true;
 }
 
@@ -543,6 +522,7 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
             double inc = el.text().trimmed().toDouble();
             if (inc > 1.0) {
                 mSensorInfo.incidenceAngleMid  = inc;
+                // S1 annotation 无独立 near/far 入射角, 用 mid±5° 近似
                 mSensorInfo.incidenceAngleNear = inc - 5.0;
                 mSensorInfo.incidenceAngleFar  = inc + 5.0;
             }
@@ -611,6 +591,15 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
                     mParsedAzimuthFmRateBySwath[swathName] = coeffs[0].toDouble();
             }
         }
+        // radarFrequency → centerFreq + wavelength = c / f
+        QDomNodeList rfList = gaList.at(0).toElement().elementsByTagName("radarFrequency");
+        if (!rfList.isEmpty()) {
+            double rf = rfList.at(0).toElement().text().trimmed().toDouble();
+            if (rf > 1e8) {
+                mSensorInfo.centerFreq = rf;
+                mSensorInfo.wavelength = 299792458.0 / rf;
+            }
+        }
         // rangeSamplingRate → rangeSpacing = c / (2 * rsr)
         QDomNodeList rsrList = gaList.at(0).toElement().elementsByTagName("rangeSamplingRate");
         if (!rsrList.isEmpty()) {
@@ -620,6 +609,12 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
                 if (!swathName.isEmpty())
                     mParsedRangeSpacingBySwath[swathName] = mSensorInfo.rangeSpacing;
             }
+        }
+        // azimuthPixelSpacing → 方位向采样间距
+        QDomNodeList apsList = gaList.at(0).toElement().elementsByTagName("azimuthPixelSpacing");
+        if (!apsList.isEmpty()) {
+            double aps = apsList.at(0).toElement().text().trimmed().toDouble();
+            if (aps > 0.1) mSensorInfo.azimuthSpacing = aps;
         }
         // azimuthSteeringRate (TOPS deburst cut line, per-swath)
         // 注意: 嵌套在 generalAnnotation → productInformation → azimuthSteeringRate
