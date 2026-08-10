@@ -21,6 +21,10 @@ struct SarBandDescriptor {
     QString dataType;             // GDAL 数据类型名称
     bool    isComplex = false;    // 复数数据
 
+    // Range 几何 (per-swath, 用于 IW Merge)
+    double  nearRange     = 0.0;  // 近距斜距 (m)
+    double  rangeSpacing  = 0.0;  // 距离向采样间距 (m)
+
     // TOPSAR burst 信息 (Sentinel-1 IW)
     int     linesPerBurst = 0;    // 每个 burst 方位向行数
     int     burstCount = 0;       // burst 数 (通常 9)

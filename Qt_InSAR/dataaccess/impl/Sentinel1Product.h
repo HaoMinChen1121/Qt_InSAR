@@ -96,6 +96,8 @@ private:
     QMap<QString, QVector<int>>      mParsedBurstStartsBySwath;   // 每子条带的burst起始行
     QMap<QString, QVector<QDateTime>> mParsedBurstTimesBySwath;   // 每子条带的burst azimuth时间
     QMap<QString, QVector<qint64>>   mParsedBurstByteOffsetsBySwath; // 每子条带的burst字节偏移
+    QMap<QString, double> mParsedNearRangeBySwath;     // 每子条带近距 (m)
+    QMap<QString, double> mParsedRangeSpacingBySwath;  // 每子条带距离间距 (m)
 };
 
 #endif // SENTINEL1PRODUCT_H

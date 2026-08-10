@@ -238,13 +238,6 @@ void InterferogramServiceImpl::execute()
 
             QVector<QString> phaseFiles, cohFiles, ifgFiles;
             QVector<IWMerger::IwMeta> metas;
-            // Sentinel-1 IW 标准 range 参数
-            double rgSpacing = 2.329562;  // S1 IW SLC range spacing (m)
-            // 从最远 IW 的 nearRange 往回推算 (近似)
-            double nearR = mParams.nearRange;
-            int totalW = 0;
-            for (auto& iw : iwList) totalW += iw.second.w;
-
             for (auto& iw : iwList) {
                 QString base = ifgDir + "/" + iw.first;
                 phaseFiles.append(base + "_phase.tif");
@@ -254,11 +247,17 @@ void InterferogramServiceImpl::execute()
                 m.swath = iw.second.swath;
                 m.width = iw.second.w;
                 m.height = iw.second.h;
-                m.rangeSpacing = rgSpacing;
-                // 估算 nearRange: IW1 最近, 依次增加
-                if (iw.second.swath == "IW1") m.nearRange = nearR;
-                else if (iw.second.swath == "IW2") m.nearRange = nearR + iwList[0].second.w * rgSpacing * 0.92;  // ~8% overlap
-                else m.nearRange = nearR + (iwList[0].second.w + iwList[1].second.w) * rgSpacing * 0.92;
+                // 从 master 产品获取 per-swath range 参数
+                m.nearRange = 0; m.rangeSpacing = 2.3;  // fallback
+                if (masterProduct) {
+                    for (const auto& b : masterProduct->bands()) {
+                        if (b.subSwath == iw.second.swath) {
+                            m.nearRange = b.nearRange;
+                            m.rangeSpacing = b.rangeSpacing > 0 ? b.rangeSpacing : 2.3;
+                            break;
+                        }
+                    }
+                }
                 metas.append(m);
             }
             QString mergeBase = outputDir + "/merge/S1_" + pol;

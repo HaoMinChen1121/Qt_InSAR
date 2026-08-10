@@ -361,6 +361,8 @@ bool Sentinel1Product::parseManifest(const QString& manifestPath) {
                 mSensorInfo.rangeSpacing   = 2.3;
                 mSensorInfo.azimuthSpacing = 14.0;
             }
+            if (!swathName.isEmpty())
+                mParsedRangeSpacingBySwath[swathName] = mSensorInfo.rangeSpacing;
         }
     }
 
@@ -508,9 +510,12 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
 
     // 近距
     nl = root.elementsByTagName("slantRangeTime");
-    if (!nl.isEmpty())
+    if (!nl.isEmpty()) {
         mSensorInfo.nearRange = nl.at(0).toElement().text().toDouble()
                                 * 299792458.0 / 2.0;
+        if (!swathName.isEmpty())
+            mParsedNearRangeBySwath[swathName] = mSensorInfo.nearRange;
+    }
 
     // 方位向PRF: 优先用 azimuthFrequency (单子条带有效值),
     // 降级使用 prf (雷达总脉冲频率, 需除以子条带数)
@@ -704,6 +709,8 @@ void Sentinel1Product::discoverMeasurementFiles(const QString& measurementDir) {
         b.burstAzimuthTimes = mParsedBurstTimesBySwath.value(b.subSwath, mParsedBurstAzimuthTimes);
         b.burstByteOffsets  = mParsedBurstByteOffsetsBySwath.value(b.subSwath, mParsedBurstByteOffsets);
         b.samplesPerBurst   = mParsedSamplesPerBurstBySwath.value(b.subSwath, mParsedSamplesPerBurst);
+        b.nearRange         = mParsedNearRangeBySwath.value(b.subSwath, 0.0);
+        b.rangeSpacing      = mParsedRangeSpacingBySwath.value(b.subSwath, 0.0);
         b.azimuthFmRate      = mParsedAzimuthFmRateBySwath.value(b.subSwath, 0.0);
         b.azimuthSteeringRate = mParsedAzimuthSteeringRateBySwath.value(b.subSwath, 0.0);
         b.azimuthFrequency    = mParsedAzimuthFreqBySwath.value(b.subSwath, 0.0);
