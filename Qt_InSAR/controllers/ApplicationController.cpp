@@ -606,6 +606,19 @@ void ApplicationController::onSarProductOpenRequested(const QString& path)
             sensorInfo.nearRange, sensorInfo.farRange, sensorInfo.prf,
             sensorInfo.centerFreq, sensorInfo.orbitDirection,
             sensorInfo.relativeOrbit, product->acquisitionMode());
+        // per-IW range 参数
+        QVector<QString> swNames;
+        QVector<double> swNearR, swRgSpac;
+        for (const auto& b : bands) {
+            if (b.nearRange <= 0) continue;
+            if (!swNames.contains(b.subSwath)) {
+                swNames.append(b.subSwath);
+                swNearR.append(b.nearRange);
+                swRgSpac.append(b.rangeSpacing);
+            }
+        }
+        if (swNames.size() > 1)
+            metaPanel->setBandRangeInfo(swNames, swNearR, swRgSpac);
     }
 
     ProcessingMonitorPanel* monitor = mMainWindow->processingMonitorPanel();
