@@ -168,13 +168,24 @@ void RegistrationServiceImpl::execute() {
         QString qsarDir;
         for (int i = 0; i < pairs.size(); ++i) {
             QsarBand b;
-            b.subSwath = pairs[i].m.subSwath; b.polarization = pairs[i].m.polarization;
-            b.width = pairs[i].m.rasterSize.width(); b.height = pairs[i].m.rasterSize.height();
-            QString pn = QStringLiteral("%1of%2_%3_%4").arg(i+1).arg(pairs.size()).arg(b.subSwath).arg(b.polarization);
-            QString op = mParams.outputDir.isEmpty()
-                ? QDir::tempPath() + "/" + prefix + "_" + pn + "_reg.tif"
-                : mParams.outputDir + "/" + prefix + "_" + pn + "_reg.tif";
-            b.file = QFileInfo(op).fileName(); qsar.bands.append(b);
+            QString sw = pairs[i].m.subSwath, pol = pairs[i].m.polarization;
+            b.subSwath = sw; b.polarization = pol;
+            // rasterSize 在 Sentinel1Product 中未填充, 从输出文件获取真实尺寸
+            {
+                GdalSlcReader rd;
+                QString pn = QStringLiteral("%1of%2_%3_%4").arg(i+1).arg(pairs.size()).arg(sw).arg(pol);
+                QString op = mParams.outputDir.isEmpty()
+                    ? QDir::tempPath() + "/" + prefix + "_" + pn + "_reg.tif"
+                    : mParams.outputDir + "/" + prefix + "_" + pn + "_reg.tif";
+                if (rd.open(op)) { b.width = rd.width(); b.height = rd.height(); rd.close(); }
+                b.file = QFileInfo(op).fileName();
+            }
+            // 写入 burst 元数据 → IfgGenerator 的 TOPSAR deburst 路径需要
+            b.burstCount        = pairs[i].m.burstCount;
+            b.linesPerBurst     = pairs[i].m.linesPerBurst;
+            b.burstStartLines   = pairs[i].m.burstStartLines;
+            b.burstAzimuthTimes = pairs[i].m.burstAzimuthTimes;
+            qsar.bands.append(b);
             qsarDir = QFileInfo(op).absolutePath();
         }
         if (!qsarDir.isEmpty()) {

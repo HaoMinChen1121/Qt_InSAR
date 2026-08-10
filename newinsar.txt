@@ -1,0 +1,521 @@
+InSAR 干涉图生成流程优化方案总结
+
+一、当前干涉图生成流程
+
+配准输出：
+    .qsar + *_reg.tif
+        ↓
+用户打开干涉图生成窗口：
+    master = Sentinel-1 ZIP
+    slave = .qsar
+        ↓
+InterferogramServiceImpl::execute()
+        |
+        ├── 加载 master：
+        │       Sentinel1Product::open()
+        │       （仅读取元数据，不读取像素）
+        │
+        ├── 加载 slave：
+        │       QsarIO::read(.qsar)
+        │
+        └── 遍历波段：
+                |
+                ├── IfgGenerator
+                │       GdalSlcReader读取：
+                │           master (/vsizip/)
+                │           slave (*_reg.tif)
+                │
+                │       多视处理
+                │       共轭相乘
+                │
+                │       输出：
+                │           *_ifg.tif
+                │           *_phase.tif
+                │           *_coh.tif
+                │
+                ├── FlatEarthRemover
+                │       平地相位去除
+                │
+                └── TopoPhaseRemover
+                        DEM地形相位去除
+
+最终输出：
+
+.qsar
++
+ifg/
+flat/
+diff/
+等干涉产品
+
+
+==================================================
+
+二、当前存在的问题
+
+1. 注册后的 slave .qsar 缺少 TOPSAR burst 元数据
+
+问题：
+
+注册阶段输出的 .qsar 中：
+
+    burstCount = 0
+
+导致：
+
+    IfgGenerator
+        ↓
+    isTopsar判断失败
+        ↓
+    TOPSAR deburst路径无法执行
+
+
+影响：
+
+Sentinel-1 IW SLC数据无法正确按照burst处理，
+可能导致：
+
+- burst边界残余
+- 方位向不连续
+- 干涉条纹异常
+
+
+--------------------------------------------------
+
+2. Master SLC读取性能较低
+
+当前：
+
+master ZIP
+    ↓
+GDAL VSI (/vsizip/)
+    ↓
+DEFLATE压缩TIFF随机读取
+
+
+问题：
+
+Sentinel-1 SLC TIFF采用压缩存储，
+随机访问时：
+
+- 每个strip需要解压
+- 大量IO开销
+- 多视窗口读取效率低
+
+
+影响：
+
+干涉图生成耗时增加。
+
+
+--------------------------------------------------
+
+3. Flat Earth相位去除模型过于简单
+
+当前实现：
+
+    phase = phase - constant
+
+
+即：
+
+只进行整体相位旋转。
+
+
+问题：
+
+真实InSAR平地相位：
+
+沿range方向存在变化：
+
+    φflat = f(range)
+
+
+因此：
+
+常数校正无法完全去除：
+
+- 距离向相位斜坡
+- 边缘残余条纹
+
+
+--------------------------------------------------
+
+4. TopoPhaseRemover几何模型简化
+
+当前：
+
+- 单入射角
+- 简化DEM采样
+- 简化轨道几何
+
+
+问题：
+
+无法充分描述：
+
+- 不同距离向入射角变化
+- 真实卫星-地面几何关系
+
+
+影响：
+
+高地形区域可能存在残余地形相位。
+
+
+
+==================================================
+
+三、优化方案
+
+
+## 优化1：完善QSAR中的TOPSAR元数据（最高优先级）
+
+
+目标：
+
+RegistrationServiceImpl输出的.qsar增加：
+
+    burstCount
+    linesPerBurst
+    burstAzimuthTimes
+
+
+数据结构：
+
+{
+    "isTopsar": true,
+
+    "burstCount": 9,
+
+    "linesPerBurst": 1500,
+
+    "burstAzimuthTimes":[
+        t1,
+        t2,
+        ...
+    ]
+}
+
+
+修改位置：
+
+RegistrationServiceImpl
+
+        ↓
+
+QsarWriter
+
+        ↓
+
+.qsar metadata
+
+
+效果：
+
+恢复完整TOPSAR数据链路。
+
+
+==================================================
+
+## 优化2：启用TOPSAR Deburst流程
+
+
+当前：
+
+IfgGenerator已有：
+
+    if(isTopsar)
+        deburst()
+    else
+        normal()
+
+
+由于：
+
+burstCount=0
+
+导致：
+
+TOPSAR分支无法进入。
+
+
+完成优化1后：
+
+验证：
+
+日志输出：
+
+TOPSAR product detected
+
+burst count = N
+
+processing burst 0...
+
+deburst completed
+
+
+效果：
+
+正确处理：
+
+Sentinel-1 IW1/IW2/IW3 burst结构。
+
+
+==================================================
+
+## 优化3：接入SentinelDataReader提升读取性能
+
+
+目标：
+
+master读取从：
+
+    GdalSlcReader
+          |
+          |
+          ↓
+    GDAL VSI
+
+
+改为：
+
+    SentinelDataReader
+          |
+          |
+          ↓
+    burst缓存读取
+
+
+保持：
+
+slave：
+
+    *_reg.tif
+
+继续使用：
+
+GdalSlcReader
+
+
+修改：
+
+IfgGenerator:
+
+替换：
+
+    readMasterLine()
+
+
+实现：
+
+master：
+    SentinelDataReader
+
+slave：
+    GdalSlcReader
+
+
+预期效果：
+
+- 减少ZIP随机解压
+- 提升SLC读取效率
+- 降低干涉图生成时间
+
+
+==================================================
+
+## 优化4：Flat Earth由常数校正改为距离向相位模型
+
+
+当前：
+
+    phase -= φ0
+
+
+改为：
+
+    phase -= φflat(range)
+
+
+实现方式：
+
+
+方案A（推荐）
+
+基于：
+
+- 轨道参数
+- 基线
+- 成像时间
+- 入射角
+
+
+计算：
+
+真实平地相位：
+
+    φflat(r)
+
+
+方案B（工程快速）
+
+利用：
+
+phase
+
+↓
+
+低频滤波
+
+↓
+
+多项式拟合
+
+
+得到：
+
+    φflat =
+        a0
+       +a1*r
+       +a2*r²
+
+
+然后：
+
+逐像素去除。
+
+
+
+效果：
+
+消除：
+
+- range方向相位斜坡
+- 边缘条纹残余
+
+
+
+==================================================
+
+## 优化5：增强TopoPhaseRemover几何模型
+
+
+当前：
+
+简单：
+
+    DEM高度 × 固定比例
+
+
+改进：
+
+加入：
+
+- 精确轨道位置
+- DEM投影
+- 局部入射角
+- 真实slant range
+
+
+计算：
+
+    topo_phase =
+        4π/λ × ΔR
+
+
+效果：
+
+提高山区、高坡度区域干涉质量。
+
+
+
+==================================================
+
+四、推荐开发顺序
+
+
+第一阶段（功能正确性）
+
+1.
+增加QSAR burst metadata
+
+↓
+
+2.
+恢复TOPSAR deburst路径
+
+
+第二阶段（性能优化）
+
+3.
+接入SentinelDataReader
+
+↓
+
+4.
+优化master SLC读取
+
+
+第三阶段（算法精度）
+
+5.
+Flat Earth距离向相位模型
+
+↓
+
+6.
+TopoPhaseRemover精确几何模型
+
+
+
+==================================================
+
+五、最终优化目标
+
+
+优化后完整流程：
+
+Sentinel-1 ZIP
+        |
+        ↓
+SentinelDataReader
+        |
+        ↓
+TOPSAR burst解析
+        |
+        ↓
+Deburst
+        |
+        ↓
+配准slave读取
+        |
+        ↓
+多视
+        |
+        ↓
+共轭相乘
+        |
+        ↓
+距离相关Flat Earth去除
+        |
+        ↓
+精确DEM地形相位去除
+        |
+        ↓
+高质量干涉图输出
+
+
+最终提升：
+
+1.
+保证Sentinel-1 IW TOPSAR流程完整
+
+2.
+降低干涉图生成时间
+
+3.
+减少range方向残余相位条纹
+
+4.
+提高山区和复杂地形区域InSAR精度
