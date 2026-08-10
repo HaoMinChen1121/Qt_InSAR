@@ -291,6 +291,9 @@ QString GdalVsiProcessor::process(const QString& vsiPath,
         GDALClose(srcDS);
         srcDS = nullptr;
 
+        // GeoTIFF: 预计算振幅图
+        // 必须写入本地文件 — QGIS 渲染时不能直接访问 /vsizip/,
+        // 否则每次 redraw 都触发 DEFLATE 解压, 阻塞 UI 且与配准争用 VSI
         QString tifPath = outputBasePath + ".tif";
         if (createAmplitudeGeoTiff(vsiPath, tifPath))
             result = tifPath;

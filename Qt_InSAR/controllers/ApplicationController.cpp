@@ -485,15 +485,8 @@ void ApplicationController::onSlaveProductSelected(const QString& productPath)
 void ApplicationController::onRegistrationRunRequested(const RegistrationParams& params)
 {
     mRegistrationSvc->setParams(params);
-    // 等待所有异步 VSI 加载完成，避免 GDAL VSI 并发死锁
-    if (mPendingLoadCount > 0) {
-        ProcessingMonitorPanel* m = mMainWindow->processingMonitorPanel();
-        if (m) m->appendLog(QStringLiteral("等待文件处理完成..."), "#FF9800");
-        QTimer::singleShot(500, this, [this, params]() {
-            onRegistrationRunRequested(params); // 轮询重试
-        });
-        return;
-    }
+    // SentinelDataReader 已绕过 GDAL VSI, 与画布 GeoTIFF 转换无 VSI 冲突
+    // 直接启动配准, 无需等待 mPendingLoadCount
     QtConcurrent::run([this]() {
         mRegistrationSvc->execute();
     });
