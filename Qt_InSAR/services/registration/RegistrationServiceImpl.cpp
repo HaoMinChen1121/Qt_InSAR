@@ -185,6 +185,7 @@ void RegistrationServiceImpl::execute() {
             b.linesPerBurst     = pairs[i].m.linesPerBurst;
             b.burstStartLines   = pairs[i].m.burstStartLines;
             b.burstAzimuthTimes = pairs[i].m.burstAzimuthTimes;
+            b.azimuthFrequency  = pairs[i].m.azimuthFrequency;
             qsar.bands.append(b);
             qsarDir = QFileInfo(op).absolutePath();
         }
