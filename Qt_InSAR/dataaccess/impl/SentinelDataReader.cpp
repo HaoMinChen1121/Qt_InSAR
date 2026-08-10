@@ -350,7 +350,9 @@ bool SentinelDataReader::open(const QString& zipPath, const QString& entryName,
     // ═══ Step 4: 直接 strip → CInt16→SoA, 切分 burst ═══
     mCaches.resize(mBurstCount);
     for (int b = 0; b < mBurstCount; ++b) {
-        int row0 = mBurstStartLines.value(b, b * mLinesPerBurst);
+        // 始终用 b * L 作为 row0 — 与旧 SincResampler 一致
+        // burstStartLines 是 1-based (来自 S1 annotation), 不可直接用作 0-based 偏移
+        int row0 = b * mLinesPerBurst;
         int burstH = mLinesPerBurst;
         if (b == mBurstCount - 1)
             burstH = mHeight - row0;
@@ -415,7 +417,7 @@ bool SentinelDataReader::readWindow(int x0, int y0, int w, int h, std::complex<f
 
     for (int bi = burstFirst; bi <= burstLast; ++bi) {
         if (!mCaches[bi].isLoaded()) continue;
-        int burstRow0 = mBurstStartLines.value(bi, bi * mLinesPerBurst);
+        int burstRow0 = bi * mLinesPerBurst;
         int burstH    = (bi == mBurstCount - 1) ? mHeight - burstRow0 : mLinesPerBurst;
 
         int interY0 = std::max(y0, burstRow0);
