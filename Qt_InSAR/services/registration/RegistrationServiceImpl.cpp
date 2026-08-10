@@ -170,16 +170,14 @@ void RegistrationServiceImpl::execute() {
             QsarBand b;
             QString sw = pairs[i].m.subSwath, pol = pairs[i].m.polarization;
             b.subSwath = sw; b.polarization = pol;
+            // 输出路径
+            QString pn = QStringLiteral("%1of%2_%3_%4").arg(i+1).arg(pairs.size()).arg(sw).arg(pol);
+            QString op = mParams.outputDir.isEmpty()
+                ? QDir::tempPath() + "/" + prefix + "_" + pn + "_reg.tif"
+                : mParams.outputDir + "/" + prefix + "_" + pn + "_reg.tif";
             // rasterSize 在 Sentinel1Product 中未填充, 从输出文件获取真实尺寸
-            {
-                GdalSlcReader rd;
-                QString pn = QStringLiteral("%1of%2_%3_%4").arg(i+1).arg(pairs.size()).arg(sw).arg(pol);
-                QString op = mParams.outputDir.isEmpty()
-                    ? QDir::tempPath() + "/" + prefix + "_" + pn + "_reg.tif"
-                    : mParams.outputDir + "/" + prefix + "_" + pn + "_reg.tif";
-                if (rd.open(op)) { b.width = rd.width(); b.height = rd.height(); rd.close(); }
-                b.file = QFileInfo(op).fileName();
-            }
+            { GdalSlcReader rd; if (rd.open(op)) { b.width = rd.width(); b.height = rd.height(); rd.close(); } }
+            b.file = QFileInfo(op).fileName();
             // 写入 burst 元数据 → IfgGenerator 的 TOPSAR deburst 路径需要
             b.burstCount        = pairs[i].m.burstCount;
             b.linesPerBurst     = pairs[i].m.linesPerBurst;
