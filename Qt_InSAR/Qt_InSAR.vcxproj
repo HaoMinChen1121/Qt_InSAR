@@ -145,6 +145,7 @@
     <ClCompile Include="services\registration\RegistrationServiceImpl.cpp" />
     <ClCompile Include="services\interferogram\InterferogramServiceImpl.cpp" />
     <ClCompile Include="services\interferogram\steps\IfgGenerator.cpp" />
+    <ClCompile Include="services\interferogram\steps\IWMerger.cpp" />
     <ClCompile Include="services\interferogram\steps\FlatEarthRemover.cpp" />
     <ClCompile Include="services\interferogram\steps\TopoPhaseRemover.cpp" />
     <ClCompile Include="services\impl\FilterServiceImpl.cpp" />
@@ -181,6 +182,7 @@
     <ClInclude Include="services\interferogram\PipelineContext.h" />
     <ClInclude Include="services\interferogram\steps\IIfgStep.h" />
     <ClInclude Include="services\interferogram\steps\IfgGenerator.h" />
+    <ClInclude Include="services\interferogram\steps\IWMerger.h" />
     <ClInclude Include="services\interferogram\steps\FlatEarthRemover.h" />
     <ClInclude Include="services\interferogram\steps\TopoPhaseRemover.h" />
     <QtMoc Include="services\impl\FilterServiceImpl.h" />

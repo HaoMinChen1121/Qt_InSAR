@@ -3,6 +3,7 @@
 #include "steps/IfgGenerator.h"
 #include "steps/FlatEarthRemover.h"
 #include "steps/TopoPhaseRemover.h"
+#include "steps/IWMerger.h"
 #include "dataaccess/impl/QsarIO.h"
 #include "dataaccess/SarProductFactory.h"
 #include "dataaccess/impl/GdalSlcReader.h"
@@ -13,6 +14,8 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QDateTime>
+#include <QMap>
+#include <QPair>
 #include <QScopedPointer>
 
 InterferogramServiceImpl::InterferogramServiceImpl(QObject* parent)
@@ -205,6 +208,72 @@ void InterferogramServiceImpl::execute()
         qsar.bands.append(qbCoh);
         ++succeeded;
         emit progressChanged((i + 1) * 100 / pairs.size(), QStringLiteral("完成 %1/%2").arg(i+1).arg(pairs.size()));
+    }
+
+    // ═══ IW Merge: 同极化 IW1+IW2+IW3 拼接为宽幅产品 ═══
+    if (succeeded > 0) {
+        QDir().mkpath(outputDir + "/merge");
+        // 收集 per-IW 输出路径和尺寸, 按极化分组
+        struct IwOut { QString swath; int w, h; };
+        QMap<QString, QVector<QPair<QString, IwOut>>> byPol;  // pol → [(pairName, IwOut)]
+        for (int i = 0; i < pairs.size(); ++i) {
+            QString sw = pairs[i].master.subSwath;
+            QString pol = pairs[i].master.polarization;
+            QString name = QStringLiteral("%1_%2").arg(sw).arg(pol);
+            // 从已生成的 ifg 文件获取尺寸
+            QString ifgPath = ifgDir + "/" + name + "_ifg.tif";
+            GdalSlcReader dimRdr;
+            IwOut io; io.swath = sw;
+            if (dimRdr.open(ifgPath)) { io.w = dimRdr.width(); io.h = dimRdr.height(); dimRdr.close(); }
+            else continue;
+            byPol[pol].append({name, io});
+        }
+        for (auto it = byPol.begin(); it != byPol.end(); ++it) {
+            QString pol = it.key();
+            auto& iwList = it.value();
+            if (iwList.size() < 2) continue;  // 至少 2 个 IW 才需要 merge
+            // 按 IW1→IW2→IW3 排序
+            std::sort(iwList.begin(), iwList.end(),
+                [](const auto& a, const auto& b) { return a.second.swath < b.second.swath; });
+
+            QVector<QString> phaseFiles, cohFiles, ifgFiles;
+            QVector<IWMerger::IwMeta> metas;
+            // Sentinel-1 IW 标准 range 参数
+            double rgSpacing = 2.329562;  // S1 IW SLC range spacing (m)
+            // 从最远 IW 的 nearRange 往回推算 (近似)
+            double nearR = mParams.nearRange;
+            int totalW = 0;
+            for (auto& iw : iwList) totalW += iw.second.w;
+
+            for (auto& iw : iwList) {
+                QString base = ifgDir + "/" + iw.first;
+                phaseFiles.append(base + "_phase.tif");
+                cohFiles.append(base + "_coh.tif");
+                ifgFiles.append(base + "_ifg.tif");
+                IWMerger::IwMeta m;
+                m.swath = iw.second.swath;
+                m.width = iw.second.w;
+                m.height = iw.second.h;
+                m.rangeSpacing = rgSpacing;
+                // 估算 nearRange: IW1 最近, 依次增加
+                if (iw.second.swath == "IW1") m.nearRange = nearR;
+                else if (iw.second.swath == "IW2") m.nearRange = nearR + iwList[0].second.w * rgSpacing * 0.92;  // ~8% overlap
+                else m.nearRange = nearR + (iwList[0].second.w + iwList[1].second.w) * rgSpacing * 0.92;
+                metas.append(m);
+            }
+            QString mergeBase = outputDir + "/merge/S1_" + pol;
+            emit progressChanged(95, QStringLiteral("IW Merge %1...").arg(pol));
+            IWMerger::mergePhase(phaseFiles, metas, mergeBase + "_phase.tif");
+            IWMerger::mergeCoherence(cohFiles, metas, mergeBase + "_coh.tif");
+            IWMerger::mergeComplex(ifgFiles, metas, mergeBase + "_ifg.tif");
+            // 新增 merge 图层到 qsar
+            QsarBand qbM;
+            qbM.subSwath = "IW"; qbM.polarization = pol;
+            qbM.file = QStringLiteral("merge/S1_%1_phase.tif").arg(pol);
+            qbM.layerType = "phase";
+            qbM.defaultVisible = true;
+            qsar.bands.append(qbM);
+        }
     }
 
     QString qsarPath = outputDir + "/" + mParams.outputPrefix + ".qsar";
