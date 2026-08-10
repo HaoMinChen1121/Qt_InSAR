@@ -91,10 +91,11 @@ void computeOrbitOffset(const QList<OrbitStateVector>& mOrb,
 
     double mVmag = std::sqrt(mvx_t * mvx_t + mvy_t * mvy_t + mvz_t * mvz_t);
 
-    double dR = std::sqrt((sx_t - mx_t) * (sx_t - mx_t)
-                        + (sy_t - my_t) * (sy_t - my_t)
-                        + (sz_t - mz_t) * (sz_t - mz_t));
-    rangeOff = -dR / rangeSpacing;
+    // 初值设 0 — 同轨道 S1 对 range 偏移在亚像素级
+    // 旧公式 rangeOff = -|baseline|/rangeSpacing 高估 ~35px,
+    // 导致近距采样点 slave 窗口越界被丢弃, 多项式拟合偏倚
+    (void)rangeSpacing;
+    rangeOff = 0.0;
     aziOff = ((sx_t - mx_t) * mvx_t + (sy_t - my_t) * mvy_t
             + (sz_t - mz_t) * mvz_t) / (mVmag * aziSpacing);
 }

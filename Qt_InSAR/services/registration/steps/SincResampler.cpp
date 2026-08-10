@@ -135,7 +135,7 @@ static RowCoords computeRowCoords(int gRow, int mW, int mH, int sH,
         double rN = (double)c / mW;
         double colOff = rP.coeffs[0] + rP.coeffs[1]*rN + rP.coeffs[2]*aLoc
                       + rP.coeffs[3]*rN*aLoc + rP.coeffs[4]*rN*rN + rP.coeffs[5]*aLoc*aLoc;
-        rc.sx[c] = c + colOff;
+        rc.sx[c] = c - colOff;
     }
     return rc;
 }
