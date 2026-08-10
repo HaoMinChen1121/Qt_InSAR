@@ -133,15 +133,13 @@ void ApplicationController::wireConnections()
                     mPendingGroupName = qsar.productType + " " + qsar.sourceMaster;
                     groupName = mPendingGroupName;
                     QgsProject::instance()->layerTreeRoot()->insertGroup(0, groupName);
+                    // 检查是否有任何 band 标记为 visible (向后兼容旧 .qsar)
+                    bool hasVisible = false;
+                    for (const auto& b : qsar.bands)
+                        if (b.defaultVisible) { hasVisible = true; break; }
                     for (const auto& b : qsar.bands) {
+                        if (hasVisible && !b.defaultVisible) continue;
                         expandedFiles.append(b.file);
-                        // 扩展所有阶段文件
-                        if (!b.phaseFile.isEmpty()) expandedFiles.append(b.phaseFile);
-                        if (!b.cohFile.isEmpty()) expandedFiles.append(b.cohFile);
-                        if (!b.flatPhaseFile.isEmpty()) expandedFiles.append(b.flatPhaseFile);
-                        if (!b.diffPhaseFile.isEmpty()) expandedFiles.append(b.diffPhaseFile);
-                        if (!b.flatFile.isEmpty()) expandedFiles.append(b.flatFile);
-                        if (!b.diffFile.isEmpty()) expandedFiles.append(b.diffFile);
                     }
                     monitor->appendLog(
                         QStringLiteral("加载QSAR产品: %1 (%2波段)")

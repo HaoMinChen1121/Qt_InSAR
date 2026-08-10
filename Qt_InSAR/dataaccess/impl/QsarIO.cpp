@@ -47,6 +47,9 @@ bool QsarIO::write(const QString& filePath, const QsarProduct& product)
         if (!b.flatPhaseFile.isEmpty()) bo["flat_phase"] = b.flatPhaseFile;
         if (!b.diffFile.isEmpty()) bo["diff"] = b.diffFile;
         if (!b.diffPhaseFile.isEmpty()) bo["diff_phase"] = b.diffPhaseFile;
+        // 显示控制
+        bo["layerType"] = b.layerType;
+        bo["defaultVisible"] = b.defaultVisible;
         // burst metadata
         if (b.burstCount > 0) {
             bo["burstCount"] = b.burstCount;
@@ -129,6 +132,9 @@ QsarProduct QsarIO::read(const QString& filePath)
         b.flatPhaseFile = bo["flat_phase"].toString();
         b.diffFile = bo["diff"].toString();
         b.diffPhaseFile = bo["diff_phase"].toString();
+        // 显示属性
+        b.layerType = bo["layerType"].toString("phase");
+        b.defaultVisible = bo["defaultVisible"].toBool(false);
         // burst metadata
         if (bo.contains("burstCount")) {
             b.burstCount = bo["burstCount"].toInt();

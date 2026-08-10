@@ -1,0 +1,645 @@
+InSAR干涉图输出结构与QGIS画布加载优化方案总结
+
+
+一、当前输出结构问题
+
+当前干涉图生成流程：
+
+Master SLC
+    +
+Slave Registered SLC
+
+        ↓
+
+IfgGenerator
+        ↓
+
+ifg/
+
+    IW1_VV_ifg.tif
+    IW1_VV_phase.tif
+    IW1_VV_coh.tif
+
+
+        ↓
+
+FlatEarthRemover
+
+        ↓
+
+flat/
+
+    IW1_VV_flat.tif
+    IW1_VV_flat_phase.tif
+
+
+        ↓
+
+TopoPhaseRemover
+
+        ↓
+
+diff/
+
+    IW1_VV_diff.tif
+    IW1_VV_diff_phase.tif
+
+
+对于：
+
+3个IW子条带 × 2种极化
+
+最多：
+
+6个波段 × 7个文件
+
+≈42个GeoTIFF
+
+
+问题：
+
+1. 中间产品和可视化产品混合管理
+
+2. 复数干涉图、相位图、校正结果全部作为普通影像处理
+
+3. .qsar只能作为索引，缺少产品分类信息
+
+4. 如果生成完成后全部自动加载到QGIS：
+
+    - 大量Raster Layer同时打开
+    - GDAL重复解析文件
+    - 计算统计信息
+    - 建立渲染缓存
+    - 刷新地图画布
+
+容易导致：
+
+    exe卡顿
+    QGIS假死
+    内存占用过高
+
+
+
+==================================================
+
+
+二、输出结构优化方案
+
+
+目标：
+
+将“算法中间结果”和“用户显示产品”分离。
+
+
+推荐结构：
+
+
+InSAR_Result/
+
+
+├── product.qsar
+│       产品索引文件
+│
+│
+├── ifg/
+│
+│   ├── IW1_VV_ifg.tif
+│   │       复数干涉图 CFloat32
+│   │
+│   ├── IW1_VV_phase.tif
+│   │       缠绕相位 -π~π
+│   │
+│   ├── IW1_VV_coh.tif
+│   │       相干性 0~1
+│   │
+│   └── 其他IW/VV/VH产品
+│
+│
+├── flat/
+│
+│   ├── IW1_VV_flat_phase_model.tif
+│   │       平地相位模型
+│   │
+│   ├── IW1_VV_flat_removed_ifg.tif
+│   │       去平地复数干涉图
+│   │
+│   └── IW1_VV_flat_removed_phase.tif
+│           去平地相位
+│
+│
+├── topo/
+│
+│   └── IW1_VV_topo_phase.tif
+│           DEM地形相位
+│
+│
+├── differential/
+│
+│   ├── IW1_VV_dinsar_ifg.tif
+│   │       去平地+去地形复数干涉图
+│   │
+│   └── IW1_VV_dinsar_phase.tif
+│           差分干涉相位
+│
+│
+└── visualization/
+    
+    ├── IW1_VV_phase_color.tif
+    │       彩色缠绕相位图
+    │
+    ├── IW1_VV_dinsar_color.tif
+    │       彩色差分干涉图
+    │
+    └── IW1_VV_coherence_color.tif
+            相干性显示图
+
+
+
+==================================================
+
+
+三、产品分类原则
+
+
+1. 科学计算产品（不默认显示）
+
+包括：
+
+    *_ifg.tif
+    *_flat.tif
+    *_diff.tif
+    *_topo_phase.tif
+
+
+特点：
+
+- 复数数据
+- 文件大
+- 用于后续算法计算
+
+处理方式：
+
+保存即可，不自动加载。
+
+
+
+--------------------------------------------------
+
+
+2. 分析产品（可选加载）
+
+
+包括：
+
+    *_phase.tif
+    *_diff_phase.tif
+    *_coh.tif
+
+
+特点：
+
+- Float32
+- 可以用于分析
+- 用户可能查看
+
+
+处理方式：
+
+用户点击后加载。
+
+
+
+--------------------------------------------------
+
+
+3. 可视化产品（默认加载）
+
+
+包括：
+
+    *_phase_color.tif
+
+    *_dinsar_color.tif
+
+    *_coherence_color.tif
+
+
+特点：
+
+- RGB显示
+- 用户直接查看
+- 加载速度快
+
+
+处理方式：
+
+生成完成后优先加载。
+
+
+
+==================================================
+
+
+四、.qsar产品索引优化
+
+
+.qsar不应只保存文件路径，
+
+应该增加产品类型和显示属性。
+
+
+示例：
+
+
+{
+    "product":"InSAR",
+
+    "layers":[
+
+        {
+            "name":"IW1_VV_Phase",
+            "file":"ifg/IW1_VV_phase.tif",
+            "type":"phase",
+            "defaultVisible":false
+        },
+
+
+        {
+            "name":"IW1_VV_Phase_Color",
+            "file":"visualization/IW1_VV_phase_color.tif",
+            "type":"visualization",
+            "defaultVisible":true
+        },
+
+
+        {
+            "name":"IW1_VV_Coherence",
+            "file":"ifg/IW1_VV_coh.tif",
+            "type":"coherence",
+            "defaultVisible":true
+        },
+
+
+        {
+            "name":"IW1_VV_IFG",
+            "file":"ifg/IW1_VV_ifg.tif",
+            "type":"complex",
+            "defaultVisible":false
+        }
+
+    ]
+}
+
+
+
+作用：
+
+QGIS读取.qsar后：
+
+生成产品树
+
+而不是直接加载所有Raster。
+
+
+
+==================================================
+
+
+五、QGIS画布加载优化方案
+
+
+错误方式：
+
+
+干涉生成完成
+
+        ↓
+
+自动加载：
+
+42个GeoTIFF
+
+        ↓
+
+QGIS Canvas刷新
+
+        ↓
+
+程序卡顿
+
+
+
+--------------------------------------------------
+
+
+推荐方式：
+
+
+干涉生成完成
+
+        ↓
+
+加载.qsar产品节点
+
+        ↓
+
+显示产品树
+
+        ↓
+
+用户选择需要显示的产品
+
+        ↓
+
+动态加载Raster Layer
+
+
+
+类似：
+
+
+InSAR Product
+
+
+├── Interferogram
+
+│
+├── IW1_VV
+
+│       ├── Phase 🌈
+
+│       └── Coherence
+
+
+├── IW1_VH
+
+│       ├── Phase
+
+│       └── Coherence
+
+
+├── Differential
+
+│       └── DInSAR Phase
+
+
+
+==================================================
+
+
+六、默认加载策略
+
+
+生成完成后默认加载：
+
+
+1.
+
+彩色缠绕相位：
+
+    *_phase_color.tif
+
+
+作用：
+
+显示彩色干涉条纹。
+
+
+
+2.
+
+相干性：
+
+    *_coh.tif
+
+
+作用：
+
+判断干涉质量。
+
+
+默认：
+
+Canvas只显示：
+
+    Phase Color
+    +
+    Coherence
+
+
+
+==================================================
+
+
+七、不建议自动加载的文件
+
+
+以下文件不要自动加入画布：
+
+
+1.
+
+复数干涉图：
+
+    *_ifg.tif
+
+
+原因：
+
+- CFloat32
+- 无直接视觉意义
+- 文件大
+
+
+
+2.
+
+去平地复数结果：
+
+    *_flat.tif
+
+
+
+3.
+
+差分复数结果：
+
+    *_diff.tif
+
+
+
+4.
+
+地形相位：
+
+    *_topo_phase.tif
+
+
+
+原因：
+
+这些属于：
+
+算法中间产品。
+
+
+
+==================================================
+
+
+八、进一步性能优化
+
+
+1. GeoTIFF建立金字塔
+
+
+生成：
+
+    .ovr
+
+
+例如：
+
+    IW1_VV_phase.tif.ovr
+
+
+提高：
+
+- 缩放速度
+- 地图刷新速度
+
+
+
+--------------------------------------------------
+
+
+2. 写入统计信息
+
+
+提前保存：
+
+    MIN
+    MAX
+    MEAN
+
+
+避免QGIS打开后重新扫描整幅影像。
+
+
+
+--------------------------------------------------
+
+
+3. 延迟加载
+
+
+不要：
+
+程序启动时全部open。
+
+
+采用：
+
+用户点击
+
+↓
+
+GDAL Open
+
+↓
+
+加载图层
+
+
+
+==================================================
+
+
+九、最终推荐架构
+
+
+算法层：
+
+Master/Slave SLC
+
+        ↓
+
+IfgGenerator
+
+        ↓
+
+ifg产品
+
+
+        ↓
+
+Flat Earth
+
+        ↓
+
+flat产品
+
+
+        ↓
+
+Topo Removal
+
+        ↓
+
+differential产品
+
+
+
+--------------------------------------------------
+
+
+产品管理层：
+
+.qsar
+
+        ↓
+
+产品树
+
+        ↓
+
+分类管理
+
+
+--------------------------------------------------
+
+
+显示层：
+
+visualization/
+
+        ↓
+
+phase_color
+
+        ↓
+
+QGIS Canvas
+
+
+
+==================================================
+
+
+最终优化目标：
+
+
+1. 保留完整InSAR科研产品链
+
+2. 中间结果不丢失
+
+3. 避免一次加载几十个Raster导致exe卡顿
+
+4. 用户打开产品即可看到彩色干涉条纹
+
+5. 后续支持相位解缠、形变反演等高级处理
+
+
+核心原则：
+
+“全部生成，按需加载；默认显示结果，不显示中间过程。”

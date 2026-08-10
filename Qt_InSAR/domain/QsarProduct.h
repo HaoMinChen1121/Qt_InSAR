@@ -21,6 +21,10 @@ struct QsarBand {
     int     width  = 0;
     int     height = 0;
 
+    // 图层显示控制
+    QString layerType = "phase";       // "complex"/"phase"/"coherence"/"flat_phase"/"diff_phase"
+    bool    defaultVisible = false;    // 干涉图完成后是否自动加载到画布
+
     // TOPSAR burst 元数据 (配准输出携带，用于后续 deburst)
     int     burstCount = 0;
     int     linesPerBurst = 0;

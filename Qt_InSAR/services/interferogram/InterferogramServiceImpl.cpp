@@ -168,6 +168,8 @@ void InterferogramServiceImpl::execute()
         qb.ifgFile  = qb.file;
         qb.cohFile  = QStringLiteral("ifg/%1_coh.tif").arg(pairName);
         qb.phaseFile = QStringLiteral("ifg/%1_phase.tif").arg(pairName);
+        qb.layerType = "ifg";
+        qb.defaultVisible = false;  // 复数干涉图不自动加载
 
         // 更新实际输出尺寸
         {
@@ -179,16 +181,28 @@ void InterferogramServiceImpl::execute()
             }
         }
 
-        if (mParams.enableFlatEarth && !qb.flatFile.isEmpty()) {
-            if (qsar.stages.isEmpty() || qsar.stages.last() != "flat")
-                qsar.stages << "flat";
-        }
-        if (mParams.enableDifferential && !qb.diffFile.isEmpty()) {
-            if (qsar.stages.isEmpty() || qsar.stages.last() != "diff")
-                qsar.stages << "diff";
-        }
+        if (mParams.enableFlatEarth && !qb.flatFile.isEmpty() && !qsar.stages.contains("flat"))
+            qsar.stages << "flat";
+        if (mParams.enableDifferential && !qb.diffFile.isEmpty() && !qsar.stages.contains("diff"))
+            qsar.stages << "diff";
 
         qsar.bands.append(qb);
+        // 相位图层 (可见)
+        QsarBand qbPhase;
+        qbPhase.subSwath = sw; qbPhase.polarization = pol;
+        qbPhase.file = QStringLiteral("ifg/%1_phase.tif").arg(pairName);
+        qbPhase.phaseFile = qbPhase.file;
+        qbPhase.layerType = "phase";
+        qbPhase.defaultVisible = true;
+        qsar.bands.append(qbPhase);
+        // 相干图层 (可见)
+        QsarBand qbCoh;
+        qbCoh.subSwath = sw; qbCoh.polarization = pol;
+        qbCoh.file = QStringLiteral("ifg/%1_coh.tif").arg(pairName);
+        qbCoh.cohFile = qbCoh.file;
+        qbCoh.layerType = "coherence";
+        qbCoh.defaultVisible = true;
+        qsar.bands.append(qbCoh);
         ++succeeded;
         emit progressChanged((i + 1) * 100 / pairs.size(), QStringLiteral("完成 %1/%2").arg(i+1).arg(pairs.size()));
     }

@@ -178,6 +178,8 @@ void RegistrationServiceImpl::execute() {
             // rasterSize 在 Sentinel1Product 中未填充, 从输出文件获取真实尺寸
             { GdalSlcReader rd; if (rd.open(op)) { b.width = rd.width(); b.height = rd.height(); rd.close(); } }
             b.file = QFileInfo(op).fileName();
+            b.layerType = "amplitude";
+            b.defaultVisible = true;  // 注册结果自动加载到画布
             // 写入 burst 元数据 → IfgGenerator 的 TOPSAR deburst 路径需要
             b.burstCount        = pairs[i].m.burstCount;
             b.linesPerBurst     = pairs[i].m.linesPerBurst;
