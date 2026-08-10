@@ -1,6 +1,8 @@
 #include "IfgGenerator.h"
 #include "../PipelineContext.h"
 #include "dataaccess/impl/GdalSlcReader.h"
+#include "dataaccess/impl/SentinelDataReader.h"
+#include "dataaccess/ISarProduct.h"
 #include "domain/SarComplexTypes.h"
 
 #include <gdal_priv.h>
@@ -47,18 +49,31 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
     qDebug() << "[Ifg] stageInterferogram: master=" << ctx.masterPath.left(80);
     qDebug() << "[Ifg] stageInterferogram: slave=" << ctx.slavePath;
 
+    // Master: 优先用 SentinelDataReader (快速 ZIP 读取), 回退 GdalSlcReader
+    SentinelDataReader mSdr;
     GdalSlcReader mReader, sReader;
-    if (!mReader.open(ctx.masterPath)) {
-        ctx.errorMessage = QStringLiteral("IfgGenerator: cannot open master");
-        return false;
+    bool useSdr = !ctx.masterZip.isEmpty() && !ctx.masterEntry.isEmpty();
+    if (useSdr) {
+        SarBandDescriptor dummyBand;
+        dummyBand.burstCount = 0;  // SDR 不用于 burst 缓存, 仅用于 open
+        if (!mSdr.open(ctx.masterZip, ctx.masterEntry, dummyBand)) {
+            qWarning() << "[Ifg] SDR open failed, fallback to GdalSlcReader";
+            useSdr = false;
+        }
+    }
+    if (!useSdr) {
+        if (!mReader.open(ctx.masterPath)) {
+            ctx.errorMessage = QStringLiteral("IfgGenerator: cannot open master");
+            return false;
+        }
     }
     if (!sReader.open(ctx.slavePath)) {
         ctx.errorMessage = QStringLiteral("IfgGenerator: cannot open slave");
         return false;
     }
 
-    int realW = mReader.width();
-    int realH = mReader.height();
+    int realW = useSdr ? mSdr.width() : mReader.width();
+    int realH = useSdr ? mSdr.height() : mReader.height();
     int rgLooks = ctx.params->rangeLooks;
     int azLooks = ctx.params->azimuthLooks;
     int outW = realW / rgLooks;
@@ -133,8 +148,13 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
             if (readRow0 < 0) { readH += readRow0; readRow0 = 0; }
             if (readRow0 + readH > realH) readH = realH - readRow0;
 
-            auto mBurst = mReader.readBandWindow(0, 0, readRow0, realW, readH);
-            auto sBurst = sReader.readBandWindow(0, 0, readRow0, realW, readH);
+            QVector<std::complex<float>> mBurst(realW * readH);
+            QVector<std::complex<float>> sBurst;
+            if (useSdr)
+                mSdr.readWindow(0, readRow0, realW, readH, mBurst.data());
+            else
+                mBurst = mReader.readBandWindow(0, 0, readRow0, realW, readH);
+            sBurst = sReader.readBandWindow(0, 0, readRow0, realW, readH);
             int actualH = std::min(mBurst.size() / realW, sBurst.size() / realW);
 
             qDebug() << "[Ifg] burst" << (b+1) << "/" << N
@@ -198,7 +218,11 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
             int readH = azLooks + cohWindow * 2;
             int row0 = srcRow - cohWindow;
 
-            auto mData = mReader.readBandWindow(0, 0, row0, realW, readH);
+            QVector<std::complex<float>> mData(realW * readH);
+            if (useSdr)
+                mSdr.readWindow(0, row0, realW, readH, mData.data());
+            else
+                mData = mReader.readBandWindow(0, 0, row0, realW, readH);
             auto sData = sReader.readBandWindow(0, 0, row0, realW, readH);
             int actualH = std::min(mData.size() / realW, sData.size() / realW);
             if (actualH == 0) {

@@ -129,6 +129,18 @@ void InterferogramServiceImpl::execute()
         ctx.params     = &mParams;
         ctx.masterPath = pairs[i].master.file;
         ctx.slavePath  = pairs[i].slave.file;
+        // 提取 master ZIP 路径 + entry (供 SentinelDataReader 使用)
+        {
+            QString p = pairs[i].master.file;
+            if (p.startsWith("/vsizip/")) {
+                QString inner = p.mid(8);
+                int zipEnd = inner.indexOf(".zip/", 0, Qt::CaseInsensitive);
+                if (zipEnd >= 0) {
+                    ctx.masterZip   = inner.left(zipEnd + 4);
+                    ctx.masterEntry = inner.mid(zipEnd + 5);
+                }
+            }
+        }
         ctx.width      = pairs[i].master.width;
         ctx.height     = pairs[i].master.height;
         ctx.burstInfo  = &pairs[i].slave;

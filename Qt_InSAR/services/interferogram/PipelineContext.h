@@ -8,8 +8,10 @@ struct IfgPipelineContext {
     const InterferogramParams* params = nullptr;
 
     // ── 输入 ──
-    QString masterPath;
+    QString masterPath;         // master VSI 路径 (或本地路径)
     QString slavePath;
+    QString masterZip;          // master ZIP 文件路径 (用于 SDR)
+    QString masterEntry;        // master ZIP 内 TIFF entry (用于 SDR)
     int     width  = 0;
     int     height = 0;
     const QsarBand* burstInfo = nullptr;  // TOPSAR burst metadata (nullable)
