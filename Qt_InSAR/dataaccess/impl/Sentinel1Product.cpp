@@ -191,8 +191,6 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
             ? QStringLiteral("Ascending") : QStringLiteral("Descending");
     }
 
-    // 采样间距在 parseAnnotation() 中从 XML 读取
-
     // 通过 VSI 读取 manifest 到临时文件用于 QDomDocument 解析
     QString manifestVsi = safRoot + "/manifest.safe";
     QByteArray xmlData;
@@ -277,6 +275,11 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
         }
         CSLDestroy(pv);
     }
+
+    // fallback: XML 未读到参数时用合理默认值
+    if (mSensorInfo.rangeSpacing <= 0) mSensorInfo.rangeSpacing = 2.33;
+    if (mSensorInfo.azimuthSpacing <= 0) mSensorInfo.azimuthSpacing = 13.9;
+    if (mSensorInfo.wavelength <= 0) mSensorInfo.wavelength = 0.05546576;
 
     mIsOpen = true;
     return true;
@@ -403,6 +406,9 @@ bool Sentinel1Product::parseManifest(const QString& manifestPath) {
     mSensorInfo.measurementDir  = fi.dir().absolutePath() + "/measurement";
 
     // 波长/频率 在 parseAnnotation() 中从 XML radarFrequency 读取
+    if (mSensorInfo.rangeSpacing <= 0) mSensorInfo.rangeSpacing = 2.33;
+    if (mSensorInfo.azimuthSpacing <= 0) mSensorInfo.azimuthSpacing = 13.9;
+    if (mSensorInfo.wavelength <= 0) mSensorInfo.wavelength = 0.05546576;
     return true;
 }
 
