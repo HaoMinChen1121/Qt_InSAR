@@ -611,6 +611,16 @@ bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
                     mParsedAzimuthFmRateBySwath[swathName] = coeffs[0].toDouble();
             }
         }
+        // rangeSamplingRate → rangeSpacing = c / (2 * rsr)
+        QDomNodeList rsrList = gaList.at(0).toElement().elementsByTagName("rangeSamplingRate");
+        if (!rsrList.isEmpty()) {
+            double rsr = rsrList.at(0).toElement().text().trimmed().toDouble();
+            if (rsr > 1e6) {
+                mSensorInfo.rangeSpacing = 299792458.0 / (2.0 * rsr);
+                if (!swathName.isEmpty())
+                    mParsedRangeSpacingBySwath[swathName] = mSensorInfo.rangeSpacing;
+            }
+        }
         // azimuthSteeringRate (TOPS deburst cut line, per-swath)
         // 注意: 嵌套在 generalAnnotation → productInformation → azimuthSteeringRate
         QDomNodeList asrList = gaList.at(0).toElement().elementsByTagName("azimuthSteeringRate");
