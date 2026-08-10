@@ -3,10 +3,13 @@
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/SentinelDataReader.h"
 #include "preprocess/TiffTiler.h"
+#include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QSet>
+#include <QTextStream>
 #include <gdal_priv.h>
 #include <cpl_vsi.h>
 #include <cpl_conv.h>
@@ -100,14 +103,7 @@ bool DataReader::execute(PipelineContext& ctx) {
     bool isTopsar = (ctx.masterBand->burstCount > 1);
 
     if (isTopsar) {
-        // ═══════════════════════════════════════════
-        //  TOPSAR 路径: SentinelDataReader
-        //  直接从 ZIP 读取 TIFF → zlib 解压 → SoA 缓存
-        //  GDAL 仅用于 TIFF 元数据 (地理参考)
-        // ═══════════════════════════════════════════
         auto parseVsiPath = [](const QString& vsiPath) -> QPair<QString,QString> {
-            // /vsizip/F:/x.zip/S1A_xxx.SAFE/measurement/iw1-vv.tiff
-            // → zipPath=F:/x.zip, entry=S1A_xxx.SAFE/measurement/iw1-vv.tiff
             if (!vsiPath.startsWith("/vsizip/")) return {vsiPath, QString()};
             QString inner = vsiPath.mid(8);
             int zipEnd = inner.indexOf(".zip/", 0, Qt::CaseInsensitive);

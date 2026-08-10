@@ -350,8 +350,6 @@ bool SentinelDataReader::open(const QString& zipPath, const QString& entryName,
     // ═══ Step 4: 直接 strip → CInt16→SoA, 切分 burst ═══
     mCaches.resize(mBurstCount);
     for (int b = 0; b < mBurstCount; ++b) {
-        // 始终用 b * L 作为 row0 — 与旧 SincResampler 一致
-        // burstStartLines 是 1-based (来自 S1 annotation), 不可直接用作 0-based 偏移
         int row0 = b * mLinesPerBurst;
         int burstH = mLinesPerBurst;
         if (b == mBurstCount - 1)
