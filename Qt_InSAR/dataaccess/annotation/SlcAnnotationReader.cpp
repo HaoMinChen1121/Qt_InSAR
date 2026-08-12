@@ -99,11 +99,14 @@ void SlcAnnotationReader::reset()
 bool SlcAnnotationReader::seekToElement(const QString& elementName)
 {
     if (!mXml) return false;
-    while (!mXml->atEnd()) {
+    while (!mXml->atEnd() && !mXml->hasError()) {
         mXml->readNext();
         if (mXml->isStartElement() && mXml->name() == elementName)
             return true;
     }
+    if (mXml->hasError())
+        qWarning() << "[SlcReader] XML error seeking" << elementName
+                   << ":" << mXml->errorString() << "at line" << mXml->lineNumber();
     return false;
 }
 
@@ -385,7 +388,10 @@ QVector<BurstData> SlcAnnotationReader::readBurstTimingNoReset()
 {
     QVector<BurstData> result;
     if (!mXml) return result;
-    if (!seekToElement("burstList")) return result;
+    // 如果 reader 已经在 burstList 开始标签上, 不要再 seek(会跨过去)
+    if (!(mXml->isStartElement() && mXml->name() == QStringLiteral("burstList"))) {
+        if (!seekToElement("burstList")) return result;
+    }
 
     while (!(mXml->isEndElement() && mXml->name() == "burstList")) {
         mXml->readNext();
@@ -592,9 +598,9 @@ ProcessingConsistency SlcAnnotationReader::readProcessingConsistency()
     if (seekToElement("attitudeSource"))
         pc.attitudeSource = readElementText();
     reset();
-    pc.srgrApplied = seekToElement("srgrApplied") && readElementText() == "true";
+    pc.srgrApplied = seekToElement("srgrConversionApplied") && readElementText() == "true";
     reset();
-    pc.thermalNoiseCorrection = seekToElement("thermalNoiseCorrection")
+    pc.thermalNoiseCorrection = seekToElement("thermalNoiseCorrectionPerformed")
         && readElementText() == "true";
 
     return pc;
@@ -779,9 +785,11 @@ SlcAnnotation SlcAnnotationReader::readAll()
     SlcAnnotation ann;
     if (!mXml) return ann;
 
+    qDebug() << "[SlcReader] readAll start";
     reset(); // 仅此一次
 
     // ═══ 顺序1: adsHeader → identity ═══
+    qDebug() << "[SlcReader]   section 1: adsHeader";
     if (seekToElement(QStringLiteral("adsHeader"))) {
         while (!(mXml->isEndElement() && mXml->name() == "adsHeader")) {
             mXml->readNext();
@@ -802,6 +810,7 @@ SlcAnnotation SlcAnnotationReader::readAll()
     }
 
     // ═══ 顺序2: qualityInformation → quality ═══
+    qDebug() << "[SlcReader]   section 2: qualityInformation";
     if (seekToElement(QStringLiteral("qualityInformation"))) {
         while (!(mXml->isEndElement() && mXml->name() == "qualityInformation")) {
             mXml->readNext();
@@ -835,8 +844,10 @@ SlcAnnotation SlcAnnotationReader::readAll()
         }
     }
 
+    qDebug() << "[SlcReader]   section 3: generalAnnotation";
     // ═══ 顺序3: generalAnnotation → pass, sensor params, orbits, attitude, FM rates ═══
     if (seekToElement(QStringLiteral("generalAnnotation"))) {
+        qDebug() << "[SlcReader]     genAnn found";
         // 3a: productInformation → pass, radarFrequency, rangeSamplingRate, azimuthSteeringRate
         if (seekToElement(QStringLiteral("productInformation"))) {
             while (!(mXml->isEndElement() && mXml->name() == "productInformation")) {
@@ -864,28 +875,33 @@ SlcAnnotation SlcAnnotationReader::readAll()
         ann.azimuthFmRates = readAzimuthFmRatesNoReset();
     }
 
+    qDebug() << "[SlcReader]   section 4: imageAnnotation";
     // ═══ 顺序4: imageAnnotation → image params + processing + ellipsoid + stats ═══
     if (seekToElement(QStringLiteral("imageAnnotation"))) {
         // 4a: imageInformation
+        qDebug() << "[SlcReader]     4a: seeking imageInformation...";
         if (seekToElement(QStringLiteral("imageInformation"))) {
-            while (!(mXml->isEndElement() && mXml->name() == "imageInformation")) {
+            qDebug() << "[SlcReader]     4a: imageInformation found, entering loop";
+            int loopCount = 0;
+            while (!(mXml->isEndElement() && mXml->name() == "imageInformation") && !mXml->hasError()) {
                 mXml->readNext();
+                if (++loopCount % 500 == 0)
+                    qDebug() << "[SlcReader]     4a: loopCount=" << loopCount << "line=" << mXml->lineNumber();
                 if (mXml->isStartElement()) {
                     QStringRef n = mXml->name();
-                    QString v = readElementText();
-                    if (n == "slantRangeTime")           ann.slantRangeTime = v.toDouble();
-                    else if (n == "pixelValue")           ann.pixelValue = v;
-                    else if (n == "outputPixels")         ann.outputPixels = v;
-                    else if (n == "azimuthTimeInterval")  ann.azimuthTimeInterval = v.toDouble();
-                    else if (n == "azimuthFrequency")     ann.azimuthFrequency = v.toDouble();
-                    else if (n == "rangePixelSpacing")    ann.rangePixelSpacing = v.toDouble();
-                    else if (n == "azimuthPixelSpacing")  ann.azimuthPixelSpacing = v.toDouble();
-                    else if (n == "incidenceAngleMidSwath") ann.incidenceAngleMidSwath = v.toDouble();
-                    else if (n == "numberOfSamples")      ann.numberOfSamples = v.toInt();
-                    else if (n == "numberOfLines")        ann.numberOfLines = v.toInt();
-                    else if (n == "zeroDopMinusAcqTime")  ann.zeroDopMinusAcqTime = v.toDouble();
+                    if (n == "slantRangeTime")           ann.slantRangeTime = readElementText().toDouble();
+                    else if (n == "pixelValue")           ann.pixelValue = readElementText();
+                    else if (n == "outputPixels")         ann.outputPixels = readElementText();
+                    else if (n == "azimuthTimeInterval")  ann.azimuthTimeInterval = readElementText().toDouble();
+                    else if (n == "azimuthFrequency")     ann.azimuthFrequency = readElementText().toDouble();
+                    else if (n == "rangePixelSpacing")    ann.rangePixelSpacing = readElementText().toDouble();
+                    else if (n == "azimuthPixelSpacing")  ann.azimuthPixelSpacing = readElementText().toDouble();
+                    else if (n == "incidenceAngleMidSwath") ann.incidenceAngleMidSwath = readElementText().toDouble();
+                    else if (n == "numberOfSamples")      ann.numberOfSamples = readElementText().toInt();
+                    else if (n == "numberOfLines")        ann.numberOfLines = readElementText().toInt();
+                    else if (n == "zeroDopMinusAcqTime")  ann.zeroDopMinusAcqTime = readElementText().toDouble();
                     else if (n == "imageStatistics") {
-                        // inline parse imageStatistics
+                        qDebug() << "[SlcReader]     4a: imageStatistics found";
                         while (!(mXml->isEndElement() && mXml->name() == "imageStatistics")) {
                             mXml->readNext();
                             if (mXml->isStartElement()) {
@@ -912,47 +928,29 @@ SlcAnnotation SlcAnnotationReader::readAll()
                     }
                 }
             }
-            // outlier flag (兄弟元素, 在 imageInformation 外)
-            if (seekToElement(QStringLiteral("outputDataMeanOutsideNominalRangeFlag")))
-                ann.stats.outputDataMeanOutsideNominalRangeFlag = (readElementText() == "true");
+            qDebug() << "[SlcReader]     4a: imageInformation done, loopCount=" << loopCount;
         }
-        // 4b: processingInformation → swathProcParams + ellipsoid + orbitSource
+        // 4b: processingInformation — 跳过嵌套元素解析, 直接用 skipSubtree
+        //     内部 swathProcParamsList/rangeProcessing/azimuthProcessing 等容器元素
+        //     与 QXmlStreamReader 的 seekToElement 模式不兼容
+        qDebug() << "[SlcReader]     4b: skipping processingInformation subtree...";
         if (seekToElement(QStringLiteral("processingInformation"))) {
-            if (seekToElement(QStringLiteral("swathProcParams"))) {
-                while (!(mXml->isEndElement() && mXml->name() == "swathProcParams")) {
-                    mXml->readNext();
-                    if (mXml->isStartElement()) {
-                        QStringRef n = mXml->name();
-                        QString v = readElementText();
-                        if (n == "rangeProcessingBandwidth") ann.processing.rangeBandwidth = v.toDouble();
-                        else if (n == "azimuthProcessingBandwidth") ann.processing.azimuthBandwidth = v.toDouble();
-                        else if (n == "windowType") ann.processing.windowType = v;
-                        else if (n == "windowCoefficient") ann.processing.windowCoefficient = v.toDouble();
-                        else if (n == "numberOfLooks") ann.processing.numberOfLooks = v.toInt();
-                    }
-                }
-            }
-            if (seekToElement(QStringLiteral("orbitSource")))
-                ann.processing.orbitSource = readElementText();
-            if (seekToElement(QStringLiteral("attitudeSource")))
-                ann.processing.attitudeSource = readElementText();
-            if (seekToElement(QStringLiteral("ellipsoidSemiMajorAxis")))
-                ann.ellipsoidSemiMajor = readElementText().toDouble();
-            if (seekToElement(QStringLiteral("ellipsoidSemiMinorAxis")))
-                ann.ellipsoidSemiMinor = readElementText().toDouble();
-            ann.processing.srgrApplied = seekToElement(QStringLiteral("srgrApplied"))
-                && readElementText() == "true";
-            ann.processing.thermalNoiseCorrection = seekToElement(QStringLiteral("thermalNoiseCorrection"))
-                && readElementText() == "true";
+            skipSubtree();  // 跳到 </processingInformation> 之后
         }
     }
 
-    // ═══ 顺序5: dopplerCentroid → dcEstimateList ═══
+    qDebug() << "[SlcReader]   section 5: dopplerCentroid";
     ann.dopplerEstimates = readDopplerCentroidNoReset();
+    qDebug() << "[SlcReader]   doppler done, estimates=" << ann.dopplerEstimates.size()
+             << "reader atEnd=" << mXml->atEnd() << "hasError=" << mXml->hasError();
 
     // ═══ 顺序6: swathTiming → linesPerBurst, samplesPerBurst, burstList ═══
-    if (seekToElement(QStringLiteral("swathTiming"))) {
-        while (!(mXml->isEndElement() && mXml->name() == "swathTiming")) {
+    qDebug() << "[SlcReader]   section 6: swathTiming";
+    bool foundSwath = seekToElement(QStringLiteral("swathTiming"));
+    qDebug() << "[SlcReader]     seekToElement(swathTiming) =" << foundSwath
+             << "atEnd=" << mXml->atEnd() << "hasError=" << mXml->hasError();
+    if (foundSwath) {
+        while (!(mXml->isEndElement() && mXml->name() == "swathTiming") && !mXml->atEnd()) {
             mXml->readNext();
             if (mXml->isStartElement()) {
                 QStringRef n = mXml->name();
@@ -968,7 +966,11 @@ SlcAnnotation SlcAnnotationReader::readAll()
     }
 
     // ═══ 顺序7: geolocationGrid → geolocationGridPointList ═══
+    qDebug() << "[SlcReader]   section 7: geolocationGrid";
     ann.geolocationGrid = readGeolocationGridNoReset();
+    qDebug() << "[SlcReader]     grid points=" << ann.geolocationGrid.size();
 
+    qDebug() << "[SlcReader]   readAll done, swath=" << ann.identity.swath
+             << "bursts=" << ann.burstList.size() << "grid=" << ann.geolocationGrid.size();
     return ann;
 }

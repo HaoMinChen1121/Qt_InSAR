@@ -105,6 +105,7 @@ private slots:
     void onUndoActionTriggered();
     void onRedoActionTriggered();
     void onSearchEditorEditingFinished();
+    void onShowAnnotationDialog();
 
 protected:
     void closeEvent(QCloseEvent* closeEvent) override;

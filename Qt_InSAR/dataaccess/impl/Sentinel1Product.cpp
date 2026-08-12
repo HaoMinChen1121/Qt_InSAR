@@ -38,7 +38,9 @@ static bool parseAnnotationFromReader(SlcAnnotationReader& reader,
     QMap<QString, QVector<QDateTime>>& mParsedBurstSensingTimesBySwath,
     QMap<QString, double>& mParsedNearRangeBySwath,
     QMap<QString, double>& mParsedRangeSpacingBySwath,
-    QMap<QString, double>& mParsedIncidenceMidBySwath);
+    QMap<QString, double>& mParsedIncidenceMidBySwath,
+    SlcAnnotation* outAnnotation = nullptr,
+    QMap<QString, SlcAnnotation>* outAnnotationsMap = nullptr);
 
 // ──────────────────────────────────────────────────────────
 // 构造/析构
@@ -145,16 +147,21 @@ bool Sentinel1Product::openDirectory(const QString& safDir) {
 }
 
 bool Sentinel1Product::openZip(const QString& zipPath) {
+    qDebug() << "[S1Product] openZip start:" << zipPath;
+
     QString vsiRoot = "/vsizip/" + zipPath;
     mOriginalPath = zipPath;
 
     // 从文件名推断基本信息 (ZIP内路径可能不同, 先用文件名兜底)
     QString zipBase = QFileInfo(zipPath).completeBaseName();
     S1FileNameInfo fnInfo = parseS1FileName(zipBase);
+    qDebug() << "[S1Product] zipBase:" << zipBase;
 
     // 查找 .SAFE 根目录
     QString safRoot;
+    qDebug() << "[S1Product] VSIReadDir:" << vsiRoot;
     char** entries = VSIReadDir(vsiRoot.toUtf8().constData());
+    qDebug() << "[S1Product] VSIReadDir done, entries:" << (entries ? "yes" : "NULL");
     if (entries) {
         for (int i = 0; entries[i]; ++i) {
             QString e = QString::fromUtf8(entries[i]);
@@ -165,6 +172,7 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
         }
         CSLDestroy(entries);
     }
+    qDebug() << "[S1Product] safRoot:" << safRoot;
 
     if (safRoot.isEmpty()) {
         // 可能 ZIP 内没有 .SAFE 包装目录，manifest.safe 直接在根
@@ -173,8 +181,10 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
             safRoot = vsiRoot;
     }
 
-    if (safRoot.isEmpty())
+    if (safRoot.isEmpty()) {
+        qDebug() << "[S1Product] safRoot empty, return false";
         return false;
+    }
 
     // 用文件名信息预设产品类型和元数据
     mSensorType = QStringLiteral("Sentinel-1");
@@ -246,18 +256,24 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
 
     bool ok = parseManifest(tmpManifest);
     QFile::remove(tmpManifest);
+    qDebug() << "[S1Product] parseManifest:" << (ok ? "OK" : "FAILED");
     if (!ok) return false;
 
     mOriginalPath = zipPath;
 
     // 解析 annotation
     QString annDir = safRoot + "/annotation";
+    qDebug() << "[S1Product] annotation dir:" << annDir;
     char** annEntries = VSIReadDir(annDir.toUtf8().constData());
+    qDebug() << "[S1Product] VSIReadDir annotation done, entries:" << (annEntries ? "yes" : "NULL");
     if (annEntries) {
+        int xmlCount = 0;
         for (int i = 0; annEntries[i]; ++i) {
             QString e = QString::fromUtf8(annEntries[i]);
             if (e.endsWith(".xml") && !e.contains("calibration", Qt::CaseInsensitive)) {
+                ++xmlCount;
                 QString annVsi = annDir + "/" + e;
+                qDebug() << "[S1Product]   reading:" << e;
                 QByteArray aData;
                 {
                     VSILFILE* fp = VSIFOpenExL(annVsi.toUtf8().constData(), "rb", TRUE);
@@ -270,9 +286,13 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
                         vsi_l_offset n = VSIFReadL(aData.data(), 1, aData.size(), fp);
                         aData.resize(static_cast<int>(n));
                         VSIFCloseL(fp);
+                        qDebug() << "[S1Product]     read" << aData.size() << "bytes";
+                    } else {
+                        qDebug() << "[S1Product]     VSI open FAILED";
                     }
                 }
                 if (!aData.isEmpty()) {
+                    qDebug() << "[S1Product]     parsing with SlcAnnotationReader...";
                     // 流式解析: 直接从内存数据读取, 无需临时文件
                     SlcAnnotationReader reader;
                     if (reader.openFromData(aData)) {
@@ -293,19 +313,32 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
                             mParsedBurstSensingTimesBySwath,
                             mParsedNearRangeBySwath,
                             mParsedRangeSpacingBySwath,
-                            mParsedIncidenceMidBySwath);
+                            mParsedIncidenceMidBySwath,
+                            &mAnnotation, &mAnnotationsBySwath);
+                        // 按波段缓存: key = "IW1/VH"
+                        if (!mAnnotation.identity.swath.isEmpty())
+                            mAnnotationsBySwath[mAnnotation.identity.swath + "/" + mAnnotation.identity.polarization] = mAnnotation;
+                        qDebug() << "[S1Product]     parsed OK";
+                    } else {
+                        qDebug() << "[S1Product]     reader.openFromData FAILED";
                     }
                 }
             }
         }
         CSLDestroy(annEntries);
+        qDebug() << "[S1Product] processed" << xmlCount << "annotation XMLs";
     }
+    qDebug() << "[S1Product] annotation parsing done";
 
     // 扫描 measurement
+    qDebug() << "[S1Product] discoverMeasurementFiles:" << (safRoot + "/measurement");
     discoverMeasurementFiles(safRoot + "/measurement");
+    qDebug() << "[S1Product] discoverMeasurementFiles done, bands:" << mBands.size();
 
     // 汇总传感器级元数据 (避免last-swath覆盖问题)
     finalizeSensorInfo();
+    qDebug() << "[S1Product] openZip done, wavelengths=" << mSensorInfo.wavelength
+             << "prf=" << mSensorInfo.prf << "nearRange=" << mSensorInfo.nearRange;
 
     // 预览图
     QString prevDir = safRoot + "/preview";
@@ -483,7 +516,9 @@ static bool parseAnnotationFromReader(SlcAnnotationReader& reader,
     QMap<QString, QVector<QDateTime>>& mParsedBurstSensingTimesBySwath,
     QMap<QString, double>& mParsedNearRangeBySwath,
     QMap<QString, double>& mParsedRangeSpacingBySwath,
-    QMap<QString, double>& mParsedIncidenceMidBySwath)
+    QMap<QString, double>& mParsedIncidenceMidBySwath,
+    SlcAnnotation* outAnnotation,
+    QMap<QString, SlcAnnotation>* outAnnotationsMap)
 {
     SlcAnnotation ann = reader.readAll();
 
@@ -585,6 +620,14 @@ static bool parseAnnotationFromReader(SlcAnnotationReader& reader,
         .arg(swathName).arg(nearRange, 0, 'f', 1)
         .arg(ann.azimuthFrequency, 0, 'f', 2).arg(ann.burstList.size())
         .arg(mParsedAzimuthFmRateBySwath.value(swathName, 0.0), 0, 'f', 1);
+
+    // 缓存第一个 annotation (用于旧兼容)
+    if (outAnnotation && outAnnotation->identity.swath.isEmpty())
+        *outAnnotation = ann;
+    // 按波段存储
+    if (outAnnotationsMap && !ann.identity.swath.isEmpty())
+        (*outAnnotationsMap)[ann.identity.swath + QStringLiteral("/") + ann.identity.polarization] = ann;
+
     return true;
 }
 
@@ -607,7 +650,8 @@ bool Sentinel1Product::parseAnnotationStream(const QString& annotationPath)
         mParsedBurstAbsIdsBySwath,
         mParsedBurstSensingTimesBySwath,
         mParsedNearRangeBySwath, mParsedRangeSpacingBySwath,
-        mParsedIncidenceMidBySwath);
+        mParsedIncidenceMidBySwath,
+        &mAnnotation, &mAnnotationsBySwath);
 }
 
 // ──────────────────────────────────────────────────────────
@@ -637,6 +681,10 @@ void Sentinel1Product::finalizeSensorInfo()
         mSensorInfo.incidenceAngleMid = mParsedIncidenceMidBySwath[repSwath];
     if (mParsedRangeSpacingBySwath.contains(repSwath))
         mSensorInfo.rangeSpacing = mParsedRangeSpacingBySwath[repSwath];
+    // 重算远距: nearRange 被覆盖为 IW2 后, farRange 也要跟着更新
+    if (mSensorInfo.nearRange > 0 && mSensorInfo.rangeSamples > 0 && mSensorInfo.rangeSpacing > 0)
+        mSensorInfo.farRange = mSensorInfo.nearRange
+            + (mSensorInfo.rangeSamples - 1) * mSensorInfo.rangeSpacing;
 
     // 入射角近/远端: 从 IW1 近距和 IW3 远距计算
     // 使用简化的球面地球模型: cos(inc) = sqrt((H+R)^2 + R^2 - Re^2) / (2*(H+R)*R)

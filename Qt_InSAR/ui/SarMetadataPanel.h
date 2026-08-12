@@ -40,6 +40,7 @@ public slots:
     // 追加 per-IW range 参数 (IW1/IW2/IW3 各一行)
     void setBandRangeInfo(const QVector<QString>& swaths,
                           const QVector<double>& nearRanges,
+                          const QVector<double>& farRanges,
                           const QVector<double>& rangeSpacings);
 
 private:

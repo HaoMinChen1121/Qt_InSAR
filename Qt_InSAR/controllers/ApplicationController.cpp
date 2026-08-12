@@ -39,6 +39,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QToolButton>
+#include <QApplication>
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
 #include <algorithm>
@@ -173,7 +174,23 @@ void ApplicationController::wireConnections()
             }
 
             if (isComplex) {
-                QString basePath = QDir::tempPath() + "/insar_" + fi.completeBaseName();
+                // VRT 直接引用源路径, 不提取 TIFF; 输出到 ZIP/SAFE 同级目录
+                QString basePath;
+                if (path.startsWith("/vsi")) {
+                    QString realPath = path;
+                    if (realPath.startsWith("/vsizip/"))
+                        realPath = realPath.mid(8);
+                    int zipPos = realPath.indexOf(".zip/", 0, Qt::CaseInsensitive);
+                    if (zipPos < 0) zipPos = realPath.indexOf(".ZIP/", 0, Qt::CaseInsensitive);
+                    if (zipPos >= 0) {
+                        QString zipDir = QFileInfo(realPath.left(zipPos + 4)).absolutePath();
+                        basePath = zipDir + "/" + fi.completeBaseName();
+                    } else {
+                        basePath = QDir::tempPath() + "/insar_" + fi.completeBaseName();
+                    }
+                } else {
+                    basePath = fi.absolutePath() + "/" + fi.completeBaseName();
+                }
                 vsiEntries.append({path, basePath, name});
             } else {
                 QgsRasterLayer* layer = new QgsRasterLayer(path, name);
@@ -268,14 +285,10 @@ void ApplicationController::wireConnections()
             watcher->deleteLater();
         });
         watcher->setFuture(QtConcurrent::run([vsiPaths, tmpPaths]() -> QStringList {
-            QVector<QFuture<QString>> futures; futures.reserve(vsiPaths.size());
+            QStringList results; results.reserve(vsiPaths.size());
             for (int i = 0; i < vsiPaths.size(); ++i) {
-                QString path = vsiPaths[i], tmp = tmpPaths[i];
-                futures.append(QtConcurrent::run([path, tmp]() {
-                    return GdalVsiProcessor::process(path, tmp); }));
+                results.append(GdalVsiProcessor::process(vsiPaths[i], tmpPaths[i]));
             }
-            QStringList results; results.reserve(futures.size());
-            for (auto& f : futures) results.append(f.result());
             return results;
         }));
     });
@@ -513,12 +526,20 @@ void ApplicationController::onSarProductOpenRequested(const QString& path)
 {
     if (mShuttingDown) return;
 
+    qDebug() << "[Controller] onSarProductOpenRequested called with:" << path;
+
+    ProcessingMonitorPanel* monitor = mMainWindow->processingMonitorPanel();
+    if (monitor)
+        monitor->appendLog(QStringLiteral("正在加载产品..."), "#4A90D9");
+    QApplication::processEvents(); // 刷新 UI
+
     QScopedPointer<ISarProduct> product(createSarProduct(path));
     if (!product || !product->open(path)) {
         QMessageBox::warning(mMainWindow, QStringLiteral("打开失败"),
             QStringLiteral("无法识别该 Sentinel-1 产品。"));
         return;
     }
+    qDebug() << "[Controller] product opened OK, bands:" << product->bands().size();
 
     SarSensorInfo sensorInfo = product->sensorInfo();
     QList<OrbitStateVector> orbitVectors = product->orbitStateVectors();
@@ -531,6 +552,8 @@ void ApplicationController::onSarProductOpenRequested(const QString& path)
     prodInfo.sensorInfo = sensorInfo;
     prodInfo.orbitVectors = orbitVectors;
     prodInfo.doppler = doppler;
+    prodInfo.annotation = product->annotation();
+    prodInfo.annotationsBySwath = product->allAnnotations();
     QString shortDate = sensorInfo.acquisitionStart.toString("MMdd");
     prodInfo.displayName = QStringLiteral("%1_%2 Orbit%3")
         .arg(sensorInfo.missionId.isEmpty() ? sensorInfo.sensorType : sensorInfo.missionId)
@@ -538,47 +561,19 @@ void ApplicationController::onSarProductOpenRequested(const QString& path)
         .arg(sensorInfo.relativeOrbit);
     mProductRegistry[path] = prodInfo;
 
-    // ── 控制台转储: 配准相关参数 ──
-    {
-        const auto& bands = product->bands();
-        qDebug() << "========== [Registration Data] Product Loaded ==========";
-        qDebug() << "  Display Name:" << prodInfo.displayName;
-        qDebug() << "  Mission:" << sensorInfo.missionId
-                 << "Mode:" << sensorInfo.acquisitionMode
-                 << "Type:" << sarProductTypeToString(sensorInfo.productType);
-        qDebug() << "  --- Sensor Geometry ---";
-        qDebug() << "    wavelength       =" << sensorInfo.wavelength << "m";
-        qDebug() << "    incidenceAngleMid=" << sensorInfo.incidenceAngleMid << "deg";
-        qDebug() << "    nearRange        =" << sensorInfo.nearRange << "m";
-        qDebug() << "    farRange         =" << sensorInfo.farRange << "m";
-        qDebug() << "    rangeSpacing     =" << sensorInfo.rangeSpacing << "m";
-        qDebug() << "    azimuthSpacing   =" << sensorInfo.azimuthSpacing << "m";
-        qDebug() << "    prf              =" << sensorInfo.prf << "Hz";
-        qDebug() << "    rangeSamples     =" << sensorInfo.rangeSamples;
-        qDebug() << "    azimuthSamples   =" << sensorInfo.azimuthSamples;
-        qDebug() << "    orbitVectors     =" << orbitVectors.size();
-        qDebug() << "    dopplerCentroid  =" << doppler.centroid << "Hz";
-        qDebug() << "  --- Bands (" << bands.size() << "total) ---";
-        for (const auto& b : bands) {
-            qDebug() << "   " << b.subSwath << b.polarization
-                     << QStringLiteral("size=%1×%2").arg(b.rasterSize.width()).arg(b.rasterSize.height());
-            qDebug() << "      azimuthFrequency   =" << b.azimuthFrequency << "Hz";
-            qDebug() << "      azimuthFmRate      =" << b.azimuthFmRate << "Hz/s";
-            qDebug() << "      azimuthSteeringRate=" << b.azimuthSteeringRate << "deg/s";
-            qDebug() << "      burstCount         =" << b.burstCount
-                     << "linesPerBurst=" << b.linesPerBurst;
-            if (!b.burstAzimuthTimes.isEmpty()) {
-                qDebug() << "      burstTime[0]       =" << b.burstAzimuthTimes.first().toString("hh:mm:ss.zzz");
-                qDebug() << "      burstTime[last]    =" << b.burstAzimuthTimes.last().toString("hh:mm:ss.zzz");
-            }
-            if (!b.burstStartLines.isEmpty())
-                qDebug() << "      burstStartLines[0] =" << b.burstStartLines.first()
-                         << "count=" << b.burstStartLines.size();
-        }
-        qDebug() << "==========================================================";
-    }
+    qDebug() << "========== [Registration Data] Product Loaded ==========";
+    qDebug() << "  Display Name:" << prodInfo.displayName;
+    qDebug() << "  wavelength     =" << sensorInfo.wavelength << "m";
+    qDebug() << "  incidenceAngle =" << sensorInfo.incidenceAngleMid << "deg";
+    qDebug() << "  nearRange      =" << sensorInfo.nearRange << "m";
+    qDebug() << "  rangeSpacing   =" << sensorInfo.rangeSpacing << "m";
+    qDebug() << "  azimuthSpacing =" << sensorInfo.azimuthSpacing << "m";
+    qDebug() << "  prf            =" << sensorInfo.prf << "Hz";
+    qDebug() << "==========================================================";
 
-    const auto& bands = product->bands();
+    const auto& bands = prodInfo.bands;
+
+    // 图层
     LayerPanel* layerPanel = mMainWindow->layerPanel();
     if (layerPanel && !bands.isEmpty()) {
         mPendingGroupName = QStringLiteral("%1 %2 %3 Orbit%4")
@@ -596,6 +591,7 @@ void ApplicationController::onSarProductOpenRequested(const QString& path)
         emit layerPanel->layerAddRequested(paths);
     }
 
+    // 元数据面板
     SarMetadataPanel* metaPanel = mMainWindow->sarMetadataPanel();
     if (metaPanel) {
         metaPanel->setMetadata(sensorInfo.sensorType,
@@ -605,23 +601,24 @@ void ApplicationController::onSarProductOpenRequested(const QString& path)
             sensorInfo.rangeSpacing, sensorInfo.azimuthSpacing,
             sensorInfo.nearRange, sensorInfo.farRange, sensorInfo.prf,
             sensorInfo.centerFreq, sensorInfo.orbitDirection,
-            sensorInfo.relativeOrbit, product->acquisitionMode());
-        // per-IW range 参数
+            sensorInfo.relativeOrbit, sensorInfo.acquisitionMode);
         QVector<QString> swNames;
-        QVector<double> swNearR, swRgSpac;
+        QVector<double> swNearR, swFarR, swRgSpac;
         for (const auto& b : bands) {
             if (b.nearRange <= 0) continue;
             if (!swNames.contains(b.subSwath)) {
                 swNames.append(b.subSwath);
                 swNearR.append(b.nearRange);
+                double farR = b.nearRange + (b.samplesPerBurst - 1) * b.rangeSpacing;
+                swFarR.append(farR);
                 swRgSpac.append(b.rangeSpacing);
             }
         }
         if (swNames.size() > 1)
-            metaPanel->setBandRangeInfo(swNames, swNearR, swRgSpac);
+            metaPanel->setBandRangeInfo(swNames, swNearR, swFarR, swRgSpac);
     }
 
-    ProcessingMonitorPanel* monitor = mMainWindow->processingMonitorPanel();
+    // 监控面板
     if (monitor) {
         QStringList bandInfo;
         for (const auto& b : bands)

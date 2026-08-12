@@ -4,6 +4,8 @@
 #include "domain/SarSensorInfo.h"
 #include "domain/SarProductType.h"
 #include "domain/OrbitInfo.h"
+#include "dataaccess/annotation/SlcAnnotation.h"
+#include <QMap>
 #include <QString>
 #include <QList>
 #include <QSize>
@@ -75,6 +77,10 @@ public:
     // 读取复数数据 (SLC)
     virtual QVector<std::complex<float>> readComplexSamples(
         int bandIndex, int x0, int y0, int w, int h) = 0;
+
+    // 完整 annotation 数据 (用于元数据检查对话框等)
+    virtual SlcAnnotation annotation() const { return SlcAnnotation(); }
+    virtual QMap<QString, SlcAnnotation> allAnnotations() const { return {}; }
 };
 
 #endif // ISARPRODUCT_H

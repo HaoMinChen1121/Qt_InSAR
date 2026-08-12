@@ -99,16 +99,18 @@ void SarMetadataPanel::setMetadata(
 }
 
 void SarMetadataPanel::setBandRangeInfo(const QVector<QString>& swaths,
-    const QVector<double>& nearRanges, const QVector<double>& rangeSpacings)
+    const QVector<double>& nearRanges, const QVector<double>& farRanges,
+    const QVector<double>& rangeSpacings)
 {
-    // 替换单值 nearRange/rangeSpacing 为 per-IW 显示
-    int n = std::min({swaths.size(), nearRanges.size(), rangeSpacings.size()});
-    QString nearText, spacText;
+    int n = std::min({swaths.size(), nearRanges.size(), farRanges.size(), rangeSpacings.size()});
+    QString nearText, farText, spacText;
     for (int i = 0; i < n; ++i) {
-        if (i > 0) { nearText += "\n"; spacText += "\n"; }
+        if (i > 0) { nearText += "\n"; farText += "\n"; spacText += "\n"; }
         nearText += QStringLiteral("%1: %2 m").arg(swaths[i]).arg(nearRanges[i], 0, 'f', 0);
+        farText  += QStringLiteral("%1: %2 m").arg(swaths[i]).arg(farRanges[i], 0, 'f', 0);
         spacText += QStringLiteral("%1: %2 m").arg(swaths[i]).arg(rangeSpacings[i], 0, 'f', 2);
     }
     mNearRange->setText(nearText);
+    mFarRange->setText(farText);
     mRangeSpacing->setText(spacText);
 }

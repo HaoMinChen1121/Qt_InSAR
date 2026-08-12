@@ -16,6 +16,8 @@
 #include "ui/Filter/FilterUnwrappingDialog.h"
 #include "ui/Geocoding/GeocodingDialog.h"
 #include "ui/Deformation/DeformationDialog.h"
+#include "ui/SlcMetadataDialog.h"
+#include "dataaccess/SarProductFactory.h"
 
 #include "controllers/ApplicationController.h"
 
@@ -278,6 +280,12 @@ void MainWindow::createCategoryFile(SARibbonCategory* page)
     QAction* actExit = createAction(QStringLiteral("退出"), ":/icon/icon/delete.svg", "actExit");
     pnlGeneral->addLargeAction(actExit);
     connect(actExit, &QAction::triggered, this, []() { qApp->quit(); });
+
+    // XML 元数据检查
+    SARibbonPanel* pnlMeta = page->addPanel(QStringLiteral("元数据"));
+    QAction* actMeta = createAction(QStringLiteral("SLC XML\n元数据"), ":/icon/icon/help.svg", "actMeta");
+    pnlMeta->addLargeAction(actMeta);
+    connect(actMeta, &QAction::triggered, this, &MainWindow::onShowAnnotationDialog);
 }
 
 void MainWindow::createQuickAccessBar()
@@ -851,4 +859,24 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
     event->accept();
     qDebug() << "[InSAR] 窗口关闭完成";
+}
+
+void MainWindow::onShowAnnotationDialog()
+{
+    if (!mAppController) return;
+
+    auto products = mAppController->loadedProducts();
+    if (products.isEmpty()) {
+        mMonitorPanel->appendLog(QStringLiteral("请先在文件页加载 SLC 产品"), "#E67E22");
+        return;
+    }
+
+    // 优先配准页选的主影像, 否则取 registry 中第一个
+    QString initialKey = mRegParams.masterProductPath.isEmpty()
+        ? mRegParams.masterPath : mRegParams.masterProductPath;
+    if (initialKey.isEmpty() || !products.contains(initialKey))
+        initialKey = products.firstKey();
+
+    SlcMetadataDialog dlg(products, initialKey, this);
+    dlg.exec();
 }

@@ -86,6 +86,7 @@
     <ClCompile Include="dataaccess\annotation\SlcAnnotationReader.cpp"><Filter>DataAccess\Annotation</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\Sentinel1Product.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\GdalVsiProcessor.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\ZipTiffExtractor.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\QsarIO.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClInclude Include="dataaccess\impl\BurstCacheSoA.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\SentinelDataReader.h"><Filter>DataAccess\Impl</Filter></ClInclude>
@@ -93,6 +94,7 @@
     <ClInclude Include="dataaccess\annotation\SlcAnnotationReader.h"><Filter>DataAccess\Annotation</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\GdalVsiProcessor.h"><Filter>DataAccess\Impl</Filter></ClInclude>
+    <ClInclude Include="dataaccess\impl\ZipTiffExtractor.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\QsarIO.h"><Filter>DataAccess\Impl</Filter></ClInclude>
   </ItemGroup>
   <!-- Services -->
@@ -185,11 +187,13 @@
   <ItemGroup>
     <ClCompile Include="ui\MapCanvasWidget.cpp"><Filter>UI</Filter></ClCompile>
     <ClCompile Include="ui\LayerPanel.cpp"><Filter>UI</Filter></ClCompile>
+    <ClCompile Include="ui\SlcMetadataDialog.cpp"><Filter>UI</Filter></ClCompile>
     <ClCompile Include="ui\ProcessingMonitorPanel.cpp"><Filter>UI</Filter></ClCompile>
     <ClCompile Include="ui\OverviewWidget.cpp"><Filter>UI</Filter></ClCompile>
     <ClCompile Include="ui\SarMetadataPanel.cpp"><Filter>UI</Filter></ClCompile>
     <QtMoc Include="ui\MapCanvasWidget.h"><Filter>UI</Filter></QtMoc>
     <QtMoc Include="ui\LayerPanel.h"><Filter>UI</Filter></QtMoc>
+    <QtMoc Include="ui\SlcMetadataDialog.h"><Filter>UI</Filter></QtMoc>
     <QtMoc Include="ui\ProcessingMonitorPanel.h"><Filter>UI</Filter></QtMoc>
     <QtMoc Include="ui\OverviewWidget.h"><Filter>UI</Filter></QtMoc>
     <QtMoc Include="ui\SarMetadataPanel.h"><Filter>UI</Filter></QtMoc>

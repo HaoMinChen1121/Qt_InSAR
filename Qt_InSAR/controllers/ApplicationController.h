@@ -12,6 +12,7 @@
 #include "domain/params/RegistrationParams.h"
 #include "domain/params/InterferogramParams.h"
 #include "dataaccess/ISarProduct.h"
+#include "dataaccess/annotation/SlcAnnotation.h"
 
 class MainWindow;
 class WorkerManager;
@@ -31,6 +32,8 @@ struct ProductSourceInfo {
     SarSensorInfo sensorInfo;         // 传感器元数据
     QList<OrbitStateVector> orbitVectors;
     DopplerInfo doppler;
+    SlcAnnotation annotation;         // 完整 XML annotation (供元数据对话框等使用)
+    QMap<QString, SlcAnnotation> annotationsBySwath; // 每波段独立数据, key="IW1/VH"
 };
 
 class ApplicationController : public QObject

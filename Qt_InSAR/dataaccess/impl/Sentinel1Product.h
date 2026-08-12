@@ -27,6 +27,8 @@ public:
     SarSensorInfo sensorInfo() const override                    { return mSensorInfo; }
     QList<OrbitStateVector> orbitStateVectors() const override   { return mOrbitVectors; }
     DopplerInfo dopplerCentroid() const override                 { return mDoppler; }
+    SlcAnnotation annotation() const override                    { return mAnnotation; }
+    QMap<QString, SlcAnnotation> allAnnotations() const override { return mAnnotationsBySwath; }
 
     QString previewImagePath() const override  { return mPreviewPath; }
     QString originalPath() const override      { return mOriginalPath; }
@@ -70,6 +72,8 @@ private:
     SarSensorInfo mSensorInfo;
     QList<OrbitStateVector> mOrbitVectors;
     DopplerInfo mDoppler;
+    SlcAnnotation mAnnotation;   // 最后解析的 annotation (兼容旧接口)
+    QMap<QString, SlcAnnotation> mAnnotationsBySwath;  // 每波段独立缓存 (key: "IW1/VH")
 
     // 解析状态 (跨函数共享)
     QString mMissionId;

@@ -143,6 +143,7 @@
     <ClCompile Include="dataaccess\annotation\SlcAnnotationReader.cpp" />
     <ClCompile Include="dataaccess\impl\Sentinel1Product.cpp" />
     <ClCompile Include="dataaccess\impl\GdalVsiProcessor.cpp" />
+    <ClCompile Include="dataaccess\impl\ZipTiffExtractor.cpp" />
     <ClCompile Include="dataaccess\impl\QsarIO.cpp" />
     <!-- Service stubs -->
     <ClCompile Include="services\registration\RegistrationServiceImpl.cpp" />
@@ -162,6 +163,7 @@
     <!-- UI Core -->
     <ClCompile Include="ui\MapCanvasWidget.cpp" />
     <ClCompile Include="ui\LayerPanel.cpp" />
+    <ClCompile Include="ui\SlcMetadataDialog.cpp" />
     <ClCompile Include="ui\ProcessingMonitorPanel.cpp" />
     <!-- UI Dialogs -->
     <ClCompile Include="ui\Registration\RegistrationDialog.cpp" />
@@ -196,6 +198,7 @@
     <QtMoc Include="controllers\WorkerManager.h" />
     <QtMoc Include="ui\MapCanvasWidget.h" />
     <QtMoc Include="ui\LayerPanel.h" />
+    <QtMoc Include="ui\SlcMetadataDialog.h" />
     <QtMoc Include="ui\ProcessingMonitorPanel.h" />
     <QtMoc Include="ui\Registration\RegistrationDialog.h" />
     <QtMoc Include="ui\Interferogram\InterferogramDialog.h" />
@@ -246,6 +249,7 @@
     <ClInclude Include="dataaccess\annotation\SlcAnnotationReader.h" />
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h" />
     <ClInclude Include="dataaccess\impl\GdalVsiProcessor.h" />
+    <ClInclude Include="dataaccess\impl\ZipTiffExtractor.h" />
     <ClInclude Include="dataaccess\impl\QsarIO.h" />
     <ClInclude Include="renderers\RasterRenderer.h" />
   </ItemGroup>
