@@ -1,5 +1,9 @@
 #include "RasterRenderer.h"
 
+#include "Sentinel1RasterProvider.h"
+#include "dataaccess/impl/SentinelZipProduct.h"
+#include "dataaccess/impl/TiffStreamDecoder.h"
+
 #include <qgsrasterlayer.h>
 #include <qgssinglebandgrayrenderer.h>
 #include <qgssinglebandpseudocolorrenderer.h>
@@ -9,6 +13,7 @@
 #include <qgscolorrampshader.h>
 
 #include <QColor>
+#include <QPointer>
 #include <QtGlobal>
 #include <cmath>
 
@@ -37,6 +42,55 @@ void RasterRenderer::applyAmplitudeGray(QgsRasterLayer* layer)
     if (!provider) return;
 
     int band = 1;
+    QgsSingleBandGrayRenderer* renderer =
+        new QgsSingleBandGrayRenderer(provider, band);
+
+    QgsContrastEnhancement* ce =
+        new QgsContrastEnhancement(provider->dataType(band));
+    ce->setContrastEnhancementAlgorithm(
+        QgsContrastEnhancement::StretchToMinimumMaximum);
+    renderer->setContrastEnhancement(ce);
+    layer->setRenderer(renderer);
+
+    // sentinel1zip: 统计计算在后台线程 (解码需 1~3s, 不能阻塞 UI)
+    // 初始用 annotation 场景统计占位, 真实统计就绪后更新拉伸并重绘
+    if (auto* sp = dynamic_cast<Sentinel1RasterProvider*>(provider)) {
+        std::shared_ptr<TiffStreamDecoder> decoder = sp->bandDecoder();
+        QPointer<QgsRasterLayer> layerPtr(layer);
+
+        double pMin = 0, pMax = 0, pMean = 0, pStd = 0;
+        if (decoder && decoder->sampledPresetStats(pMin, pMax, pMean, pStd)) {
+            ce->setMinimumValue(pMin);
+            ce->setMaximumValue(pMax);
+        }
+
+        insarbg::pool()->start(insarbg::makeRunnable([decoder, layerPtr]() {
+            if (!decoder) return;
+            decoder->ensureStats();   // 后台解码直至统计累积 (与预热共享缓存)
+            double mn = 0, mx = 0, mean = 0, stdDev = 0;
+            if (!decoder->sampledStats(mn, mx, mean, stdDev, 256, nullptr))
+                return;
+            double clipMin = qMax(mn, mean - 3.0 * stdDev);
+            double clipMax = qMin(mx, mean + 3.0 * stdDev);
+            QMetaObject::invokeMethod(layerPtr.data(),
+                [layerPtr, clipMin, clipMax]() {
+                    if (!layerPtr) return;
+                    QgsSingleBandGrayRenderer* r =
+                        dynamic_cast<QgsSingleBandGrayRenderer*>(layerPtr->renderer());
+                    const QgsContrastEnhancement* old = r ? r->contrastEnhancement() : nullptr;
+                    if (!r || !old) return;
+                    QgsContrastEnhancement* newCe =
+                        new QgsContrastEnhancement(*old);
+                    newCe->setMinimumValue(clipMin);
+                    newCe->setMaximumValue(clipMax);
+                    r->setContrastEnhancement(newCe);   // 接管所有权
+                    layerPtr->triggerRepaint();
+                });
+        }));
+        return;
+    }
+
+    // 通用 GDAL 栅格: 原同步路径 (GDAL 统计快速)
     QgsRasterBandStats stats = provider->bandStatistics(
         band,
         Qgis::RasterBandStatistic::Min | Qgis::RasterBandStatistic::Max |
@@ -47,19 +101,8 @@ void RasterRenderer::applyAmplitudeGray(QgsRasterLayer* layer)
                           stats.mean - 3.0 * stats.stdDev);
     double clipMax = qMin(stats.maximumValue,
                           stats.mean + 3.0 * stats.stdDev);
-
-    QgsSingleBandGrayRenderer* renderer =
-        new QgsSingleBandGrayRenderer(provider, band);
-
-    QgsContrastEnhancement* ce =
-        new QgsContrastEnhancement(provider->dataType(band));
-    ce->setContrastEnhancementAlgorithm(
-        QgsContrastEnhancement::StretchToMinimumMaximum);
     ce->setMinimumValue(clipMin);
     ce->setMaximumValue(clipMax);
-    renderer->setContrastEnhancement(ce);
-
-    layer->setRenderer(renderer);
 }
 
 // ----

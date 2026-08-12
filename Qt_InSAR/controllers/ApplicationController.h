@@ -99,8 +99,6 @@ private:
     // 待完成的异步加载计数
     int mPendingLoadCount = 0;
 
-    // 临时文件追踪
-    QStringList mTempFiles;
     bool mShuttingDown = false;
 };
 

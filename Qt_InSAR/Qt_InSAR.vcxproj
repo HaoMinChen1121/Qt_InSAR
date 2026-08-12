@@ -144,6 +144,9 @@
     <ClCompile Include="dataaccess\impl\Sentinel1Product.cpp" />
     <ClCompile Include="dataaccess\impl\GdalVsiProcessor.cpp" />
     <ClCompile Include="dataaccess\impl\ZipTiffExtractor.cpp" />
+    <ClCompile Include="dataaccess\impl\ZipStore.cpp" />
+    <ClCompile Include="dataaccess\impl\TiffStreamDecoder.cpp" />
+    <ClCompile Include="dataaccess\impl\SentinelZipProduct.cpp" />
     <ClCompile Include="dataaccess\impl\QsarIO.cpp" />
     <!-- Service stubs -->
     <ClCompile Include="services\registration\RegistrationServiceImpl.cpp" />
@@ -160,6 +163,8 @@
     <ClCompile Include="controllers\TaskWorker.cpp" />
     <ClCompile Include="controllers\WorkerManager.cpp" />
     <ClCompile Include="renderers\RasterRenderer.cpp" />
+    <ClCompile Include="renderers\TileCache.cpp" />
+    <ClCompile Include="renderers\Sentinel1RasterProvider.cpp" />
     <!-- UI Core -->
     <ClCompile Include="ui\MapCanvasWidget.cpp" />
     <ClCompile Include="ui\LayerPanel.cpp" />
@@ -250,8 +255,13 @@
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h" />
     <ClInclude Include="dataaccess\impl\GdalVsiProcessor.h" />
     <ClInclude Include="dataaccess\impl\ZipTiffExtractor.h" />
+    <ClInclude Include="dataaccess\impl\ZipStore.h" />
+    <ClInclude Include="dataaccess\impl\TiffStreamDecoder.h" />
+    <ClInclude Include="dataaccess\impl\SentinelZipProduct.h" />
     <ClInclude Include="dataaccess\impl\QsarIO.h" />
     <ClInclude Include="renderers\RasterRenderer.h" />
+    <ClInclude Include="renderers\TileCache.h" />
+    <ClInclude Include="renderers\Sentinel1RasterProvider.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">

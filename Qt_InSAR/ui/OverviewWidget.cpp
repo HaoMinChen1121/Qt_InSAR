@@ -1,7 +1,7 @@
 #include "OverviewWidget.h"
 
 #include <qgsmapcanvas.h>
-#include <qgsmaprenderersequentialjob.h>
+#include <qgsmaprendererparalleljob.h>
 #include <qgsmapsettings.h>
 #include <qgsrectangle.h>
 
@@ -57,6 +57,7 @@ void OverviewWidget::refreshOverview()
     if (fullExtent.isEmpty())
         return;
 
+    // 异步渲染 (避免主线程等待 block()/解码导致 UI 冻结)
     QgsMapSettings settings;
     settings.setLayers(layers);
     settings.setExtent(fullExtent);
@@ -74,14 +75,23 @@ void OverviewWidget::refreshOverview()
         w = static_cast<int>(h * aspect);
     settings.setOutputSize(QSize(qMax(w, 1), qMax(h, 1)));
 
-    QgsMapRendererSequentialJob job(settings);
-    job.start();
-    job.waitForFinished();
+    if (mJob)
+        return;   // 已有渲染任务在跑, 跳过本次 (renderComplete 会再次触发)
 
-    mThumbnail = job.renderedImage();
-    mFullExtent = fullExtent;
-    updateViewportRect();
-    update();
+    QgsMapRendererParallelJob* job = new QgsMapRendererParallelJob(settings);
+    mJob = job;
+    // context=this: 窗口销毁时自动断开, 避免悬挂指针
+    connect(job, &QgsMapRendererParallelJob::finished, this,
+        [this, job, fullExtent]() {
+            if (mJob == job)
+                mJob = nullptr;
+            mThumbnail = job->renderedImage();
+            mFullExtent = fullExtent;
+            updateViewportRect();
+            update();
+            job->deleteLater();
+        });
+    job->start();
 }
 
 void OverviewWidget::updateViewportRect()

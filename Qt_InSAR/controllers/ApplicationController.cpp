@@ -13,8 +13,9 @@
 #include "services/impl/GeocodingServiceImpl.h"
 
 #include "dataaccess/SarProductFactory.h"
-#include "dataaccess/impl/GdalVsiProcessor.h"
 #include "renderers/RasterRenderer.h"
+#include "renderers/Sentinel1RasterProvider.h"
+#include "dataaccess/impl/SentinelZipProduct.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/QsarIO.h"
 #include "dataaccess/ISarProduct.h"
@@ -24,6 +25,7 @@
 #include <qgsrasterlayer.h>
 #include <qgslayertree.h>
 #include <qgslayertreegroup.h>
+#include <qgsproviderregistry.h>
 
 #include <qgsproject.h>
 #include <qgsmapcanvas.h>
@@ -44,6 +46,25 @@
 #include <QFutureWatcher>
 #include <algorithm>
 
+namespace {
+// "/vsizip/F:/data/x.zip/...SAFE/measurement/iw1-vv.tiff" → sentinel1zip URI
+QString toSentinel1Uri(const QString& path)
+{
+    QString real = path;
+    if (real.startsWith("/vsizip/", Qt::CaseInsensitive))
+        real = real.mid(8);
+    else if (real.startsWith("/vsizip", Qt::CaseInsensitive))
+        real = real.mid(7);
+    else
+        return QString();
+    int zipPos = real.indexOf(".zip/", 0, Qt::CaseInsensitive);
+    if (zipPos < 0) return QString();
+    QString zipPath = real.left(zipPos + 4);
+    QString entry = real.mid(zipPos + 5);
+    return Sentinel1RasterProvider::buildUri(zipPath, entry);
+}
+} // namespace
+
 ApplicationController::ApplicationController(MainWindow* mainWindow, QObject* parent)
     : QObject(parent), mMainWindow(mainWindow)
 {
@@ -55,7 +76,9 @@ ApplicationController::~ApplicationController() { shutdown(); }
 
 void ApplicationController::initialize()
 {
-    GdalVsiProcessor::registerPixelFunctions();
+    // 注册自定义 Sentinel-1 ZIP 栅格 Provider (SNAP 式直接读取)
+    QgsProviderRegistry::instance()->registerProvider(
+        new Sentinel1ProviderMetadata());
     wireConnections();
 }
 
@@ -121,7 +144,6 @@ void ApplicationController::wireConnections()
     connect(layerPanel, &LayerPanel::layerAddRequested, this,
         [this, canvas, layerPanel, monitor](const QStringList& files) {
         if (mShuttingDown) return;
-        QList<QgsMapLayer*> newLayers;
         QString groupName = mPendingGroupName;
 
         // 展开 .qsar 产品文件
@@ -152,145 +174,64 @@ void ApplicationController::wireConnections()
             }
         }
 
-        struct VsiEntry { QString path; QString tmpPath; QString name; };
-        QVector<VsiEntry> vsiEntries;
-
+        QList<QgsMapLayer*> newLayers;
         for (const QString& path : expandedFiles) {
             QFileInfo fi(path);
             QString name = fi.fileName();
             if (name.isEmpty() || path.startsWith("/vsi"))
                 name = path.section('/', -1);
 
-            // VSI 路径必然是复数（SAR SLC），跳过 GDALOpen 避免主线程阻塞
-            bool isComplex = path.startsWith("/vsi");
-            if (!isComplex) {
-                GDALDatasetH hDS = GDALOpen(path.toUtf8().constData(), GA_ReadOnly);
-                if (hDS) {
-                    GDALDataType dt = GDALGetRasterDataType(GDALGetRasterBand(hDS, 1));
-                    isComplex = (dt == GDT_CFloat32 || dt == GDT_CFloat64
-                              || dt == GDT_CInt16  || dt == GDT_CInt32);
-                    GDALClose(hDS);
+            // /vsizip/ 路径 → 自定义 sentinel1zip Provider (ZIP 内直接渲染)
+            // 转换失败 (非 .zip) 则保持原路径交给 GDAL
+            QString uri = path;
+            QString providerKey;
+            if (path.startsWith("/vsi", Qt::CaseInsensitive)) {
+                QString converted = toSentinel1Uri(path);
+                if (!converted.isEmpty()) {
+                    uri = converted;
+                    providerKey = QStringLiteral("sentinel1zip");
                 }
             }
 
-            if (isComplex) {
-                // VRT 直接引用源路径, 不提取 TIFF; 输出到 ZIP/SAFE 同级目录
-                QString basePath;
-                if (path.startsWith("/vsi")) {
-                    QString realPath = path;
-                    if (realPath.startsWith("/vsizip/"))
-                        realPath = realPath.mid(8);
-                    int zipPos = realPath.indexOf(".zip/", 0, Qt::CaseInsensitive);
-                    if (zipPos < 0) zipPos = realPath.indexOf(".ZIP/", 0, Qt::CaseInsensitive);
-                    if (zipPos >= 0) {
-                        QString zipDir = QFileInfo(realPath.left(zipPos + 4)).absolutePath();
-                        basePath = zipDir + "/" + fi.completeBaseName();
-                    } else {
-                        basePath = QDir::tempPath() + "/insar_" + fi.completeBaseName();
-                    }
-                } else {
-                    basePath = fi.absolutePath() + "/" + fi.completeBaseName();
-                }
-                vsiEntries.append({path, basePath, name});
-            } else {
-                QgsRasterLayer* layer = new QgsRasterLayer(path, name);
-                if (layer->isValid()) {
-                    layer->setCustomProperty("insar_band_path", path);
-                    if (!groupName.isEmpty()) {
-                        // SAR 产品: 加到项目+分组
-                        QgsProject::instance()->addMapLayer(layer, false);
-                        QgsLayerTreeGroup* grp = QgsProject::instance()
-                            ->layerTreeRoot()->findGroup(groupName);
-                        if (grp) grp->insertLayer(0, layer);
-                        else QgsProject::instance()->layerTreeRoot()->insertLayer(0, layer);
-                    } else {
-                        // 通用栅格: QGIS 自动管理图层树
-                        QgsProject::instance()->addMapLayer(layer);
-                    }
-                    newLayers.append(layer);
-                    RasterRenderer::applyAutoRenderer(layer, name);
-                    QString layerType = QStringLiteral("Raster");
-                    layerPanel->onLayerLoaded(layer->id(), name,
-                        layerType, groupName);
-                } else {
-                    layerPanel->onLayerError(QStringLiteral("无法加载: %1").arg(name));
-                    delete layer;
-                }
-            }
-        }
-
-        auto finishLoading = [this, canvas, newLayers, groupName]() mutable {
-            if (!newLayers.isEmpty()) {
-                QgsMapLayer* first = newLayers.first();
-                QgsCoordinateReferenceSystem crs = first->crs();
-                canvas->setDestinationCrs(crs);
-            }
-            rebuildCanvasLayers();
-            canvas->zoomToFullExtent();
-            mPendingGroupName.clear();
-            if (mPendingLoadCount > 0) --mPendingLoadCount;
-        };
-
-        if (vsiEntries.isEmpty()) { finishLoading(); return; }
-
-        ++mPendingLoadCount;
-        int total = vsiEntries.size();
-        monitor->appendLog(QStringLiteral("正在处理 %1 个文件...").arg(total), "#FF9800");
-
-        QStringList vsiPaths, tmpPaths, names;
-        for (const auto& e : vsiEntries) {
-            vsiPaths.append(e.path); tmpPaths.append(e.tmpPath); names.append(e.name);
-        }
-
-        auto* watcher = new QFutureWatcher<QStringList>(this);
-        connect(watcher, &QFutureWatcher<QStringList>::finished, this,
-            [this, watcher, canvas, layerPanel, monitor, total,
-             names, vsiPaths, newLayers, finishLoading, groupName]() mutable {
-            const QStringList results = watcher->result();
-            for (int i = 0; i < results.size(); ++i) {
-                const QString& loadPath = results[i];
-                if (loadPath.isEmpty()) {
-                    layerPanel->onLayerError(QStringLiteral("无法加载: %1").arg(names[i]));
-                    continue;
-                }
-                mTempFiles.append(loadPath);
-                QgsRasterLayer* layer = new QgsRasterLayer(loadPath, names[i]);
-                if (layer->isValid()) {
-                    layer->setCustomProperty("insar_band_path", vsiPaths[i]);
+            QgsRasterLayer* layer = providerKey.isEmpty()
+                ? new QgsRasterLayer(uri, name)
+                : new QgsRasterLayer(uri, name, providerKey);
+            if (layer->isValid()) {
+                layer->setCustomProperty("insar_band_path", uri);
+                if (!groupName.isEmpty()) {
+                    // SAR 产品: 加到项目+分组
                     QgsProject::instance()->addMapLayer(layer, false);
-                    if (!groupName.isEmpty()) {
-                        QgsLayerTreeGroup* grp = QgsProject::instance()
-                            ->layerTreeRoot()->findGroup(groupName);
-                        if (grp) grp->insertLayer(0, layer);
-                        else QgsProject::instance()->layerTreeRoot()->insertLayer(0, layer);
-                    } else {
-                        QgsProject::instance()->layerTreeRoot()->insertLayer(0, layer);
-                    }
-                    newLayers.append(layer);
-                    RasterRenderer::applyAutoRenderer(layer, names[i]);
-                    QString lt2 = QStringLiteral("Raster");
-                    if (names[i].contains("_phase")) lt2 = QStringLiteral("相位");
-                    else if (names[i].contains("_coh")) lt2 = QStringLiteral("相干性");
-                    layerPanel->onLayerLoaded(layer->id(), names[i],
-                        lt2, groupName);
-                    qDebug() << "[InSAR] Layer loaded:" << names[i];
+                    QgsLayerTreeGroup* grp = QgsProject::instance()
+                        ->layerTreeRoot()->findGroup(groupName);
+                    if (grp) grp->insertLayer(0, layer);
+                    else QgsProject::instance()->layerTreeRoot()->insertLayer(0, layer);
                 } else {
-                    layerPanel->onLayerError(QStringLiteral("无法加载: %1").arg(names[i]));
-                    delete layer;
-                    QFile::remove(loadPath);
+                    // 通用栅格: QGIS 自动管理图层树
+                    QgsProject::instance()->addMapLayer(layer);
                 }
+                newLayers.append(layer);
+                RasterRenderer::applyAutoRenderer(layer, name);
+                QString layerType = QStringLiteral("Raster");
+                if (name.contains("_phase")) layerType = QStringLiteral("相位");
+                else if (name.contains("_coh")) layerType = QStringLiteral("相干性");
+                layerPanel->onLayerLoaded(layer->id(), name,
+                    layerType, groupName);
+                qDebug() << "[InSAR] Layer loaded:" << name;
+            } else {
+                layerPanel->onLayerError(QStringLiteral("无法加载: %1").arg(name));
+                delete layer;
             }
-            finishLoading();
-            monitor->appendLog(QStringLiteral("文件处理完成 (%1 个图层)").arg(total), "#4CAF50");
-            watcher->deleteLater();
-        });
-        watcher->setFuture(QtConcurrent::run([vsiPaths, tmpPaths]() -> QStringList {
-            QStringList results; results.reserve(vsiPaths.size());
-            for (int i = 0; i < vsiPaths.size(); ++i) {
-                results.append(GdalVsiProcessor::process(vsiPaths[i], tmpPaths[i]));
-            }
-            return results;
-        }));
+        }
+
+        if (!newLayers.isEmpty()) {
+            QgsMapLayer* first = newLayers.first();
+            QgsCoordinateReferenceSystem crs = first->crs();
+            canvas->setDestinationCrs(crs);
+        }
+        rebuildCanvasLayers();
+        canvas->zoomToFullExtent();
+        mPendingGroupName.clear();
+        if (mPendingLoadCount > 0) --mPendingLoadCount;
     });
 
     connect(layerPanel, &LayerPanel::layerVisibilityChanged, this,
@@ -683,10 +624,8 @@ void ApplicationController::shutdown()
             project->removeMapLayer(it.key());
     }
 
-    for (const QString& f : mTempFiles)
-        if (QFile::exists(f)) QFile::remove(f);
-    mTempFiles.clear();
     mProductRegistry.clear();
     mPendingProductRegistry.clear();
+    SentinelProductManager::instance().clear();
     mShuttingDown = false;
 }

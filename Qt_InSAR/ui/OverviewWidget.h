@@ -5,6 +5,7 @@
 #include <qgsrectangle.h>
 
 class QgsMapCanvas;
+class QgsMapRendererParallelJob;
 class QToolBar;
 class QAction;
 
@@ -44,6 +45,7 @@ private:
     QRectF extentToWidgetRect() const;
 
     QgsMapCanvas* mMainCanvas = nullptr;
+    QgsMapRendererParallelJob* mJob = nullptr;   // 进行中的异步渲染
     QImage mThumbnail;
     QgsRectangle mFullExtent;
     QRectF mViewportRect;       // 归一化坐标 [0,1]

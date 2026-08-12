@@ -1,159 +1,116 @@
 #include "ZipTiffExtractor.h"
+#include "ZipStore.h"
 #include <QFile>
-#include <QFileInfo>
 #include <QDebug>
-#define NOMINMAX
-#include <windows.h>
 #include <cstring>
+#include <string>
 #include <algorithm>
 
-// ── zlib ──
-struct ZStream {
-    const uint8_t* next_in  = nullptr;
-    uint32_t       avail_in  = 0;
-    unsigned long  total_in  = 0;
-    uint8_t*       next_out  = nullptr;
-    uint32_t       avail_out = 0;
-    unsigned long  total_out = 0;
-    const char*    msg       = nullptr;
-    void*          state     = nullptr;
-    void*          zalloc    = nullptr;
-    void*          zfree     = nullptr;
-    void*          opaque    = nullptr;
-    int            data_type = 0;
-    unsigned long  adler     = 0;
-    unsigned long  reserved  = 0;
-};
-#define Z_OK 0
-#define Z_STREAM_END 1
-#define Z_FINISH 4
-#define MAX_WBITS 15
-
-typedef int (*InflateInit2_t)(ZStream*, int, const char*, int);
-typedef int (*Inflate_t)(ZStream*, int);
-typedef int (*InflateEnd_t)(ZStream*);
-static InflateInit2_t p_InflateInit2_;
-static Inflate_t      p_Inflate;
-static InflateEnd_t   p_InflateEnd;
-static bool            sZlibReady = false;
-
-static void ensureZlib()
-{
-    if (sZlibReady) return;
-    sZlibReady = true;
-    HMODULE h = GetModuleHandleW(L"zlib.dll");
-    if (!h) h = GetModuleHandleW(L"zlibwapi.dll");
-    if (!h) h = LoadLibraryW(L"zlib.dll");
-    if (!h) return;
-    p_InflateInit2_ = (InflateInit2_t)GetProcAddress(h, "inflateInit2_");
-    p_Inflate       = (Inflate_t)     GetProcAddress(h, "inflate");
-    p_InflateEnd    = (InflateEnd_t)  GetProcAddress(h, "inflateEnd");
-}
-
-// ── ZIP ──
-static constexpr uint32_t kEocdSig    = 0x06054b50;
-static constexpr uint32_t kCdEntrySig = 0x02014b50;
-static constexpr uint16_t kDeflate    = 8;
-
+// ── ZIP 提取 (复用 ZipStore) ──
 std::vector<unsigned char> ZipTiffExtractor::extractRaw(const QString& zipPath,
                                                          const QString& entryName)
 {
-    QFile f(zipPath);
-    if (!f.open(QIODevice::ReadOnly)) return {};
-    qint64 fsize = f.size();
-    if (fsize < 22) return {};
-
-    int searchLen = std::min(static_cast<int>(fsize), 65536 + 22);
-    f.seek(fsize - searchLen);
-    QByteArray tail = f.read(searchLen);
-
-    int eocdIdx = -1;
-    for (int i = tail.size() - 22; i >= 0; --i) {
-        uint32_t sig; std::memcpy(&sig, tail.constData() + i, 4);
-        if (sig == kEocdSig) { eocdIdx = i; break; }
-    }
-    if (eocdIdx < 0) return {};
-
-    const char* eocd = tail.constData() + eocdIdx;
-    uint16_t cdCount;  uint32_t cdSize;
-    std::memcpy(&cdCount, eocd + 10, 2);
-    std::memcpy(&cdSize,  eocd + 12, 4);
-    uint32_t cdOff32; std::memcpy(&cdOff32, eocd + 16, 4);
-    uint64_t cdOff = cdOff32;
-
-    // ZIP64
-    if (cdOff == 0xFFFFFFFF || cdCount == 0xFFFF || cdSize == 0xFFFFFFFF) {
-        if (eocdIdx < 20) return {};
-        uint32_t z64sig; std::memcpy(&z64sig, tail.constData() + eocdIdx - 20, 4);
-        if (z64sig != 0x07064b50) return {};
-        uint64_t z64Off; std::memcpy(&z64Off, tail.constData() + eocdIdx - 12, 8);
-        f.seek(z64Off);
-        char zb[56]; f.read(zb, 56);
-        uint64_t z64Entries, z64CdOff;
-        std::memcpy(&z64Entries, zb + 32, 8);
-        std::memcpy(&z64CdOff,   zb + 48, 8);
-        if (cdCount == 0xFFFF) cdCount = static_cast<uint16_t>(std::min(z64Entries, 0xFFFFULL));
-        cdOff = z64CdOff;
-    }
-    if (cdOff + cdSize > static_cast<uint64_t>(fsize)) return {};
-
-    f.seek(cdOff);
-    QByteArray cdBuf = f.read(cdSize);
-    const char* p = cdBuf.constData();
-    const char* end = p + cdBuf.size();
-    QByteArray key = entryName.toUtf8();
-
-    uint32_t lhOff = 0, compSize = 0, uncompSize = 0;
-    uint16_t method = 0;
-    for (uint16_t i = 0; i < cdCount && p + 46 <= end; ++i) {
-        uint32_t sig; std::memcpy(&sig, p, 4);
-        if (sig != kCdEntrySig) break;
-        uint16_t fnLen, extraLen, commentLen;
-        std::memcpy(&fnLen, p + 28, 2);
-        std::memcpy(&extraLen, p + 30, 2);
-        std::memcpy(&commentLen, p + 32, 2);
-        if (QByteArray(p + 46, fnLen) == key) {
-            std::memcpy(&method, p + 10, 2);
-            std::memcpy(&compSize, p + 20, 4);
-            std::memcpy(&uncompSize, p + 24, 4);
-            std::memcpy(&lhOff, p + 42, 4);
-            break;
-        }
-        p += 46 + fnLen + extraLen + commentLen;
-    }
-    if (!lhOff || !uncompSize) { qWarning() << "[ZTE] entry not found:" << entryName; return {}; }
-
-    f.seek(lhOff);
-    char lh[30]; f.read(lh, 30);
-    uint16_t lfn, lx; std::memcpy(&lfn, lh + 26, 2); std::memcpy(&lx, lh + 28, 2);
-    qint64 dataOff = lhOff + 30 + lfn + lx;
-    uint32_t rSize = compSize > 0 ? compSize : static_cast<uint32_t>(fsize - dataOff);
-    f.seek(dataOff);
-    QByteArray compData = f.read(rSize);
-    f.close();
-
-    std::vector<unsigned char> result(uncompSize);
-    if (method == kDeflate && compSize > 0) {
-        ensureZlib();
-        if (!p_InflateInit2_) return {};
-        ZStream strm;
-        if (p_InflateInit2_(&strm, -MAX_WBITS, "1.2.11", sizeof(ZStream)) != Z_OK) return {};
-        strm.next_in  = reinterpret_cast<const uint8_t*>(compData.constData());
-        strm.avail_in = compData.size();
-        strm.next_out  = result.data();
-        strm.avail_out = uncompSize;
-        int ret = p_Inflate(&strm, Z_FINISH);
-        p_InflateEnd(&strm);
-        if (ret != Z_STREAM_END) { qWarning() << "[ZTE] inflate failed"; return {}; }
-    } else if (method == 0 && compSize == 0) {
-        std::memcpy(result.data(), compData.constData(), uncompSize);
-    } else {
-        qWarning() << "[ZTE] unsupported method" << method; return {};
-    }
-    return result;
+    auto store = ZipStore::open(zipPath);
+    if (!store) return {};
+    return store->readEntry(entryName);
 }
 
-// ── TIFF header parsing ──
+TiffHeaderInfo ZipTiffExtractor::extractHeader(const QString& zipPath,
+                                                const QString& entryName)
+{
+    auto store = ZipStore::open(zipPath);
+    if (!store) return {};
+    const ZipEntryInfo* e = store->findEntry(entryName);
+    if (!e) { qWarning() << "[ZTE] entry not found:" << entryName; return {}; }
+
+    if (e->uncompressedSize <= 256u * 1024u) {
+        // 小 entry 直接整读
+        return parseHeader(store->readEntry(*e));
+    }
+
+    // 注: S1 测量 TIFF 的 IFD 在文件末尾, 此快速路径只适用于
+    // 经典布局 (IFD 在文件头部); S1 产品应走 annotation XML 路径
+    std::unique_ptr<ZipInflateStream> s(store->openInflateStream(*e));
+    if (!s) { qWarning() << "[ZTE] cannot create stream"; return {}; }
+    if (!s->restart()) return {};
+
+    std::vector<unsigned char> buf(256 * 1024);
+    int got = s->produce(buf.data(), buf.size());
+    if (got <= 0) return {};
+    buf.resize(got);
+
+    TiffHeaderInfo info = parseHeader(buf);
+    if (!info.valid) return {};
+    return info;
+}
+
+// ── 网格点 → 6 参数仿射最小二乘拟合 ──
+// lon = gt[0] + gt[1]*pixel + gt[2]*line
+// lat = gt[3] + gt[4]*pixel + gt[5]*line
+bool ZipTiffExtractor::fitGeoTransform(
+        const QVector<TiffHeaderInfo::GcpEntry>& points, double gt[6])
+{
+    const int n = points.size();
+    if (n < 3) return false;
+
+    double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+    double sux = 0, suy = 0, su = 0;
+    double svx = 0, svy = 0, sv = 0;
+    for (const auto& p : points) {
+        double x = p.pixel, y = p.line;
+        sx += x; sy += y;
+        sxx += x * x; syy += y * y; sxy += x * y;
+        su += p.lon; sux += p.lon * x; suy += p.lon * y;
+        sv += p.lat; svx += p.lat * x; svy += p.lat * y;
+    }
+
+    // 解 3x3 正规方程 (高斯消元), 两轴共用系数矩阵
+    double A[3][3] = {
+        { static_cast<double>(n), sx, sy },
+        { sx, sxx, sxy },
+        { sy, sxy, syy }
+    };
+    double b1[3] = { su, sux, suy };
+    double b2[3] = { sv, svx, svy };
+
+    auto solve3 = [](double a[3][3], double b[3], double* out) -> bool {
+        for (int k = 0; k < 3; ++k) {
+            int piv = k;
+            for (int i = k + 1; i < 3; ++i)
+                if (std::abs(a[i][k]) > std::abs(a[piv][k])) piv = i;
+            if (std::abs(a[piv][k]) < 1e-300) return false;
+            if (piv != k) {
+                for (int j = k; j < 3; ++j) std::swap(a[k][j], a[piv][j]);
+                std::swap(b[k], b[piv]);
+            }
+            double d = a[k][k];
+            for (int j = k; j < 3; ++j) a[k][j] /= d;
+            b[k] /= d;
+            for (int i = 0; i < 3; ++i) {
+                if (i == k) continue;
+                double f = a[i][k];
+                if (f == 0) continue;
+                for (int j = k; j < 3; ++j) a[i][j] -= f * a[k][j];
+                b[i] -= f * b[k];
+            }
+        }
+        out[0] = b[0]; out[1] = b[1]; out[2] = b[2];
+        return true;
+    };
+
+    double a1[3][3], a2[3][3], c1[3], c2[3], r1[3], r2[3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) a1[i][j] = a2[i][j] = A[i][j];
+    for (int i = 0; i < 3; ++i) { c1[i] = b1[i]; c2[i] = b2[i]; }
+
+    if (!solve3(a1, c1, r1) || !solve3(a2, c2, r2)) return false;
+
+    gt[0] = r1[0]; gt[1] = r1[1]; gt[2] = r1[2];
+    gt[3] = r2[0]; gt[4] = r2[1]; gt[5] = r2[2];
+    return true;
+}
+
+// ── TIFF header 解析 ──
 TiffHeaderInfo ZipTiffExtractor::parseHeader(const std::vector<unsigned char>& raw)
 {
     TiffHeaderInfo info;
@@ -180,6 +137,7 @@ TiffHeaderInfo ZipTiffExtractor::parseHeader(const std::vector<unsigned char>& r
     const uint16_t TAG_IMAGE_WIDTH    = 256;
     const uint16_t TAG_IMAGE_LENGTH   = 257;
     const uint16_t TAG_BITS_PER_SAMPLE = 258;
+    const uint16_t TAG_ROWS_PER_STRIP = 278;
     const uint16_t TAG_SAMPLE_FORMAT   = 339;
     const uint16_t TAG_SAMPLES_PER_PIXEL = 277;
     const uint16_t TAG_STRIP_OFFSETS  = 273;
@@ -210,7 +168,7 @@ TiffHeaderInfo ZipTiffExtractor::parseHeader(const std::vector<unsigned char>& r
         return nullptr;
     };
 
-    double modelTiepoint[6] = {0,0,0,0,0,0};
+    QVector<double> tieVals;   // ModelTiepointTag 全部值 (单点6个 或 网格 n*6)
     double pixelScale[3] = {1,1,1};
     bool hasTiepoint = false, hasPixelScale = false;
     std::vector<uint8_t> geoKeyRaw;
@@ -228,14 +186,30 @@ TiffHeaderInfo ZipTiffExtractor::parseHeader(const std::vector<unsigned char>& r
         case TAG_BITS_PER_SAMPLE: info.bitsPerSample = static_cast<int>(r16(tp+8)); break;
         case TAG_SAMPLE_FORMAT: info.sampleFormat = static_cast<int>(r16(tp+8)); break;
         case TAG_SAMPLES_PER_PIXEL: info.samplesPerPixel = static_cast<int>(r16(tp+8)); break;
-        case TAG_STRIP_OFFSETS: info.firstStripOffset = r32(tp+8); break;
+        case TAG_ROWS_PER_STRIP: info.rowsPerStrip = std::max(1, static_cast<int>(r32(tp+8))); break;
+        case TAG_STRIP_OFFSETS:
+            info.firstStripOffset = r32(tp+8);
+            valPtr = tagDataOff(tp, &count);
+            if (valPtr) {
+                info.stripOffsets.reserve(count);
+                for (uint32_t j = 0; j < count; ++j)
+                    info.stripOffsets.append(r32(valPtr + j*4));
+            }
+            break;
         case TAG_STRIP_BYTE_COUNTS:
-            info.bytesPerRow = r32(tp+8) / (info.width > 0 ? info.width : 1);
+            valPtr = tagDataOff(tp, &count);
+            if (valPtr) {
+                info.stripByteCounts.reserve(count);
+                for (uint32_t j = 0; j < count; ++j)
+                    info.stripByteCounts.append(r32(valPtr + j*4));
+            }
             break;
         case TAG_MODEL_TIEPOINT:
             valPtr = tagDataOff(tp, &count);
             if (valPtr && count >= 6) {
-                for (int j = 0; j < 6; ++j) modelTiepoint[j] = rdbl(valPtr + j*8);
+                tieVals.resize(count);
+                for (uint32_t j = 0; j < count; ++j)
+                    tieVals[j] = rdbl(valPtr + j*8);
                 hasTiepoint = true;
             }
             break;
@@ -270,28 +244,64 @@ TiffHeaderInfo ZipTiffExtractor::parseHeader(const std::vector<unsigned char>& r
         }
     }
 
-    // Build GCP grid from tiepoint + pixel scale
-    if (hasTiepoint && hasPixelScale && pixelScale[0] > 0 && pixelScale[1] > 0) {
-        // TIFF ModelTiepoint: (I,J,K, X,Y,Z) — I,J = pixel,line; X,Y,Z = lon,lat,height
-        double I0 = modelTiepoint[0], J0 = modelTiepoint[1];
-        double X0 = modelTiepoint[3], Y0 = modelTiepoint[4], Z0 = modelTiepoint[5];
-        double dX = pixelScale[0], dY = -pixelScale[1]; // lat = Y0 + J * dY, dY is negative
-        double dZ = pixelScale[2];
+    // 每行字节数 (rowsPerStrip>1 时按 strip 均摊)
+    if (!info.stripByteCounts.isEmpty() && info.rowsPerStrip > 0 && info.width > 0)
+        info.bytesPerRow = static_cast<uint32_t>(
+            info.stripByteCounts[0] / info.rowsPerStrip / info.width);
+    else if (info.bytesPerRow == 0 && info.width > 0 && info.samplesPerPixel > 0)
+        info.bytesPerRow = static_cast<uint32_t>(
+            info.width * info.samplesPerPixel * (info.bitsPerSample / 8));
 
-        int gridCols = std::max(1, static_cast<int>(info.width  / 2500.0 + 0.5));
-        int gridRows = std::max(1, static_cast<int>(info.height / 2500.0 + 0.5));
-        gridCols = std::max(gridCols, gridRows); // keep square-ish
-        gridRows = gridCols;
+    // 保存 tiepoint/pixelScale 原值
+    if (hasTiepoint)
+        std::memcpy(info.tiepoint, tieVals.constData(), sizeof(info.tiepoint));
+    if (hasPixelScale)
+        std::memcpy(info.pixelScale, pixelScale, sizeof(pixelScale));
+    info.hasTiepointPixelScale = hasTiepoint && hasPixelScale;
 
-        for (int r = 0; r <= gridRows; ++r) {
-            for (int c = 0; c <= gridCols; ++c) {
+    // 地理参考: 单 tiepoint+pixelScale → 仿射; 多点网格 → LSQ 拟合
+    if (hasTiepoint) {
+        int nPts = tieVals.size() / 6;
+        if ((tieVals.size() % 6) == 0 && nPts > 1) {
+            // 完整网格 (如 S1 的 1260 点): 直接 LSQ 拟合仿射
+            QVector<TiffHeaderInfo::GcpEntry> pts;
+            pts.reserve(nPts);
+            for (int i = 0; i < nPts; ++i) {
                 TiffHeaderInfo::GcpEntry g;
-                g.pixel   = I0 + c * (info.width  - 1) / static_cast<double>(gridCols);
-                g.line    = J0 + r * (info.height - 1) / static_cast<double>(gridRows);
-                g.lon     = X0 + g.pixel * dX;
-                g.lat     = Y0 + g.line  * dY;
-                g.height  = Z0 + g.pixel * dZ;
-                info.gcps.append(g);
+                g.pixel  = tieVals[i*6 + 0];
+                g.line   = tieVals[i*6 + 1];
+                g.lon    = tieVals[i*6 + 3];
+                g.lat    = tieVals[i*6 + 4];
+                g.height = tieVals[i*6 + 5];
+                pts.append(g);
+            }
+            if (fitGeoTransform(pts, info.geoTransform)) {
+                info.hasGeoTransform = true;
+                info.gcps = pts;
+            }
+        } else if (hasPixelScale && pixelScale[0] > 0 && pixelScale[1] > 0) {
+            // 单 tiepoint + pixelScale
+            // TIFF ModelTiepoint: (I,J,K, X,Y,Z) — I,J = pixel,line; X,Y,Z = lon,lat,height
+            double I0 = tieVals[0], J0 = tieVals[1];
+            double X0 = tieVals[3], Y0 = tieVals[4], Z0 = tieVals[5];
+            double dX = pixelScale[0], dY = -pixelScale[1]; // lat = Y0 + J * dY, dY is negative
+            double dZ = pixelScale[2];
+
+            int gridCols = std::max(1, static_cast<int>(info.width  / 2500.0 + 0.5));
+            int gridRows = std::max(1, static_cast<int>(info.height / 2500.0 + 0.5));
+            gridCols = std::max(gridCols, gridRows); // keep square-ish
+            gridRows = gridCols;
+
+            for (int r = 0; r <= gridRows; ++r) {
+                for (int c = 0; c <= gridCols; ++c) {
+                    TiffHeaderInfo::GcpEntry g;
+                    g.pixel   = I0 + c * (info.width  - 1) / static_cast<double>(gridCols);
+                    g.line    = J0 + r * (info.height - 1) / static_cast<double>(gridRows);
+                    g.lon     = X0 + g.pixel * dX;
+                    g.lat     = Y0 + g.line  * dY;
+                    g.height  = Z0 + g.pixel * dZ;
+                    info.gcps.append(g);
+                }
             }
         }
     }

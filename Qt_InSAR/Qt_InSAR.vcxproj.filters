@@ -87,6 +87,9 @@
     <ClCompile Include="dataaccess\impl\Sentinel1Product.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\GdalVsiProcessor.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\ZipTiffExtractor.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\ZipStore.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\TiffStreamDecoder.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\impl\SentinelZipProduct.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\QsarIO.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClInclude Include="dataaccess\impl\BurstCacheSoA.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\SentinelDataReader.h"><Filter>DataAccess\Impl</Filter></ClInclude>
@@ -95,6 +98,9 @@
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\GdalVsiProcessor.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\ZipTiffExtractor.h"><Filter>DataAccess\Impl</Filter></ClInclude>
+    <ClInclude Include="dataaccess\impl\ZipStore.h"><Filter>DataAccess\Impl</Filter></ClInclude>
+    <ClInclude Include="dataaccess\impl\TiffStreamDecoder.h"><Filter>DataAccess\Impl</Filter></ClInclude>
+    <ClInclude Include="dataaccess\impl\SentinelZipProduct.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\QsarIO.h"><Filter>DataAccess\Impl</Filter></ClInclude>
   </ItemGroup>
   <!-- Services -->
@@ -181,7 +187,11 @@
   <!-- Renderers -->
   <ItemGroup>
     <ClCompile Include="renderers\RasterRenderer.cpp"><Filter>Renderers</Filter></ClCompile>
+    <ClCompile Include="renderers\TileCache.cpp"><Filter>Renderers</Filter></ClCompile>
+    <ClCompile Include="renderers\Sentinel1RasterProvider.cpp"><Filter>Renderers</Filter></ClCompile>
     <ClInclude Include="renderers\RasterRenderer.h"><Filter>Renderers</Filter></ClInclude>
+    <ClInclude Include="renderers\TileCache.h"><Filter>Renderers</Filter></ClInclude>
+    <ClInclude Include="renderers\Sentinel1RasterProvider.h"><Filter>Renderers</Filter></ClInclude>
   </ItemGroup>
   <!-- UI -->
   <ItemGroup>
