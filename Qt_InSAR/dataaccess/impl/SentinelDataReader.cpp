@@ -365,9 +365,7 @@ bool SentinelDataReader::open(const QString& zipPath, const QString& entryName,
         }
 
         mCaches[b].loadFromRawStrips(mRawTiff.data() + burstOff, mWidth, burstH);
-
-        if (mPrf > 0.0 && std::abs(mFmRate) > 1e-6)
-            mCaches[b].applyDeramp(mPrf, mFmRate, row0, b);
+        // deramp 由 pipeline step (TOPSARDeramp) 显式调用, 不在此处自动执行
     }
 
     qDebug() << "[SDR] Loaded" << mBurstCount << "bursts" << mWidth << "x" << mHeight;
@@ -400,30 +398,48 @@ sar::ComplexSoAView SentinelDataReader::burstSoaView(int idx)
     return mCaches[idx].soaView();
 }
 
+void SentinelDataReader::derampBurst(int burstIdx, double prf, double kt)
+{
+    if (burstIdx < 0 || burstIdx >= static_cast<int>(mCaches.size())) return;
+    if (!mCaches[burstIdx].isLoaded()) return;
+    int row0 = burstIdx * mLinesPerBurst;
+    mCaches[burstIdx].applyDeramp(prf, kt, row0, burstIdx);
+}
+
 bool SentinelDataReader::readWindow(int x0, int y0, int w, int h, std::complex<float>* dst)
 {
     if (!dst || w <= 0 || h <= 0) return false;
     if (x0 < 0 || y0 < 0 || x0 + w > mWidth || y0 + h > mHeight) return false;
-    if (mLinesPerBurst <= 0 || mBurstCount <= 0) return false;
 
-    std::fill(dst, dst + static_cast<size_t>(w) * h, std::complex<float>(0.0f, 0.0f));
+    // TOPSAR 路径: 使用已加载的 burst cache (SoA 数据已缓存)
+    if (mBurstCount > 0 && mLinesPerBurst > 0) {
+        std::fill(dst, dst + static_cast<size_t>(w) * h, std::complex<float>(0.0f, 0.0f));
 
-    int burstFirst = y0 / mLinesPerBurst;
-    int burstLast  = (y0 + h - 1) / mLinesPerBurst;
-    if (burstFirst < 0) burstFirst = 0;
-    if (burstLast >= mBurstCount) burstLast = mBurstCount - 1;
+        int burstFirst = y0 / mLinesPerBurst;
+        int burstLast  = (y0 + h - 1) / mLinesPerBurst;
+        if (burstFirst < 0) burstFirst = 0;
+        if (burstLast >= mBurstCount) burstLast = mBurstCount - 1;
 
-    for (int bi = burstFirst; bi <= burstLast; ++bi) {
-        if (!mCaches[bi].isLoaded()) continue;
-        int burstRow0 = bi * mLinesPerBurst;
-        int burstH    = (bi == mBurstCount - 1) ? mHeight - burstRow0 : mLinesPerBurst;
+        for (int bi = burstFirst; bi <= burstLast; ++bi) {
+            if (!mCaches[bi].isLoaded()) continue;
+            int burstRow0 = bi * mLinesPerBurst;
+            int burstH    = (bi == mBurstCount - 1) ? mHeight - burstRow0 : mLinesPerBurst;
 
-        int interY0 = std::max(y0, burstRow0);
-        int interY1 = std::min(y0 + h, burstRow0 + burstH);
-        if (interY0 >= interY1) continue;
+            int interY0 = std::max(y0, burstRow0);
+            int interY1 = std::min(y0 + h, burstRow0 + burstH);
+            if (interY0 >= interY1) continue;
 
-        mCaches[bi].getWindow(x0, interY0 - burstRow0, w, interY1 - interY0,
-                              dst + (interY0 - y0) * w);
+            mCaches[bi].getWindow(x0, interY0 - burstRow0, w, interY1 - interY0,
+                                  dst + (interY0 - y0) * w);
+        }
+        return true;
     }
-    return true;
+
+    // 非TOPSAR 回退: 直接通过 GDAL 读取 (如 IfgGenerator dummyBand 路径)
+    if (!mVsiDataset) return false;
+    CPLErr err = GDALRasterIO(
+        GDALGetRasterBand(static_cast<GDALDatasetH>(mVsiDataset), 1),
+        GF_Read, x0, y0, w, h,
+        dst, w, h, GDT_CFloat32, 0, 0);
+    return err == CE_None;
 }

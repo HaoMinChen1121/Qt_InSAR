@@ -30,13 +30,13 @@ struct InterferogramParams
     // 输出
     QString   outputDir;
     QString   outputPrefix = "interferogram";
-    double    incidenceAngle = 35.0;    // 入射角(度), 从主产品获取
-    double    wavelength = 0.05546576;  // 波长(m), 从主产品获取
-    double    nearRange = 800000.0;      // 近距(m)
-    double    rangeSpacing = 2.33;       // 距离向采样间隔(m)
-    double    prf = 1680.0;              // PRF(Hz)
-    double    baselinePerp = 33.2;       // 垂直基线(m)
-    double    baselinePar  = 20.0;       // 平行基线(m)
+    double    incidenceAngle = 0.0;       // 入射角(度), 从主产品XML获取
+    double    wavelength = 0.0;           // 波长(m), 从主产品XML获取
+    double    nearRange = 0.0;             // 近距(m), 从主产品XML获取
+    double    rangeSpacing = 0.0;          // 距离向采样间隔(m), 从主产品XML获取
+    double    prf = 0.0;                   // PRF(Hz), 从主产品XML获取
+    double    baselinePerp = 0.0;          // 垂直基线(m), 从轨道向量计算
+    double    baselinePar  = 0.0;          // 平行基线(m), 从轨道向量计算
     bool      enableFlatEarth = true;
     bool      enableDifferential = false;
 };

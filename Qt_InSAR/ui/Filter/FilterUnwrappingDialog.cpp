@@ -67,16 +67,16 @@ FilterUnwrappingDialog::FilterUnwrappingDialog(QWidget* parent) : QDialog(parent
     mConvertHeight = new QCheckBox(tr("将解缠相位转换为高程"));
     f3->addWidget(mConvertHeight);
     mWavelength = new QDoubleSpinBox; mWavelength->setDecimals(6);
-    mWavelength->setRange(0.001, 1.0); mWavelength->setValue(0.03125);
+    mWavelength->setRange(0.001, 1.0); mWavelength->setValue(0.0);   // 由产品XML填充
     f3->addRow(tr("雷达波长(m):"), mWavelength);
     mIncAngle = new QDoubleSpinBox; mIncAngle->setRange(0, 90);
-    mIncAngle->setDecimals(2); mIncAngle->setValue(35.0);
+    mIncAngle->setDecimals(2); mIncAngle->setValue(0.0);             // 由产品XML填充
     f3->addRow(tr("入射角(°):"), mIncAngle);
     mSlantRange = new QDoubleSpinBox; mSlantRange->setRange(1000, 10000000);
-    mSlantRange->setDecimals(0); mSlantRange->setValue(800000);
+    mSlantRange->setDecimals(0); mSlantRange->setValue(0);           // 由产品XML填充
     f3->addRow(tr("斜距(m):"), mSlantRange);
     mBaselinePerp = new QDoubleSpinBox; mBaselinePerp->setRange(1, 10000);
-    mBaselinePerp->setDecimals(1); mBaselinePerp->setValue(200);
+    mBaselinePerp->setDecimals(1); mBaselinePerp->setValue(0);       // 由轨道向量计算
     f3->addRow(tr("垂直基线(m):"), mBaselinePerp);
     tabs->addTab(tab3, tr("相位高程"));
 

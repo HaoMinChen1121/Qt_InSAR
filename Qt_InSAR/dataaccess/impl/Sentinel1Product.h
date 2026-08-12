@@ -3,7 +3,6 @@
 
 #include "dataaccess/ISarProduct.h"
 #include <QStringList>
-#include <QDomDocument>
 #include <QDateTime>
 #include <QMap>
 
@@ -39,7 +38,8 @@ private:
     bool openDirectory(const QString& safDir);
     bool openZip(const QString& zipPath);
     bool parseManifest(const QString& manifestPath);
-    bool parseAnnotation(const QString& annotationPath);
+    bool parseAnnotationStream(const QString& annotationPath);
+    void finalizeSensorInfo();
     void discoverMeasurementFiles(const QString& measurementDir);
 
     // 从 Sentinel-1 文件名推断元数据
@@ -52,9 +52,6 @@ private:
         QString subSwath;        // IW1/IW2/IW3 或 iw1/iw2/iw3
     };
     static S1FileNameInfo parseS1FileName(const QString& fileName);
-
-    QString xmlFirstElementText(const QDomElement& parent, const QString& tagName) const;
-    double xmlFirstElementDouble(const QDomElement& parent, const QString& tagName) const;
 
     bool mIsOpen = false;
 
@@ -96,8 +93,12 @@ private:
     QMap<QString, QVector<int>>      mParsedBurstStartsBySwath;   // 每子条带的burst起始行
     QMap<QString, QVector<QDateTime>> mParsedBurstTimesBySwath;   // 每子条带的burst azimuth时间
     QMap<QString, QVector<qint64>>   mParsedBurstByteOffsetsBySwath; // 每子条带的burst字节偏移
+    QMap<QString, QVector<double>>   mParsedBurstAnxTimesBySwath;  // 每子条带的burst azimuthAnxTime
+    QMap<QString, QVector<qint64>>   mParsedBurstAbsIdsBySwath;    // 每子条带的burst absolute ID
+    QMap<QString, QVector<QDateTime>> mParsedBurstSensingTimesBySwath; // 每子条带的burst sensing时间
     QMap<QString, double> mParsedNearRangeBySwath;     // 每子条带近距 (m)
     QMap<QString, double> mParsedRangeSpacingBySwath;  // 每子条带距离间距 (m)
+    QMap<QString, double> mParsedIncidenceMidBySwath;  // 每子条带中心入射角 (deg)
 };
 
 #endif // SENTINEL1PRODUCT_H

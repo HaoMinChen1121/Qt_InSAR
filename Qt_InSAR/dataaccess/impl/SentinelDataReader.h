@@ -27,14 +27,13 @@ public:
     int width() const { return mWidth; }
     int height() const { return mHeight; }
 
-    int burstCount() const { return mBurstCount; }
-    int linesPerBurst() const { return mLinesPerBurst; }
-    int burstStartLine(int idx) const { return mBurstStartLines.value(idx, -1); }
-    double azimuthFmRate() const { return mFmRate; }
-    double azimuthSteeringRate() const { return mSteeringRate; }
-    double azimuthFrequency() const { return mPrf; }
-
+    // SoA burst 数据访问 (供 SincResampler 使用)
     sar::ComplexSoAView burstSoaView(int idx);
+
+    // TOPS deramp: 由 pipeline step 调用，不在 open() 时自动执行
+    void derampBurst(int burstIdx, double prf, double kt);
+
+    // 窗口/行/块读取
     bool readWindow(int x0, int y0, int w, int h, std::complex<float>* dst);
 
     void* datasetHandle() const { return mVsiDataset; }

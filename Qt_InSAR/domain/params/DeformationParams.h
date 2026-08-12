@@ -9,10 +9,10 @@ struct DeformationParams {
     QString projectionDirection; // "LOS" / "Vertical" / "Horizontal"
 
     // 几何参数
-    double wavelength     = 0.03125;  // 波长 (m)
-    double incidenceAngle = 35.0;     // 入射角 (deg)
-    double slantRange     = 850000.0; // 斜距 (m)
-    double baselinePerp   = 150.0;    // 垂直基线 (m)
+    double wavelength     = 0.0;       // 波长 (m), 由产品XML填充
+    double incidenceAngle = 0.0;       // 入射角 (deg), 由产品XML填充
+    double slantRange     = 0.0;       // 斜距 (m), 由产品XML填充
+    double baselinePerp   = 0.0;       // 垂直基线 (m), 由轨道向量计算
 
     // 时序方法
     QString tsMethod;            // "Stacking" / "SBAS" / "PS-InSAR"

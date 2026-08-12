@@ -6,6 +6,7 @@
 #include "steps/IWMerger.h"
 #include "dataaccess/impl/QsarIO.h"
 #include "dataaccess/SarProductFactory.h"
+#include "algorithms/BaselineEstimator.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 
 #include <gdal_priv.h>
@@ -62,6 +63,7 @@ void InterferogramServiceImpl::execute()
         mParams.nearRange = masterProduct->sensorInfo().nearRange;
         mParams.rangeSpacing = masterProduct->sensorInfo().rangeSpacing;
         mParams.prf = masterProduct->sensorInfo().prf;
+        // 注: 准确基线需辅影像轨道向量 (辅为 .qsar 时无轨道), 由调用方通过 params 传入
         for (const auto& b : masterProduct->bands()) {
             QsarBand qb;
             qb.subSwath = b.subSwath;
@@ -127,6 +129,8 @@ void InterferogramServiceImpl::execute()
         // 构建 PipelineContext
         IfgPipelineContext ctx;
         ctx.params     = &mParams;
+        if (masterProduct)
+            ctx.masterSensorInfo = masterProduct->sensorInfo();
         ctx.masterPath = pairs[i].master.file;
         ctx.slavePath  = pairs[i].slave.file;
         // 提取 master ZIP 路径 + entry (供 SentinelDataReader 使用)
@@ -260,12 +264,12 @@ void InterferogramServiceImpl::execute()
                 m.width = iw.second.w;
                 m.height = iw.second.h;
                 // 从 master 产品获取 per-swath range 参数
-                m.nearRange = 0; m.rangeSpacing = 2.3;  // fallback
+                m.nearRange = 0; m.rangeSpacing = 0.0;
                 if (masterProduct) {
                     for (const auto& b : masterProduct->bands()) {
                         if (b.subSwath == iw.second.swath) {
                             m.nearRange = b.nearRange;
-                            m.rangeSpacing = b.rangeSpacing > 0 ? b.rangeSpacing : 2.3;
+                            m.rangeSpacing = b.rangeSpacing > 0 ? b.rangeSpacing : 0.0;
                             break;
                         }
                     }

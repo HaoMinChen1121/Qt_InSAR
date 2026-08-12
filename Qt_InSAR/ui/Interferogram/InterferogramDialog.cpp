@@ -40,50 +40,35 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     auto updateIncAngle = [this]() {
         QString path = mMasterQsar->text().trimmed();
         if (path.isEmpty()) {
-            mCachedIncAngle = 35.0;
+            mCachedIncAngle = 0.0;
+            mCachedWavelength = 0.0;
+            mCachedNearRange = 0.0;
+            mCachedRangeSpacing = 0.0;
+            mCachedPrf = 0.0;
             mIncAngleLabel->setText(QStringLiteral("入射角: (未加载产品)"));
             mIncAngleLabel->setStyleSheet("color: #888;");
             return;
         }
 
-        auto readIncFromXml = [](const QString& prodPath) -> double {
-            QScopedPointer<ISarProduct> prod(createSarProduct(prodPath));
-            if (!prod || !prod->open(prodPath)) return 0;
-            const auto& bands = prod->bands();
-            if (bands.isEmpty()) return 0;
-            // 从波段 VSI 路径推导 annotation 目录
-            QString bandPath = bands.first().rasterPath;
-            int measIdx = bandPath.lastIndexOf("/measurement/");
-            if (measIdx < 0) return 0;
-            QString annDir = bandPath.left(measIdx) + "/annotation";
-            char** entries = VSIReadDir(annDir.toUtf8().constData());
-            if (!entries) return 0;
-            double result = 0;
-            for (int i = 0; entries[i] && result < 1.0; ++i) {
-                QString e = QString::fromUtf8(entries[i]);
-                if (!e.endsWith(".xml") || e.contains("calibration")) continue;
-                VSILFILE* fp = VSIFOpenExL((annDir + "/" + e).toUtf8().constData(), "rb", TRUE);
-                if (!fp) continue;
-                QByteArray xml; xml.resize(1024*1024);
-                vsi_l_offset n = VSIFReadL(xml.data(), 1, xml.size(), fp);
-                xml.resize(static_cast<int>(n)); VSIFCloseL(fp);
-                // 用 QDomDocument 正确解析（自动处理 UTF-8/16 编码）
-                QDomDocument doc;
-                if (!doc.setContent(xml)) continue;  // 自动检测编码
-                QDomNodeList nl2 = doc.elementsByTagName("incidenceAngleMidSwath");
-                if (!nl2.isEmpty()) {
-                    result = QLocale::c().toDouble(nl2.at(0).toElement().text().trimmed());
-                }
-            }
-            CSLDestroy(entries);
-            return result;
-        };
+        QScopedPointer<ISarProduct> prod(createSarProduct(path));
+        if (prod && prod->open(path)) {
+            SarSensorInfo si = prod->sensorInfo();
+            mCachedIncAngle     = si.incidenceAngleMid;
+            mCachedWavelength   = si.wavelength;
+            mCachedNearRange    = si.nearRange;
+            mCachedRangeSpacing = si.rangeSpacing;
+            mCachedPrf          = si.prf;
+        } else {
+            mCachedIncAngle = 0.0;
+        }
 
-        mCachedIncAngle = readIncFromXml(path);
-        if (mCachedIncAngle < 1.0) mCachedIncAngle = 35.0;
-
-        mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从产品读取)").arg(mCachedIncAngle, 0, 'f', 2));
-        mIncAngleLabel->setStyleSheet("color: #27AE60; font-weight: bold;");
+        if (mCachedIncAngle > 1.0) {
+            mIncAngleLabel->setText(QStringLiteral("入射角: %1° (从产品读取)").arg(mCachedIncAngle, 0, 'f', 2));
+            mIncAngleLabel->setStyleSheet("color: #27AE60; font-weight: bold;");
+        } else {
+            mIncAngleLabel->setText(QStringLiteral("入射角: (未从产品获取)"));
+            mIncAngleLabel->setStyleSheet("color: #888;");
+        }
     };
 
     connect(masterBrowse, &QPushButton::clicked, this, [this, updateIncAngle]() {
@@ -144,7 +129,7 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     });
     mPreciseOrbit = new QCheckBox(tr("使用精密轨道")); mPreciseOrbit->setChecked(true);
     f2->addWidget(mPreciseOrbit);
-    mIncAngleLabel = new QLabel(tr("入射角: 35.0° (从主产品自动获取)"), this);
+    mIncAngleLabel = new QLabel(tr("入射角: (选择主产品后自动获取)"), this);
     f2->addWidget(mIncAngleLabel);
     tabs->addTab(tab2, tr("去平地"));
 
@@ -199,7 +184,11 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
 
 void InterferogramDialog::setParams(const InterferogramParams& p)
 {
-    mCachedIncAngle = p.incidenceAngle;
+    mCachedIncAngle     = p.incidenceAngle;
+    mCachedWavelength   = p.wavelength;
+    mCachedNearRange    = p.nearRange;
+    mCachedRangeSpacing = p.rangeSpacing;
+    mCachedPrf          = p.prf;
 
     mMasterQsar->setText(p.masterQsarPath);
     mSlaveQsar->setText(p.slaveQsarPath);
@@ -235,6 +224,10 @@ InterferogramParams InterferogramDialog::params() const
     p.atmosphericCorrection = mAtmCorr->isChecked();
     p.enableDifferential = mTopoCorr->isChecked();
     p.incidenceAngle = mCachedIncAngle;
+    p.wavelength     = mCachedWavelength;
+    p.nearRange      = mCachedNearRange;
+    p.rangeSpacing   = mCachedRangeSpacing;
+    p.prf            = mCachedPrf;
     p.outputDir = mOutputDir->text();
     p.outputPrefix = mOutputPrefix->text();
     return p;

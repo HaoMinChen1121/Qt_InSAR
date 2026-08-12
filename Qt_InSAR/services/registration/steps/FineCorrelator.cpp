@@ -175,7 +175,8 @@ bool FineCorrelator::execute(PipelineContext& ctx) {
     if (p.fineMethod != "FFT") return true;
 
     int sW = ctx.data.slaveWidth, sH = ctx.data.slaveHeight;
-    int winSize = 128, N = ctx.offsetPoints.size();
+    int winSize = p.fineWindowSize > 0 ? p.fineWindowSize : 128;
+    int N = ctx.offsetPoints.size();
     if (N == 0) return true;
 
     QVector<FineWorkItem> items; items.reserve(N);

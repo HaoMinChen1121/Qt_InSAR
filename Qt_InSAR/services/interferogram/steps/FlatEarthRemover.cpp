@@ -38,13 +38,18 @@ bool FlatEarthRemover::execute(IfgPipelineContext& ctx)
     if (!hOut || !hPh) { ctx.errorMessage = "FlatEarthRemover: cannot create output"; return false; }
     GDALSetGeoTransform(hOut, gt); GDALSetGeoTransform(hPh, gt);
 
-    double wavelength = ctx.params->wavelength;
-    double nearRange = ctx.params->nearRange;
-    double rangeSpacing = ctx.params->rangeSpacing;
+    const SarSensorInfo& si = ctx.masterSensorInfo;
+    double wavelength = si.wavelength > 0 ? si.wavelength : ctx.params->wavelength;
+    double nearRange  = si.nearRange > 0  ? si.nearRange  : ctx.params->nearRange;
+    double rangeSpacing = si.rangeSpacing > 0 ? si.rangeSpacing : ctx.params->rangeSpacing;
     double Bpar = ctx.params->baselinePar;
-    // 入射角沿 range 线性变化: nearInc ~ farInc (mid±5°)
-    double incMidDeg = ctx.params->incidenceAngle;
-    double incNearDeg = incMidDeg - 5.0, incFarDeg = incMidDeg + 5.0;
+    // 入射角沿 range 线性变化: 优先使用 XML 解析的 near/far
+    double incNearDeg = si.incidenceAngleNear > 0 ? si.incidenceAngleNear
+                      : si.incidenceAngleMid > 0  ? si.incidenceAngleMid - 5.0
+                      : ctx.params->incidenceAngle - 5.0;
+    double incFarDeg  = si.incidenceAngleFar > 0 ? si.incidenceAngleFar
+                      : si.incidenceAngleMid > 0  ? si.incidenceAngleMid + 5.0
+                      : ctx.params->incidenceAngle + 5.0;
 
     QVector<std::complex<float>> rowBuf(w);
     QVector<float> rowPhase(w);

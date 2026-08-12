@@ -22,8 +22,9 @@ struct SarBandDescriptor {
     bool    isComplex = false;    // 复数数据
 
     // Range 几何 (per-swath, 用于 IW Merge)
-    double  nearRange     = 0.0;  // 近距斜距 (m)
-    double  rangeSpacing  = 0.0;  // 距离向采样间距 (m)
+    double  nearRange       = 0.0;  // 近距斜距 (m)
+    double  rangeSpacing    = 0.0;  // 距离向采样间距 (m)
+    double  azimuthSpacing  = 0.0;  // 方位向采样间距 (m)
 
     // TOPSAR burst 信息 (Sentinel-1 IW)
     int     linesPerBurst = 0;    // 每个 burst 方位向行数
@@ -32,9 +33,14 @@ struct SarBandDescriptor {
     QVector<int> burstStartLines; // 每个 burst 在整体影像中的起行号
     QVector<QDateTime> burstAzimuthTimes; // 每个 burst 的方位向零多普勒时间
     QVector<qint64> burstByteOffsets;     // 每个 burst 在 TIFF 中的字节偏移
+    QVector<double> burstAzimuthAnxTimes; // 相对升交点方位时间(秒), ESD burst匹配核心
+    QVector<qint64> burstAbsoluteIds;     // 全局唯一burst ID, 跨影像匹配
+    QVector<QDateTime> burstSensingTimes; // burst sensing时间
     double  azimuthFmRate = 0.0;          // 方位向调频率 (Hz/s, 用于TOPS deramping)
     double  azimuthSteeringRate = 0.0;     // 天线转向速率 (deg/s, TOPS deburst)
     double  azimuthFrequency = 0.0;        // 有效方位向PRF (Hz, 每子条带不同)
+    QDateTime burstTimeStart;              // 第一个burst的方位向时间
+    QDateTime burstTimeStop;               // 最后一个burst的方位向时间
 };
 
 class ISarProduct {

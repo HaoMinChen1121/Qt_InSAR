@@ -22,10 +22,10 @@ struct UnwrappingParams
 
     // 相位高程转换
     bool      convertToHeight = false;
-    double    wavelength = 0.03125;         // 雷达波长 (m)
-    double    incidenceAngle = 35.0;        // 入射角 (度)
-    double    slantRange = 800000;          // 斜距 (m)
-    double    baselinePerp = 200;           // 垂直基线 (m)
+    double    wavelength = 0.0;             // 雷达波长 (m), 由产品XML填充
+    double    incidenceAngle = 0.0;         // 入射角 (度), 由产品XML填充
+    double    slantRange = 0.0;             // 斜距 (m), 由产品XML填充
+    double    baselinePerp = 0.0;           // 垂直基线 (m), 由轨道向量计算
 };
 
 #endif // UNWRAPPINGPARAMS_H

@@ -531,7 +531,7 @@ void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
     if (mFineFftWinSpin)
         mFineFftWinSpin->setValue(p.fineFFTWindow);
 
-    // 保留产品路径和元数据（含轨道向量），不被对话框覆盖
+    // 保留产品来源的轨道/多普勒/路径，不被对话框覆盖 (波长/间距/PRF由产品XML提供)
     QList<OrbitStateVector> mov = mRegParams.masterOrbitVectors;
     QList<OrbitStateVector> sov = mRegParams.slaveOrbitVectors;
     DopplerInfo mdp = mRegParams.masterDoppler;
@@ -540,11 +540,6 @@ void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
     QString sp = mRegParams.slaveProductPath;
     QString md = mRegParams.masterDisplayName;
     QString sd = mRegParams.slaveDisplayName;
-    double wl = mRegParams.wavelength;
-    double mrs = mRegParams.masterRangeSpacing;
-    double mas = mRegParams.masterAzimuthSpacing;
-    double mnr = mRegParams.masterNearRange;
-    double mprf = mRegParams.masterPrf;
 
     mRegParams = p;
 
@@ -556,11 +551,6 @@ void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
     mRegParams.slaveProductPath = sp;
     mRegParams.masterDisplayName = md;
     mRegParams.slaveDisplayName = sd;
-    mRegParams.wavelength = wl;
-    mRegParams.masterRangeSpacing = mrs;
-    mRegParams.masterAzimuthSpacing = mas;
-    mRegParams.masterNearRange = mnr;
-    mRegParams.masterPrf = mprf;
     mRegParams.masterPath = mp;
     mRegParams.slavePath = sp;
 }

@@ -37,9 +37,12 @@ static void computeBurstDiscard(int N, int linesPerBurst, double prf,
             discardTop[b + 1] = half;
         }
     } else {
+        // 无 burst 时间时, 按 ~4% 重叠估算
+        int estOverlap = static_cast<int>(linesPerBurst * 0.04 + 0.5);
+        int half = estOverlap / 2;
         for (int b = 0; b < N - 1; ++b) {
-            discardBottom[b] = 40;
-            discardTop[b + 1] = 40;
+            discardBottom[b] = half;
+            discardTop[b + 1] = half;
         }
     }
 }
@@ -90,7 +93,9 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
         int N = ctx.burstInfo->burstCount;
         int L = ctx.burstInfo->linesPerBurst;
         double prf = ctx.burstInfo->azimuthFrequency > 0
-            ? ctx.burstInfo->azimuthFrequency : 486.0;
+            ? ctx.burstInfo->azimuthFrequency
+            : ctx.masterSensorInfo.prf > 0
+                ? ctx.masterSensorInfo.prf : 486.0;
 
         computeBurstDiscard(N, L, prf, ctx.burstInfo->burstAzimuthTimes,
             discardTop, discardBottom);

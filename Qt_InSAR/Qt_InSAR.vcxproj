@@ -120,7 +120,9 @@
     <!-- Registration Pipeline Steps -->
     <ClCompile Include="services\registration\steps\BurstMatcher.cpp" />
     <ClCompile Include="services\registration\steps\CoarseCorrelator.cpp" />
+    <ClCompile Include="algorithms\BaselineEstimator.cpp" />
     <ClCompile Include="services\registration\steps\DataReader.cpp" />
+    <ClCompile Include="services\registration\steps\TOPSARDeramp.cpp" />
     <ClCompile Include="services\registration\steps\EsdCorrector.cpp" />
     <ClCompile Include="services\registration\steps\FineCorrelator.cpp" />
     <ClCompile Include="services\registration\steps\OffsetExtractor.cpp" />
@@ -138,6 +140,7 @@
     <ClCompile Include="dataaccess\impl\GdalInterferogramWriter.cpp" />
     <ClCompile Include="dataaccess\impl\GdalDemReader.cpp" />
     <ClCompile Include="dataaccess\impl\OrbitDataReader.cpp" />
+    <ClCompile Include="dataaccess\annotation\SlcAnnotationReader.cpp" />
     <ClCompile Include="dataaccess\impl\Sentinel1Product.cpp" />
     <ClCompile Include="dataaccess\impl\GdalVsiProcessor.cpp" />
     <ClCompile Include="dataaccess\impl\QsarIO.cpp" />
@@ -227,7 +230,9 @@
     <ClInclude Include="services\registration\steps\IRegStep.h" />
     <ClInclude Include="services\registration\steps\BurstMatcher.h" />
     <ClInclude Include="services\registration\steps\CoarseCorrelator.h" />
+    <ClInclude Include="algorithms\BaselineEstimator.h" />
     <ClInclude Include="services\registration\steps\DataReader.h" />
+    <ClInclude Include="services\registration\steps\TOPSARDeramp.h" />
     <ClInclude Include="services\registration\steps\EsdCorrector.h" />
     <ClInclude Include="services\registration\steps\FineCorrelator.h" />
     <ClInclude Include="services\registration\steps\OffsetExtractor.h" />
@@ -237,6 +242,8 @@
     <ClInclude Include="services\registration\steps\SincResampler.h" />
     <ClInclude Include="dataaccess\ISarProduct.h" />
     <ClInclude Include="dataaccess\SarProductFactory.h" />
+    <ClInclude Include="dataaccess\annotation\SlcAnnotation.h" />
+    <ClInclude Include="dataaccess\annotation\SlcAnnotationReader.h" />
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h" />
     <ClInclude Include="dataaccess\impl\GdalVsiProcessor.h" />
     <ClInclude Include="dataaccess\impl\QsarIO.h" />

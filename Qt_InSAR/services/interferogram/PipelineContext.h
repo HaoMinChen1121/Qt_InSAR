@@ -3,9 +3,11 @@
 
 #include "domain/params/InterferogramParams.h"
 #include "domain/QsarProduct.h"
+#include "domain/SarSensorInfo.h"
 
 struct IfgPipelineContext {
     const InterferogramParams* params = nullptr;
+    SarSensorInfo              masterSensorInfo;  // 从主产品XML解析的传感器元数据
 
     // ── 输入 ──
     QString masterPath;         // master VSI 路径 (或本地路径)

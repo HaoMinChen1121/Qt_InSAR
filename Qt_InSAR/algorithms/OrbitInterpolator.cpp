@@ -60,7 +60,7 @@ void interpolateOrbit(const QList<OrbitStateVector>& orbits,
     if (n < 2) { x = y = z = vx = vy = vz = 0; return; }
     QVector<double> times(n), xs(n), ys(n), zs(n), vxs(n), vys(n), vzs(n);
     for (int i = 0; i < n; ++i) {
-        times[i] = orbits[i].time;
+        times[i] = orbits[i].relativeTime;
         xs[i] = orbits[i].x; ys[i] = orbits[i].y; zs[i] = orbits[i].z;
         vxs[i] = orbits[i].vx; vys[i] = orbits[i].vy; vzs[i] = orbits[i].vz;
     }
@@ -80,7 +80,7 @@ void computeOrbitOffset(const QList<OrbitStateVector>& mOrb,
     if (mOrb.size() < 2 || sOrb.size() < 2) {
         rangeOff = 0; aziOff = 0; return;
     }
-    double t0 = (mOrb.first().time + mOrb.last().time) * 0.5;
+    double t0 = (mOrb.first().relativeTime + mOrb.last().relativeTime) * 0.5;
     double tAzi = t0 + centerRow / prf;
     double R = nearRange + centerCol * rangeSpacing;
 

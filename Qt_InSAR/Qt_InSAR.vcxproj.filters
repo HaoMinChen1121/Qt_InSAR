@@ -7,6 +7,7 @@
     <Filter Include="Algorithms"><UniqueIdentifier>{A0B1C2D3-E4F5-6789-ABCD-EF0123456789}</UniqueIdentifier></Filter>
     <Filter Include="DataAccess"><UniqueIdentifier>{D4E5F6A7-B8C9-0123-DEFA-234567890123}</UniqueIdentifier></Filter>
     <Filter Include="DataAccess\Impl"><UniqueIdentifier>{E5F6A7B8-C9D0-1234-EFAB-345678901234}</UniqueIdentifier></Filter>
+    <Filter Include="DataAccess\Annotation"><UniqueIdentifier>{D1E2F3A4-B5C6-7890-ABCD-EF0123456789}</UniqueIdentifier></Filter>
     <Filter Include="Preprocess"><UniqueIdentifier>{A1B2C3D4-E5F6-7890-ABCD-123456789ABC}</UniqueIdentifier></Filter>
     <Filter Include="Services"><UniqueIdentifier>{F6A7B8C9-D0E1-2345-FABC-456789012345}</UniqueIdentifier></Filter>
     <Filter Include="Services\Impl"><UniqueIdentifier>{A7B8C9D0-E1F2-3456-ABCD-567890123456}</UniqueIdentifier></Filter>
@@ -35,10 +36,12 @@
   </ItemGroup>
   <!-- Algorithms -->
   <ItemGroup>
+    <ClCompile Include="algorithms\BaselineEstimator.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\Correlation.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\OrbitInterpolator.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\PolynomialFit.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\SincInterpolator.cpp"><Filter>Algorithms</Filter></ClCompile>
+    <ClInclude Include="algorithms\BaselineEstimator.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\ComplexSoA.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\Correlation.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\DerampCore.h"><Filter>Algorithms</Filter></ClInclude>
@@ -80,11 +83,14 @@
     <ClCompile Include="dataaccess\impl\GdalInterferogramWriter.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\GdalDemReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\OrbitDataReader.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
+    <ClCompile Include="dataaccess\annotation\SlcAnnotationReader.cpp"><Filter>DataAccess\Annotation</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\Sentinel1Product.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\GdalVsiProcessor.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClCompile Include="dataaccess\impl\QsarIO.cpp"><Filter>DataAccess\Impl</Filter></ClCompile>
     <ClInclude Include="dataaccess\impl\BurstCacheSoA.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\SentinelDataReader.h"><Filter>DataAccess\Impl</Filter></ClInclude>
+    <ClInclude Include="dataaccess\annotation\SlcAnnotation.h"><Filter>DataAccess\Annotation</Filter></ClInclude>
+    <ClInclude Include="dataaccess\annotation\SlcAnnotationReader.h"><Filter>DataAccess\Annotation</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\Sentinel1Product.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\GdalVsiProcessor.h"><Filter>DataAccess\Impl</Filter></ClInclude>
     <ClInclude Include="dataaccess\impl\QsarIO.h"><Filter>DataAccess\Impl</Filter></ClInclude>
@@ -148,6 +154,7 @@
     <ClCompile Include="services\registration\steps\PolynomialFitter.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
     <ClCompile Include="services\registration\steps\QualityEvaluator.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
     <ClCompile Include="services\registration\steps\SincResampler.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
+    <ClCompile Include="services\registration\steps\TOPSARDeramp.cpp"><Filter>Services\Registration\Steps</Filter></ClCompile>
     <ClInclude Include="services\registration\steps\BurstMatcher.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
     <ClInclude Include="services\registration\steps\CoarseCorrelator.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
     <ClInclude Include="services\registration\steps\DataReader.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
@@ -158,6 +165,7 @@
     <ClInclude Include="services\registration\steps\PolynomialFitter.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
     <ClInclude Include="services\registration\steps\QualityEvaluator.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
     <ClInclude Include="services\registration\steps\SincResampler.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
+    <ClInclude Include="services\registration\steps\TOPSARDeramp.h"><Filter>Services\Registration\Steps</Filter></ClInclude>
   </ItemGroup>
   <!-- Controllers -->
   <ItemGroup>

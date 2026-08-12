@@ -55,22 +55,22 @@ QWidget* DeformationDialog::createDeformationTab()
 
     mWavelength = new QDoubleSpinBox(grpConv);
     mWavelength->setDecimals(4); mWavelength->setRange(0.001, 1.0);
-    mWavelength->setValue(0.03125); mWavelength->setSuffix(QStringLiteral(" m"));
+    mWavelength->setValue(0.0); mWavelength->setSuffix(QStringLiteral(" m"));  // 由产品XML填充
     formConv->addRow(QStringLiteral("波长 λ:"), mWavelength);
 
     mIncidenceAngle = new QDoubleSpinBox(grpConv);
-    mIncidenceAngle->setRange(0, 90); mIncidenceAngle->setValue(35.0);
+    mIncidenceAngle->setRange(0, 90); mIncidenceAngle->setValue(0.0);         // 由产品XML填充
     mIncidenceAngle->setSuffix(QStringLiteral(" °"));
     formConv->addRow(QStringLiteral("入射角:"), mIncidenceAngle);
 
     mSlantRange = new QDoubleSpinBox(grpConv);
     mSlantRange->setDecimals(0); mSlantRange->setRange(1000, 9999999);
-    mSlantRange->setValue(850000); mSlantRange->setSuffix(QStringLiteral(" m"));
+    mSlantRange->setValue(0); mSlantRange->setSuffix(QStringLiteral(" m"));   // 由产品XML填充
     formConv->addRow(QStringLiteral("斜距:"), mSlantRange);
 
     mBaselinePerp = new QDoubleSpinBox(grpConv);
     mBaselinePerp->setDecimals(1); mBaselinePerp->setRange(-9999, 9999);
-    mBaselinePerp->setValue(150.0); mBaselinePerp->setSuffix(QStringLiteral(" m"));
+    mBaselinePerp->setValue(0.0); mBaselinePerp->setSuffix(QStringLiteral(" m")); // 由轨道向量计算
     formConv->addRow(QStringLiteral("垂直基线:"), mBaselinePerp);
     vl->addWidget(grpConv);
     vl->addStretch();

@@ -12,6 +12,7 @@ struct PipelineContext {
     const RegistrationParams* params = nullptr;
     const SarBandDescriptor*  masterBand = nullptr;
     const SarBandDescriptor*  slaveBand  = nullptr;
+    SarSensorInfo             masterSensorInfo;  // 从主产品XML解析的传感器元数据
     int pairIndex  = 0;
     int totalPairs = 0;
 

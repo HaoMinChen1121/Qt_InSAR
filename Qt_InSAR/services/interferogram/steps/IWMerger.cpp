@@ -93,17 +93,42 @@ static bool mergeT(
     return true;
 }
 
+static int computeOverlapTrim(const QVector<IwMeta>& metas)
+{
+    if (metas.size() < 2) return 0;
+    // 从相邻IW的近距/远距计算重叠像素数
+    double totalOverlap = 0.0;
+    int pairs = 0;
+    for (int i = 0; i < metas.size() - 1; ++i) {
+        double leftFar = metas[i].nearRange + metas[i].width * metas[i].rangeSpacing;
+        double rightNear = metas[i + 1].nearRange;
+        double overlap = leftFar - rightNear;
+        if (overlap > 0) {
+            double avgSpacing = (metas[i].rangeSpacing + metas[i + 1].rangeSpacing) / 2.0;
+            if (avgSpacing > 0) totalOverlap += overlap / avgSpacing;
+            ++pairs;
+        }
+    }
+    return pairs > 0 ? static_cast<int>(totalOverlap / pairs + 0.5) : 0;
+}
+
 bool mergePhase(const QVector<QString>& iwFiles, const QVector<IwMeta>& iwMetas,
     const QString& outputPath) {
-    return mergeT<float>(iwFiles, iwMetas, outputPath, GDT_Float32, 50);
+    int trim = computeOverlapTrim(iwMetas);
+    if (trim <= 0) trim = 50; // 回退: S1 IW 典型重叠
+    return mergeT<float>(iwFiles, iwMetas, outputPath, GDT_Float32, trim);
 }
 bool mergeCoherence(const QVector<QString>& iwFiles, const QVector<IwMeta>& iwMetas,
     const QString& outputPath) {
-    return mergeT<float>(iwFiles, iwMetas, outputPath, GDT_Float32, 50);
+    int trim = computeOverlapTrim(iwMetas);
+    if (trim <= 0) trim = 50;
+    return mergeT<float>(iwFiles, iwMetas, outputPath, GDT_Float32, trim);
 }
 bool mergeComplex(const QVector<QString>& iwFiles, const QVector<IwMeta>& iwMetas,
     const QString& outputPath) {
-    return mergeT<std::complex<float>>(iwFiles, iwMetas, outputPath, GDT_CFloat32, 50);
+    int trim = computeOverlapTrim(iwMetas);
+    if (trim <= 0) trim = 50;
+    return mergeT<std::complex<float>>(iwFiles, iwMetas, outputPath, GDT_CFloat32, trim);
 }
 
 } // namespace IWMerger

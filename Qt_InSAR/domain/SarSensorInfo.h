@@ -37,8 +37,8 @@ struct SarSensorInfo {
     QStringList polarizations;  // ["VV", "VH"] 等
 
     // 频率/波长
-    double centerFreq  = 5.405e9; // 中心频率 (Hz), 默认 Sentinel-1 C-band
-    double wavelength  = 0.0555;  // 波长 (m)
+    double centerFreq  = 0.0;     // 中心频率 (Hz), 由产品XML解析填充
+    double wavelength  = 0.0;     // 波长 (m), 由产品XML解析填充
 
     // 距离向参数
     double rangeSpacing   = 0.0;  // 距离向采样间隔 (m)

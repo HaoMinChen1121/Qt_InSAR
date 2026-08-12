@@ -47,10 +47,12 @@ bool TopoPhaseRemover::execute(IfgPipelineContext& ctx)
     if (!hOut || !hPh) { ctx.errorMessage = "TopoPhaseRemover: cannot create output"; reader.close(); dem.close(); return false; }
     GDALSetGeoTransform(hOut, gt); GDALSetGeoTransform(hPh, gt);
 
-    double wavelength = ctx.params->wavelength;
-    double nearRange = ctx.params->nearRange;
-    double rangeSpacing = ctx.params->rangeSpacing;
-    double incRad = ctx.params->incidenceAngle * M_PI / 180.0;
+    const SarSensorInfo& si = ctx.masterSensorInfo;
+    double wavelength = si.wavelength > 0 ? si.wavelength : ctx.params->wavelength;
+    double nearRange  = si.nearRange > 0  ? si.nearRange  : ctx.params->nearRange;
+    double rangeSpacing = si.rangeSpacing > 0 ? si.rangeSpacing : ctx.params->rangeSpacing;
+    double incAngleDeg = si.incidenceAngleMid > 0 ? si.incidenceAngleMid : ctx.params->incidenceAngle;
+    double incRad = incAngleDeg * M_PI / 180.0;
     double Bperp = ctx.params->baselinePerp;
 
     QVector<std::complex<float>> rowBuf(w);

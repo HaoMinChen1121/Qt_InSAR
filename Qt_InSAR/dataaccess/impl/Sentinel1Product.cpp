@@ -4,15 +4,41 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QDomDocument>
 #include <QDebug>
 #include <algorithm>
+#include <cmath>
 
 #include <gdal_priv.h>
 #include <cpl_conv.h>
 #include <cpl_port.h>
 #include <cpl_vsi.h>
 #include <cpl_string.h>
+#include "dataaccess/annotation/SlcAnnotationReader.h"
 #include "domain/SarComplexTypes.h"
+
+static constexpr int S1_ORBIT_REPEAT_CYCLE = 175; // Sentinel-1 12天/175轨道重复周期
+
+// 前向声明 (定义在 parseAnnotationStream 之前)
+class SlcAnnotationReader;
+static bool parseAnnotationFromReader(SlcAnnotationReader& reader,
+    SarSensorInfo& mSensorInfo, DopplerInfo& mDoppler, QList<OrbitStateVector>& mOrbitVectors,
+    int& mOrbitNumberAbs, int& mOrbitNumberRel,
+    int& mParsedLinesPerBurst, int& mParsedSamplesPerBurst, int& mParsedRangeSamples,
+    QMap<QString, double>& mParsedAzimuthFmRateBySwath,
+    QMap<QString, double>& mParsedAzimuthSteeringRateBySwath,
+    QMap<QString, double>& mParsedAzimuthFreqBySwath,
+    QMap<QString, int>& mParsedLinesPerBurstBySwath,
+    QMap<QString, int>& mParsedSamplesPerBurstBySwath,
+    QMap<QString, QVector<int>>& mParsedBurstStartsBySwath,
+    QMap<QString, QVector<QDateTime>>& mParsedBurstTimesBySwath,
+    QMap<QString, QVector<qint64>>& mParsedBurstByteOffsetsBySwath,
+    QMap<QString, QVector<double>>& mParsedBurstAnxTimesBySwath,
+    QMap<QString, QVector<qint64>>& mParsedBurstAbsIdsBySwath,
+    QMap<QString, QVector<QDateTime>>& mParsedBurstSensingTimesBySwath,
+    QMap<QString, double>& mParsedNearRangeBySwath,
+    QMap<QString, double>& mParsedRangeSpacingBySwath,
+    QMap<QString, double>& mParsedIncidenceMidBySwath);
 
 // ──────────────────────────────────────────────────────────
 // 构造/析构
@@ -93,13 +119,16 @@ bool Sentinel1Product::openDirectory(const QString& safDir) {
     qDebug() << "[S1Product] annotation XMLs found:" << xmls.size() << xmls;
     for (const QString& f : xmls) {
         if (!f.contains("calibration", Qt::CaseInsensitive)) {
-            qDebug() << "[S1Product] parsing:" << f;
-            parseAnnotation(annDir + "/" + f);
+            qDebug() << "[S1Product:stream] parsing:" << f;
+            parseAnnotationStream(annDir + "/" + f);
         }
     }
 
     // 扫描 measurement 目录
     discoverMeasurementFiles(safDir + "/measurement");
+
+    // 汇总传感器级元数据 (避免last-swath覆盖问题)
+    finalizeSensorInfo();
 
     // 预览图
     QString prevDir = safDir + "/preview";
@@ -183,12 +212,13 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
     // orbit = parts[6] (after filtering: S1A/IW/SLC/1SDV/date/date/orbit/...)
     if (zipParts.size() >= 7) {
         mOrbitNumberAbs = zipParts[6].toInt();
-        mOrbitNumberRel = mOrbitNumberAbs % 175;
-        if (mOrbitNumberRel == 0) mOrbitNumberRel = 175;
+        mOrbitNumberRel = mOrbitNumberAbs % S1_ORBIT_REPEAT_CYCLE;
+        if (mOrbitNumberRel == 0) mOrbitNumberRel = S1_ORBIT_REPEAT_CYCLE;
         mSensorInfo.absoluteOrbit = mOrbitNumberAbs;
         mSensorInfo.relativeOrbit = mOrbitNumberRel;
-        mSensorInfo.orbitDirection = (mOrbitNumberRel % 2 == 1)
-            ? QStringLiteral("Ascending") : QStringLiteral("Descending");
+        if (mSensorInfo.orbitDirection.isEmpty())
+            mSensorInfo.orbitDirection = (mOrbitNumberRel % 2 == 1)
+                ? QStringLiteral("Ascending") : QStringLiteral("Descending");
     }
 
     // 通过 VSI 读取 manifest 到临时文件用于 QDomDocument 解析
@@ -243,13 +273,27 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
                     }
                 }
                 if (!aData.isEmpty()) {
-                    QString tmpAnn = QDir::tempPath() + "/_s1_ann.xml";
-                    QFile af(tmpAnn);
-                    if (af.open(QIODevice::WriteOnly)) {
-                        af.write(aData);
-                        af.close();
-                        parseAnnotation(tmpAnn);
-                        QFile::remove(tmpAnn);
+                    // 流式解析: 直接从内存数据读取, 无需临时文件
+                    SlcAnnotationReader reader;
+                    if (reader.openFromData(aData)) {
+                        parseAnnotationFromReader(reader, mSensorInfo, mDoppler,
+                            mOrbitVectors, mOrbitNumberAbs, mOrbitNumberRel,
+                            mParsedLinesPerBurst, mParsedSamplesPerBurst,
+                            mParsedRangeSamples,
+                            mParsedAzimuthFmRateBySwath,
+                            mParsedAzimuthSteeringRateBySwath,
+                            mParsedAzimuthFreqBySwath,
+                            mParsedLinesPerBurstBySwath,
+                            mParsedSamplesPerBurstBySwath,
+                            mParsedBurstStartsBySwath,
+                            mParsedBurstTimesBySwath,
+                            mParsedBurstByteOffsetsBySwath,
+                            mParsedBurstAnxTimesBySwath,
+                            mParsedBurstAbsIdsBySwath,
+                            mParsedBurstSensingTimesBySwath,
+                            mParsedNearRangeBySwath,
+                            mParsedRangeSpacingBySwath,
+                            mParsedIncidenceMidBySwath);
                     }
                 }
             }
@@ -259,6 +303,9 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
 
     // 扫描 measurement
     discoverMeasurementFiles(safRoot + "/measurement");
+
+    // 汇总传感器级元数据 (避免last-swath覆盖问题)
+    finalizeSensorInfo();
 
     // 预览图
     QString prevDir = safRoot + "/preview";
@@ -275,11 +322,6 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
         }
         CSLDestroy(pv);
     }
-
-    // fallback: XML 未读到参数时用合理默认值
-    if (mSensorInfo.rangeSpacing <= 0) mSensorInfo.rangeSpacing = 2.33;
-    if (mSensorInfo.azimuthSpacing <= 0) mSensorInfo.azimuthSpacing = 13.9;
-    if (mSensorInfo.wavelength <= 0) mSensorInfo.wavelength = 0.05546576;
 
     mIsOpen = true;
     return true;
@@ -339,8 +381,8 @@ bool Sentinel1Product::parseManifest(const QString& manifestPath) {
         // 轨道号
         if (parts.size() >= 7) {
             mOrbitNumberAbs = parts[6].toInt();
-            mOrbitNumberRel = mOrbitNumberAbs % 175;
-            if (mOrbitNumberRel == 0) mOrbitNumberRel = 175;
+            mOrbitNumberRel = mOrbitNumberAbs % S1_ORBIT_REPEAT_CYCLE;
+            if (mOrbitNumberRel == 0) mOrbitNumberRel = S1_ORBIT_REPEAT_CYCLE;
             mSensorInfo.absoluteOrbit = mOrbitNumberAbs;
             mSensorInfo.relativeOrbit = mOrbitNumberRel;
             mSensorInfo.orbitDirection = (mOrbitNumberRel % 2 == 1)
@@ -358,6 +400,15 @@ bool Sentinel1Product::parseManifest(const QString& manifestPath) {
         QString pt = nl.at(0).toElement().text().trimmed();
         if (!pt.isEmpty())
             mProductType = sarProductTypeFromString(pt);
+    }
+
+    // acquisition mode — 从 XML 读取 (优于文件名推断)
+    nl = root.elementsByTagName("s1sarl1:mode");
+    if (nl.isEmpty())
+        nl = root.elementsByTagName("mode");
+    if (!nl.isEmpty()) {
+        QString mode = nl.at(0).toElement().text().trimmed().toUpper();
+        if (!mode.isEmpty()) mAcquisitionMode = mode;
     }
 
     // 极化 — 遍历全部 transmitterReceiverPolarisation 元素
@@ -405,263 +456,217 @@ bool Sentinel1Product::parseManifest(const QString& manifestPath) {
     mSensorInfo.annotationDir   = fi.dir().absolutePath() + "/annotation";
     mSensorInfo.measurementDir  = fi.dir().absolutePath() + "/measurement";
 
-    // 波长/频率 在 parseAnnotation() 中从 XML radarFrequency 读取
-    if (mSensorInfo.rangeSpacing <= 0) mSensorInfo.rangeSpacing = 2.33;
-    if (mSensorInfo.azimuthSpacing <= 0) mSensorInfo.azimuthSpacing = 13.9;
-    if (mSensorInfo.wavelength <= 0) mSensorInfo.wavelength = 0.05546576;
+    // 波长/频率/间距 在 parseAnnotation() 中从 XML 读取，由 finalizeSensorInfo() 汇总
     return true;
 }
 
 // ──────────────────────────────────────────────────────────
 // annotation XML 解析 (轨道/多普勒/几何)
 // ──────────────────────────────────────────────────────────
+//  QXmlStreamReader 流式解析
+// ──────────────────────────────────────────────────────────
 
-bool Sentinel1Product::parseAnnotation(const QString& annotationPath) {
-    QFile file(annotationPath);
-    if (!file.open(QIODevice::ReadOnly))
-        return false;
+static bool parseAnnotationFromReader(SlcAnnotationReader& reader,
+    SarSensorInfo& mSensorInfo, DopplerInfo& mDoppler, QList<OrbitStateVector>& mOrbitVectors,
+    int& mOrbitNumberAbs, int& mOrbitNumberRel,
+    int& mParsedLinesPerBurst, int& mParsedSamplesPerBurst, int& mParsedRangeSamples,
+    QMap<QString, double>& mParsedAzimuthFmRateBySwath,
+    QMap<QString, double>& mParsedAzimuthSteeringRateBySwath,
+    QMap<QString, double>& mParsedAzimuthFreqBySwath,
+    QMap<QString, int>& mParsedLinesPerBurstBySwath,
+    QMap<QString, int>& mParsedSamplesPerBurstBySwath,
+    QMap<QString, QVector<int>>& mParsedBurstStartsBySwath,
+    QMap<QString, QVector<QDateTime>>& mParsedBurstTimesBySwath,
+    QMap<QString, QVector<qint64>>& mParsedBurstByteOffsetsBySwath,
+    QMap<QString, QVector<double>>& mParsedBurstAnxTimesBySwath,
+    QMap<QString, QVector<qint64>>& mParsedBurstAbsIdsBySwath,
+    QMap<QString, QVector<QDateTime>>& mParsedBurstSensingTimesBySwath,
+    QMap<QString, double>& mParsedNearRangeBySwath,
+    QMap<QString, double>& mParsedRangeSpacingBySwath,
+    QMap<QString, double>& mParsedIncidenceMidBySwath)
+{
+    SlcAnnotation ann = reader.readAll();
 
-    QDomDocument doc;
-    if (!doc.setContent(&file)) { file.close(); return false; }
-    file.close();
+    QString swathName = ann.identity.swath.toUpper();
+    if (swathName.isEmpty()) return false;
 
-    QDomElement root = doc.documentElement();
-
-    // 子条带名 (IW1/IW2/IW3)
-    QString swathName;
-    QDomNodeList swList = root.elementsByTagName("swath");
-    if (!swList.isEmpty())
-        swathName = swList.at(0).toElement().text().trimmed().toUpper();
-
-    // 轨道号
-    QDomNodeList nl = root.elementsByTagName("orbitNumber");
-    if (!nl.isEmpty()) {
-        mOrbitNumberAbs = nl.at(0).toElement().text().toInt();
-        mOrbitNumberRel = mOrbitNumberAbs % 175;
-        if (mOrbitNumberRel == 0) mOrbitNumberRel = 175;
+    if (!ann.identity.passDirection.isEmpty()) {
+        QString p = ann.identity.passDirection;
+        if (p == "ASCENDING")      mSensorInfo.orbitDirection = QStringLiteral("Ascending");
+        else if (p == "DESCENDING") mSensorInfo.orbitDirection = QStringLiteral("Descending");
     }
-
-    // 多普勒质心
-    nl = root.elementsByTagName("dcEstimate");
-    if (!nl.isEmpty()) {
-        QDomElement dce = nl.at(0).toElement();
-        QDomElement coeff = dce.firstChildElement("dataDcPolynomial")
-                              .firstChildElement("coefficient");
-        if (!coeff.isNull())
-            mDoppler.centroid = coeff.text().toDouble();
+    if (ann.identity.absoluteOrbitNumber > 0) {
+        mOrbitNumberAbs = ann.identity.absoluteOrbitNumber;
+        mOrbitNumberRel = mOrbitNumberAbs % S1_ORBIT_REPEAT_CYCLE;
+        if (mOrbitNumberRel == 0) mOrbitNumberRel = S1_ORBIT_REPEAT_CYCLE;
     }
-
-    // 轨道状态向量 (Sentinel-1 实际格式: <orbit><time>ISO8601...<position><x>...)
-    nl = root.elementsByTagName("orbit");
-    QDateTime refTime; // 相对秒数基准
-    for (int i = 0; i < nl.size() && i < 50; ++i) {
-        QDomElement orbel = nl.at(i).toElement();
-        QString timeStr = orbel.firstChildElement("time").text().trimmed();
-        QDateTime dt = QDateTime::fromString(timeStr, Qt::ISODate);
-        if (!dt.isValid()) continue;
-        if (i == 0) refTime = dt;
-
-        OrbitStateVector sv;
-        sv.time = refTime.secsTo(dt); // 相对第一轨的秒数
-        QDomElement pos = orbel.firstChildElement("position");
-        sv.x  = pos.firstChildElement("x").text().toDouble();
-        sv.y  = pos.firstChildElement("y").text().toDouble();
-        sv.z  = pos.firstChildElement("z").text().toDouble();
-        QDomElement vel = orbel.firstChildElement("velocity");
-        sv.vx = vel.firstChildElement("x").text().toDouble();
-        sv.vy = vel.firstChildElement("y").text().toDouble();
-        sv.vz = vel.firstChildElement("z").text().toDouble();
-        mOrbitVectors.append(sv);
-    }
-
-    // 兼容旧格式: <orbitStateVector><osvTime>...<xPos>...
-    if (mOrbitVectors.isEmpty()) {
-        nl = root.elementsByTagName("orbitStateVector");
-        for (int i = 0; i < nl.size() && i < 50; ++i) {
-            QDomElement osv = nl.at(i).toElement();
+    if (!ann.dopplerEstimates.isEmpty() && !ann.dopplerEstimates[0].dataDcPoly.isEmpty())
+        mDoppler.centroid = ann.dopplerEstimates[0].dataDcPoly[0];
+    if (mOrbitVectors.isEmpty() && !ann.orbitList.isEmpty()) {
+        for (const auto& ov : ann.orbitList) {
             OrbitStateVector sv;
-            sv.time = osv.firstChildElement("osvTime").text().toDouble();
-            sv.x = osv.firstChildElement("xPos").text().toDouble();
-            sv.y = osv.firstChildElement("yPos").text().toDouble();
-            sv.z = osv.firstChildElement("zPos").text().toDouble();
-            sv.vx = osv.firstChildElement("xVel").text().toDouble();
-            sv.vy = osv.firstChildElement("yVel").text().toDouble();
-            sv.vz = osv.firstChildElement("zVel").text().toDouble();
-            if (sv.time > 0) mOrbitVectors.append(sv);
+            sv.utcTime = ov.utcTime; sv.relativeTime = ov.relativeTime;
+            sv.x = ov.posX; sv.y = ov.posY; sv.z = ov.posZ;
+            sv.vx = ov.velX; sv.vy = ov.velY; sv.vz = ov.velZ;
+            mOrbitVectors.append(sv);
         }
     }
-
-    // 近距
-    nl = root.elementsByTagName("slantRangeTime");
-    if (!nl.isEmpty()) {
-        mSensorInfo.nearRange = nl.at(0).toElement().text().toDouble()
-                                * 299792458.0 / 2.0;
-        if (!swathName.isEmpty())
-            mParsedNearRangeBySwath[swathName] = mSensorInfo.nearRange;
+    double nearRange = ann.slantRangeTime * 299792458.0 / 2.0;
+    mSensorInfo.nearRange = nearRange;
+    mParsedNearRangeBySwath[swathName] = nearRange;
+    if (ann.azimuthFrequency > 0) {
+        mSensorInfo.prf = ann.azimuthFrequency;
+        mParsedAzimuthFreqBySwath[swathName] = ann.azimuthFrequency;
     }
-
-    // 方位向PRF: 优先用 azimuthFrequency (单子条带有效值),
-    // 降级使用 prf (雷达总脉冲频率, 需除以子条带数)
-    nl = root.elementsByTagName("azimuthFrequency");
-    double efPrf = 0;
-    if (!nl.isEmpty())
-        efPrf = nl.at(0).toElement().text().toDouble();
-    else {
-        nl = root.elementsByTagName("prf");
-        if (!nl.isEmpty())
-            efPrf = nl.at(0).toElement().text().toDouble();
+    if (ann.incidenceAngleMidSwath > 1.0) {
+        mSensorInfo.incidenceAngleMid = ann.incidenceAngleMidSwath;
+        mParsedIncidenceMidBySwath[swathName] = ann.incidenceAngleMidSwath;
     }
-    if (efPrf > 0) {
-        mSensorInfo.prf = efPrf;
-        if (!swathName.isEmpty()) {
-            mParsedAzimuthFreqBySwath[swathName] = efPrf;
-            qDebug() << QStringLiteral("[S1Product] annotation swath=%1 azimuthFreq=%2 Hz")
-                .arg(swathName).arg(efPrf, 0, 'f', 2);
-        }
+    if (ann.linesPerBurst > 0) {
+        mParsedLinesPerBurst = ann.linesPerBurst;
+        mParsedLinesPerBurstBySwath[swathName] = ann.linesPerBurst;
     }
-
-    // 入射角 (S1 标注: <incidenceAngleMidSwath>33.95</incidenceAngleMidSwath>)
-    {
-        nl = root.elementsByTagName("incidenceAngleMidSwath");
-        if (!nl.isEmpty()) {
-            QDomElement el = nl.at(0).toElement();
-            double inc = el.text().trimmed().toDouble();
-            if (inc > 1.0) {
-                mSensorInfo.incidenceAngleMid  = inc;
-                // S1 annotation 无独立 near/far 入射角, 用 mid±5° 近似
-                mSensorInfo.incidenceAngleNear = inc - 5.0;
-                mSensorInfo.incidenceAngleFar  = inc + 5.0;
-            }
-        }
-    }
-
-    // ── Burst 边界 (TOPSAR ESD 所需) ──
-    nl = root.elementsByTagName("linesPerBurst");
-    if (!nl.isEmpty()) {
-        mParsedLinesPerBurst = nl.at(0).toElement().text().toInt();
-        if (!swathName.isEmpty())
-            mParsedLinesPerBurstBySwath[swathName] = mParsedLinesPerBurst;
-    }
-    nl = root.elementsByTagName("samplesPerBurst");
-    if (!nl.isEmpty()) {
-        mParsedSamplesPerBurst = nl.at(0).toElement().text().toInt();
-        if (!swathName.isEmpty())
-            mParsedSamplesPerBurstBySwath[swathName] = mParsedSamplesPerBurst;
+    if (ann.samplesPerBurst > 0) {
+        mParsedSamplesPerBurst = ann.samplesPerBurst;
+        mParsedSamplesPerBurstBySwath[swathName] = ann.samplesPerBurst;
     }
     mParsedRangeSamples = mParsedSamplesPerBurst;
-    mParsedBurstStarts.clear();
-    mParsedBurstAzimuthTimes.clear();
-    mParsedBurstByteOffsets.clear();
 
-    // 查找 burstList
-    QDomNodeList blList = root.elementsByTagName("burstList");
-    if (!blList.isEmpty()) {
-        QDomNodeList bursts = blList.at(0).toElement().elementsByTagName("burst");
-        for (int i = 0; i < bursts.size(); ++i) {
-            QDomElement be = bursts.at(i).toElement();
-
-            // firstLine (行偏移) 或 byteOffset (字节偏移)
-            int firstLine = be.firstChildElement("firstLine").text().toInt();
-            qint64 byteOff = be.firstChildElement("byteOffset").text().toLongLong();
-            if (firstLine == 0 && byteOff > 0 && mParsedSamplesPerBurst > 0) {
-                // 从 byteOffset 反算 firstLine: 每行 = samplesPerBurst × 4 bytes (CInt16)
-                firstLine = static_cast<int>(byteOff / (mParsedSamplesPerBurst * 4LL));
-            }
-            mParsedBurstStarts.append(firstLine);
-            mParsedBurstByteOffsets.append(byteOff);
-
-            QString atText = be.firstChildElement("azimuthTime").text().trimmed();
-            QDateTime at = atText.isEmpty()
-                ? QDateTime()
-                : QDateTime::fromString(atText.left(26), Qt::ISODateWithMs);
-            mParsedBurstAzimuthTimes.append(at);
+    {
+        QVector<int> bStarts; QVector<QDateTime> bTimes; QVector<qint64> bOffsets;
+        QVector<double> bAnxTimes; QVector<qint64> bAbsIds; QVector<QDateTime> bSensingTimes;
+        for (const auto& bd : ann.burstList) {
+            int fl = (bd.byteOffset > 0 && mParsedSamplesPerBurst > 0)
+                ? static_cast<int>(bd.byteOffset / (mParsedSamplesPerBurst * 4LL)) : 0;
+            bStarts.append(fl); bOffsets.append(bd.byteOffset);
+            bTimes.append(bd.azimuthTime);
+            bAnxTimes.append(bd.azimuthAnxTime);
+            bAbsIds.append(bd.burstIdAbsolute);
+            bSensingTimes.append(bd.sensingTime);
         }
-        if (!swathName.isEmpty()) {
-            mParsedBurstStartsBySwath[swathName] = mParsedBurstStarts;
-            mParsedBurstTimesBySwath[swathName]  = mParsedBurstAzimuthTimes;
-            mParsedBurstByteOffsetsBySwath[swathName] = mParsedBurstByteOffsets;
-        }
+        mParsedBurstStartsBySwath[swathName] = bStarts;
+        mParsedBurstTimesBySwath[swathName] = bTimes;
+        mParsedBurstByteOffsetsBySwath[swathName] = bOffsets;
+        mParsedBurstAnxTimesBySwath[swathName] = bAnxTimes;
+        mParsedBurstAbsIdsBySwath[swathName] = bAbsIds;
+        mParsedBurstSensingTimesBySwath[swathName] = bSensingTimes;
     }
-
-    // azimuthFmRate (TOPS deramping所需)
-    QDomNodeList gaList = root.elementsByTagName("generalAnnotation");
-    if (!gaList.isEmpty()) {
-        QDomNodeList afmList = gaList.at(0).toElement().elementsByTagName("azimuthFmRateList");
-        if (!afmList.isEmpty()) {
-            QDomNodeList fmRates = afmList.at(0).toElement().elementsByTagName("azimuthFmRate");
-            if (!fmRates.isEmpty()) {
-                QString polyStr = fmRates.at(0).toElement()
-                    .firstChildElement("azimuthFmRatePolynomial").text().trimmed();
-                QStringList coeffs = polyStr.split(' ', Qt::SkipEmptyParts);
-                if (!coeffs.isEmpty() && !swathName.isEmpty())
-                    mParsedAzimuthFmRateBySwath[swathName] = coeffs[0].toDouble();
-            }
-        }
-        // radarFrequency → centerFreq + wavelength = c / f
-        QDomNodeList rfList = gaList.at(0).toElement().elementsByTagName("radarFrequency");
-        if (!rfList.isEmpty()) {
-            double rf = rfList.at(0).toElement().text().trimmed().toDouble();
-            if (rf > 1e8) {
-                mSensorInfo.centerFreq = rf;
-                mSensorInfo.wavelength = 299792458.0 / rf;
-            }
-        }
-        // rangeSamplingRate → rangeSpacing = c / (2 * rsr)
-        QDomNodeList rsrList = gaList.at(0).toElement().elementsByTagName("rangeSamplingRate");
-        if (!rsrList.isEmpty()) {
-            double rsr = rsrList.at(0).toElement().text().trimmed().toDouble();
-            if (rsr > 1e6) {
-                mSensorInfo.rangeSpacing = 299792458.0 / (2.0 * rsr);
-                if (!swathName.isEmpty())
-                    mParsedRangeSpacingBySwath[swathName] = mSensorInfo.rangeSpacing;
-            }
-        }
-        // azimuthPixelSpacing → 方位向采样间距
-        QDomNodeList apsList = gaList.at(0).toElement().elementsByTagName("azimuthPixelSpacing");
-        if (!apsList.isEmpty()) {
-            double aps = apsList.at(0).toElement().text().trimmed().toDouble();
-            if (aps > 0.1) mSensorInfo.azimuthSpacing = aps;
-        }
-        // azimuthSteeringRate (TOPS deburst cut line, per-swath)
-        // 注意: 嵌套在 generalAnnotation → productInformation → azimuthSteeringRate
-        QDomNodeList asrList = gaList.at(0).toElement().elementsByTagName("azimuthSteeringRate");
-        if (!asrList.isEmpty() && !swathName.isEmpty())
-            mParsedAzimuthSteeringRateBySwath[swathName] = asrList.at(0).toElement().text().trimmed().toDouble();
+    if (ann.radarFrequency > 1e8) {
+        mSensorInfo.centerFreq = ann.radarFrequency;
+        mSensorInfo.wavelength = 299792458.0 / ann.radarFrequency;
     }
-
-    // 采样数 (SLC: samplesPerBurst/linesPerBurst; GRD: numberOfSamples/numberOfLines)
-    nl = root.elementsByTagName("samplesPerBurst");
-    if (!nl.isEmpty())
-        mSensorInfo.rangeSamples  = nl.at(0).toElement().text().toInt();
-    if (mSensorInfo.rangeSamples == 0) {
-        nl = root.elementsByTagName("numberOfSamples");
-        if (!nl.isEmpty())
-            mSensorInfo.rangeSamples = nl.at(0).toElement().text().toInt();
+    if (ann.rangeSamplingRate > 1e6) {
+        double rs = 299792458.0 / (2.0 * ann.rangeSamplingRate);
+        mSensorInfo.rangeSpacing = rs;
+        mParsedRangeSpacingBySwath[swathName] = rs;
     }
-    nl = root.elementsByTagName("linesPerBurst");
-    if (!nl.isEmpty())
-        mSensorInfo.azimuthSamples = nl.at(0).toElement().text().toInt();
-    if (mSensorInfo.azimuthSamples == 0) {
-        nl = root.elementsByTagName("numberOfLines");
-        if (!nl.isEmpty())
-            mSensorInfo.azimuthSamples = nl.at(0).toElement().text().toInt();
-    }
-
-    // 远距 = 近距 + (距离向采样数 - 1) × 距离向采样间距
-    if (mSensorInfo.nearRange > 0 && mSensorInfo.rangeSamples > 0
-        && mSensorInfo.rangeSpacing > 0)
+    if (ann.azimuthPixelSpacing > 0.1)
+        mSensorInfo.azimuthSpacing = ann.azimuthPixelSpacing;
+    if (!ann.azimuthFmRates.isEmpty() && !ann.azimuthFmRates[0].polynomial.isEmpty())
+        mParsedAzimuthFmRateBySwath[swathName] = ann.azimuthFmRates[0].polynomial[0];
+    if (ann.azimuthSteeringRate != 0.0)
+        mParsedAzimuthSteeringRateBySwath[swathName] = ann.azimuthSteeringRate;
+    mSensorInfo.rangeSamples = ann.samplesPerBurst;
+    mSensorInfo.azimuthSamples = ann.linesPerBurst;
+    if (mSensorInfo.nearRange > 0 && mSensorInfo.rangeSamples > 0 && mSensorInfo.rangeSpacing > 0)
         mSensorInfo.farRange = mSensorInfo.nearRange
             + (mSensorInfo.rangeSamples - 1) * mSensorInfo.rangeSpacing;
-
-    // 更新 sensorInfo
     mSensorInfo.relativeOrbit = mOrbitNumberRel;
     mSensorInfo.absoluteOrbit = mOrbitNumberAbs;
-    mSensorInfo.orbitDirection = (mOrbitNumberRel % 2 == 1) ?
-        QStringLiteral("Ascending") : QStringLiteral("Descending");
+    if (mSensorInfo.orbitDirection.isEmpty())
+        mSensorInfo.orbitDirection = (mOrbitNumberRel % 2 == 1)
+            ? QStringLiteral("Ascending") : QStringLiteral("Descending");
     mSensorInfo.orbitStateVectors = mOrbitVectors;
     mSensorInfo.doppler = mDoppler;
+    if (ann.identity.startTime.isValid()) mSensorInfo.acquisitionStart = ann.identity.startTime;
+    if (ann.identity.stopTime.isValid())  mSensorInfo.acquisitionStop  = ann.identity.stopTime;
 
+    qDebug() << QStringLiteral("[S1Product:stream] swath=%1 nr=%2 aziFreq=%3 bursts=%4 fmRate=%5")
+        .arg(swathName).arg(nearRange, 0, 'f', 1)
+        .arg(ann.azimuthFrequency, 0, 'f', 2).arg(ann.burstList.size())
+        .arg(mParsedAzimuthFmRateBySwath.value(swathName, 0.0), 0, 'f', 1);
     return true;
+}
+
+bool Sentinel1Product::parseAnnotationStream(const QString& annotationPath)
+{
+    SlcAnnotationReader reader;
+    if (!reader.open(annotationPath)) {
+        qWarning() << "[S1Product] SlcAnnotationReader open failed:" << annotationPath;
+        return false;
+    }
+    return parseAnnotationFromReader(reader, mSensorInfo, mDoppler, mOrbitVectors,
+        mOrbitNumberAbs, mOrbitNumberRel,
+        mParsedLinesPerBurst, mParsedSamplesPerBurst, mParsedRangeSamples,
+        mParsedAzimuthFmRateBySwath, mParsedAzimuthSteeringRateBySwath,
+        mParsedAzimuthFreqBySwath,
+        mParsedLinesPerBurstBySwath, mParsedSamplesPerBurstBySwath,
+        mParsedBurstStartsBySwath, mParsedBurstTimesBySwath,
+        mParsedBurstByteOffsetsBySwath,
+        mParsedBurstAnxTimesBySwath,
+        mParsedBurstAbsIdsBySwath,
+        mParsedBurstSensingTimesBySwath,
+        mParsedNearRangeBySwath, mParsedRangeSpacingBySwath,
+        mParsedIncidenceMidBySwath);
+}
+
+// ──────────────────────────────────────────────────────────
+// 汇总传感器级元数据 (在所有 annotation XML 解析后调用)
+// 解决 last-swath-wins 问题：使用中间子条带 (IW2) 作为代表值
+// ──────────────────────────────────────────────────────────
+
+void Sentinel1Product::finalizeSensorInfo()
+{
+    // 选择中间子条带作为传感器级代表（IW模式优先IW2, 否则取第一个可用）
+    QStringList preferred = {"IW2", "IW1", "IW3"};
+    QString repSwath;
+    for (const QString& s : preferred) {
+        if (mParsedNearRangeBySwath.contains(s)) { repSwath = s; break; }
+    }
+    if (repSwath.isEmpty()) {
+        // 无子条带信息 (非TOPS模式), 保持 parseAnnotation 最后写入的值
+        return;
+    }
+
+    // 使用代表子条带的值覆盖传感器级字段
+    if (mParsedNearRangeBySwath.contains(repSwath))
+        mSensorInfo.nearRange = mParsedNearRangeBySwath[repSwath];
+    if (mParsedAzimuthFreqBySwath.contains(repSwath))
+        mSensorInfo.prf = mParsedAzimuthFreqBySwath[repSwath];
+    if (mParsedIncidenceMidBySwath.contains(repSwath))
+        mSensorInfo.incidenceAngleMid = mParsedIncidenceMidBySwath[repSwath];
+    if (mParsedRangeSpacingBySwath.contains(repSwath))
+        mSensorInfo.rangeSpacing = mParsedRangeSpacingBySwath[repSwath];
+
+    // 入射角近/远端: 从 IW1 近距和 IW3 远距计算
+    // 使用简化的球面地球模型: cos(inc) = sqrt((H+R)^2 + R^2 - Re^2) / (2*(H+R)*R)
+    const double Re = 6371000.0; // 地球平均半径 (m)
+    if (mSensorInfo.incidenceAngleNear <= 0 && mParsedNearRangeBySwath.contains("IW1")) {
+        double nearR = mParsedNearRangeBySwath["IW1"];
+        if (nearR > 0) {
+            double orbitH = 693000.0; // S1 approx orbit height (m)
+            mSensorInfo.incidenceAngleNear = std::acos(std::max(-1.0, std::min(1.0,
+                (orbitH * orbitH + nearR * nearR - Re * Re) / (2.0 * orbitH * nearR)))
+                ) * 57.295779513;
+        }
+    }
+    if (mSensorInfo.incidenceAngleFar <= 0 && mParsedNearRangeBySwath.contains("IW3")
+        && mParsedSamplesPerBurstBySwath.contains("IW3")) {
+        double nearR3 = mParsedNearRangeBySwath["IW3"];
+        double rangeSpacing = mParsedRangeSpacingBySwath.value("IW3", mSensorInfo.rangeSpacing);
+        int samples3 = mParsedSamplesPerBurstBySwath["IW3"];
+        double farR3 = nearR3 + (samples3 - 1) * rangeSpacing;
+        double orbitH = 693000.0;
+        mSensorInfo.incidenceAngleFar = std::acos(std::max(-1.0, std::min(1.0,
+            (orbitH * orbitH + farR3 * farR3 - Re * Re) / (2.0 * orbitH * farR3)))
+            ) * 57.295779513;
+    }
+
+    // 回退: 仍为0则用 mid±5°
+    if (mSensorInfo.incidenceAngleNear <= 0 && mSensorInfo.incidenceAngleMid > 0)
+        mSensorInfo.incidenceAngleNear = mSensorInfo.incidenceAngleMid - 5.0;
+    if (mSensorInfo.incidenceAngleFar <= 0 && mSensorInfo.incidenceAngleMid > 0)
+        mSensorInfo.incidenceAngleFar = mSensorInfo.incidenceAngleMid + 5.0;
 }
 
 // ──────────────────────────────────────────────────────────
@@ -716,18 +721,33 @@ void Sentinel1Product::discoverMeasurementFiles(const QString& measurementDir) {
                           ? mParsedBurstStartsBySwath.value(b.subSwath, mParsedBurstStarts).size() : 0;
         b.burstStartLines = mParsedBurstStartsBySwath.value(b.subSwath, mParsedBurstStarts);
         b.burstAzimuthTimes = mParsedBurstTimesBySwath.value(b.subSwath, mParsedBurstAzimuthTimes);
-        b.burstByteOffsets  = mParsedBurstByteOffsetsBySwath.value(b.subSwath, mParsedBurstByteOffsets);
+        b.burstByteOffsets     = mParsedBurstByteOffsetsBySwath.value(b.subSwath, mParsedBurstByteOffsets);
+        b.burstAzimuthAnxTimes = mParsedBurstAnxTimesBySwath.value(b.subSwath, QVector<double>());
+        b.burstAbsoluteIds     = mParsedBurstAbsIdsBySwath.value(b.subSwath, QVector<qint64>());
+        b.burstSensingTimes    = mParsedBurstSensingTimesBySwath.value(b.subSwath, QVector<QDateTime>());
         b.samplesPerBurst   = mParsedSamplesPerBurstBySwath.value(b.subSwath, mParsedSamplesPerBurst);
         b.nearRange         = mParsedNearRangeBySwath.value(b.subSwath, 0.0);
         b.rangeSpacing      = mSensorInfo.rangeSpacing;  // 所有 IW 共享
         b.azimuthFmRate      = mParsedAzimuthFmRateBySwath.value(b.subSwath, 0.0);
         b.azimuthSteeringRate = mParsedAzimuthSteeringRateBySwath.value(b.subSwath, 0.0);
         b.azimuthFrequency    = mParsedAzimuthFreqBySwath.value(b.subSwath, 0.0);
+        b.azimuthSpacing     = mSensorInfo.azimuthSpacing;  // 所有 IW 共享
         qDebug() << QStringLiteral("[S1Product] band %1 L=%2 bursts=%3 aziFreq=%4 Hz fmRate=%5 steerRate=%6")
             .arg(b.subSwath).arg(b.linesPerBurst).arg(b.burstCount)
             .arg(b.azimuthFrequency, 0, 'f', 2)
             .arg(b.azimuthFmRate, 0, 'f', 1)
             .arg(b.azimuthSteeringRate, 0, 'f', 3);
+
+        // 填充 burst 时间范围
+        if (!b.burstAzimuthTimes.isEmpty()) {
+            b.burstTimeStart = b.burstAzimuthTimes.first();
+            b.burstTimeStop  = b.burstAzimuthTimes.last();
+        }
+        // 填充 rasterSize (TOPSAR: burst尺寸; 非TOPSAR: 全图)
+        if (b.burstCount > 0 && b.samplesPerBurst > 0 && b.linesPerBurst > 0)
+            b.rasterSize = QSize(b.samplesPerBurst, b.linesPerBurst * b.burstCount);
+        else if (mSensorInfo.rangeSamples > 0 && mSensorInfo.azimuthSamples > 0)
+            b.rasterSize = QSize(mSensorInfo.rangeSamples, mSensorInfo.azimuthSamples);
 
         mBands.append(b);
     }
@@ -817,17 +837,4 @@ Sentinel1Product::S1FileNameInfo Sentinel1Product::parseS1FileName(
     return info;
 }
 
-// ──────────────────────────────────────────────────────────
-// XML 辅助
-// ──────────────────────────────────────────────────────────
 
-QString Sentinel1Product::xmlFirstElementText(
-        const QDomElement& parent, const QString& tagName) const {
-    QDomElement el = parent.firstChildElement(tagName);
-    return el.isNull() ? QString() : el.text().trimmed();
-}
-
-double Sentinel1Product::xmlFirstElementDouble(
-        const QDomElement& parent, const QString& tagName) const {
-    return xmlFirstElementText(parent, tagName).toDouble();
-}

@@ -28,7 +28,9 @@ struct RegistrationParams
     QList<OrbitStateVector> slaveOrbitVectors;
     DopplerInfo  masterDoppler;
     DopplerInfo  slaveDoppler;
-    double  wavelength = 0.0555;
+    double  wavelength = 0.0;
+    double  baselinePerp = 0.0;      // 垂直基线(m), 由轨道向量计算
+    double  baselinePar  = 0.0;      // 平行基线(m), 由轨道向量计算
     double  masterRangeSpacing = 0;
     double  masterAzimuthSpacing = 0;
     double  masterNearRange = 0;
@@ -62,7 +64,7 @@ struct RegistrationParams
     bool      estimateBaseline = true;
     bool      enableEsd = true;      // TOPSAR ESD 方位向精化
     int       esdOverlapLines = 0;    // ESD重叠行数 (0=自动取 L/10)
-    double    deltaFdoppler = 5000.0; // TOPSAR burst间多普勒质心差 (Hz)
+    double    deltaFdoppler = 0.0;   // TOPSAR burst间多普勒质心差 (Hz), 由产品XML填充
 
     // ── 兼容旧UI路径字段 ──
     QString   masterPath;   // 用于对话框显示

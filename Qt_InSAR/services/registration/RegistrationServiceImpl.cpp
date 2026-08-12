@@ -3,6 +3,7 @@
 #include "dataaccess/impl/SentinelDataReader.h"
 
 #include "steps/DataReader.h"
+#include "steps/TOPSARDeramp.h"
 #include "steps/BurstMatcher.h"
 #include "steps/OrbitInitializer.h"
 #include "steps/CoarseCorrelator.h"
@@ -14,6 +15,7 @@
 #include "steps/QualityEvaluator.h"
 
 #include "dataaccess/SarProductFactory.h"
+#include "algorithms/BaselineEstimator.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/QsarIO.h"
 #include "domain/QsarProduct.h"
@@ -49,6 +51,19 @@ void RegistrationServiceImpl::execute() {
     if (!slave || !slave->open(sProd)) {
         emit errorOccurred(QStringLiteral("无法打开辅产品: %1").arg(sProd));
         emit finished(false, {}); mRunning = false; return;
+    }
+
+    // 从轨道向量计算基线
+    SarSensorInfo mSi = master->sensorInfo();
+    auto baseline = sar::computeBaseline(
+        master->orbitStateVectors(),
+        slave->orbitStateVectors(),
+        mSi.acquisitionStart,
+        mSi.nearRange,
+        mSi.farRange);
+    if (baseline.valid) {
+        mParams.baselinePerp = baseline.perpBaseline;
+        mParams.baselinePar  = baseline.parBaseline;
     }
 
     const auto& mBands = master->bands();
@@ -90,6 +105,7 @@ void RegistrationServiceImpl::execute() {
         ctx.params     = &mParams;
         ctx.masterBand = &pairs[i].m;
         ctx.slaveBand  = &pairs[i].s;
+        ctx.masterSensorInfo = master->sensorInfo();
         ctx.pairIndex  = i;
         ctx.totalPairs = pairs.size();
         ctx.outputPath = outPath;
@@ -98,6 +114,7 @@ void RegistrationServiceImpl::execute() {
         // FineCorrelator 必须在 PolynomialFitter 之前 — 多项式需要在精化后的点上拟合
         QVector<IRegStep*> steps;
         steps << new DataReader
+              << new TOPSARDeramp
               << new BurstMatcher
               << new OrbitInitializer
               << new CoarseCorrelator
