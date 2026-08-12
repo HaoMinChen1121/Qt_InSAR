@@ -52,5 +52,8 @@ Makefile.Release
 # Claude settings
 .claude/
 
+# Documentation (local only)
+docs/
+
 # 3rd-party binaries (linked, not source)
 bin/
