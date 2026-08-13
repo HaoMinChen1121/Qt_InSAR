@@ -7,8 +7,9 @@ bool TOPSARDeramp::execute(PipelineContext& ctx)
 {
     if (!ctx.isTopsar) return true;
     if (!ctx.slaveSdr) {
-        ctx.errorMessage = QStringLiteral("TOPSARDeramp: slaveSdr is null");
-        return false;
+        // GDAL 非缓存路径: 幅度相关不受 deramp 影响, 重采样阶段再对辅影像 deramp
+        qDebug() << "[TOPSARDeramp] skip — no burst cache (deramp deferred to resampler)";
+        return true;
     }
 
     double prf = ctx.data.masterAzimuthFrequency > 0

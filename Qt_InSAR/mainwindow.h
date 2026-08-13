@@ -125,8 +125,6 @@ private:
     QSpinBox*        mFineWinSpin = nullptr;
     QSpinBox*        mSearchWinSpin = nullptr;
     QCheckBox*       mEsdCheck = nullptr;
-    QCheckBox*       mFineFftCheck = nullptr;
-    QSpinBox*        mFineFftWinSpin = nullptr;
     RegistrationParams mRegParams;
     InterferogramParams mIfgParams;
     QSpinBox* mIfgRgSpin = nullptr;

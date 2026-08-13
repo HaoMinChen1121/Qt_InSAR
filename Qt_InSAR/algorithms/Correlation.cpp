@@ -103,61 +103,6 @@ static bool fft2D(std::complex<float>* data, int rows, int cols, bool inverse) {
 }
 #endif
 
-// ── FFTW3 相位相关 (复数域 + Hamming窗 + 归一化互功率谱) ──
-float fftPhaseCorrelate(const std::complex<float>* a,
-                        const std::complex<float>* b,
-                        float* correlationSurface, int rows, int cols)
-{
-#if HAS_FFTW
-    int P = nextPow2(2 * rows - 1), Q = nextPow2(2 * cols - 1), total = P * Q;
-
-    auto FA = std::make_unique<std::complex<float>[]>(total);
-    auto FB = std::make_unique<std::complex<float>[]>(total);
-    std::memset(FA.get(), 0, total * sizeof(std::complex<float>));
-    std::memset(FB.get(), 0, total * sizeof(std::complex<float>));
-
-    // 复制 + Hamming窗
-    for (int r = 0; r < rows; ++r) {
-        std::memcpy(FA.get() + r * Q, a + r * cols, cols * sizeof(std::complex<float>));
-        std::memcpy(FB.get() + r * Q, b + r * cols, cols * sizeof(std::complex<float>));
-    }
-    applyHammingWindow(FA.get(), rows, cols);
-    applyHammingWindow(FB.get(), rows, cols);
-
-    // FFT
-    if (!fft2D(FA.get(), P, Q, false) || !fft2D(FB.get(), P, Q, false)) {
-        std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0); return 0;
-    }
-
-    // 相位相关: R = F_A * conj(F_B) / (|F_A * conj(F_B)| + eps)
-    for (int i = 0; i < total; ++i) {
-        auto cross = FA[i] * std::conj(FB[i]);
-        FA[i] = cross / (std::abs(cross) + 1e-6f);
-    }
-
-    if (!fft2D(FA.get(), P, Q, true)) {
-        std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0); return 0;
-    }
-
-    int outRows = 2 * rows - 1, outCols = 2 * cols - 1;
-    float maxV = -1e9f;
-    for (int r = 0; r < outRows; ++r) {
-        int srcR = (r < rows) ? (P - rows + r) : (r - rows + 1);
-        for (int c = 0; c < outCols; ++c) {
-            int srcC = (c < cols) ? (Q - cols + c) : (c - cols + 1);
-            float v = FA[srcR * Q + srcC].real();
-            correlationSurface[r * outCols + c] = v;
-            if (v > maxV) maxV = v;
-        }
-    }
-    return maxV;
-#else
-    Q_UNUSED(a); Q_UNUSED(b);
-    std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0);
-    return 0;
-#endif
-}
-
 // ── FFTW3 幅度域互相关 (幅度提取 + Hamming窗 + 互相关, 不归一化) ──
 float fftAmpCorrelate(const std::complex<float>* a,
                       const std::complex<float>* b,
@@ -172,42 +117,64 @@ float fftAmpCorrelate(const std::complex<float>* a,
     }
 
     int P = nextPow2(2 * rows - 1), Q = nextPow2(2 * cols - 1), total = P * Q;
-    auto FA = std::make_unique<std::complex<float>[]>(total);
-    auto FB = std::make_unique<std::complex<float>[]>(total);
-    std::memset(FA.get(), 0, total * sizeof(std::complex<float>));
-    std::memset(FB.get(), 0, total * sizeof(std::complex<float>));
+    // fftwf_malloc 保证 SIMD 对齐, 与 FFTW_MEASURE 建 plan 时的对齐一致,
+    // 否则 execute 时 FFTW 检测到未对齐会静默回退标量路径
+    auto* FA = reinterpret_cast<std::complex<float>*>(
+        fftwf_malloc(total * sizeof(std::complex<float>)));
+    auto* FB = reinterpret_cast<std::complex<float>*>(
+        fftwf_malloc(total * sizeof(std::complex<float>)));
+    if (!FA || !FB) {
+        if (FA) fftwf_free(FA);
+        if (FB) fftwf_free(FB);
+        std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0);
+        return 0;
+    }
+    std::memset(FA, 0, total * sizeof(std::complex<float>));
+    std::memset(FB, 0, total * sizeof(std::complex<float>));
 
     for (int r = 0; r < rows; ++r) {
-        std::memcpy(FA.get() + r * Q, ampA.data() + r * cols, cols * sizeof(std::complex<float>));
-        std::memcpy(FB.get() + r * Q, ampB.data() + r * cols, cols * sizeof(std::complex<float>));
+        std::memcpy(FA + r * Q, ampA.data() + r * cols, cols * sizeof(std::complex<float>));
+        std::memcpy(FB + r * Q, ampB.data() + r * cols, cols * sizeof(std::complex<float>));
     }
-    applyHammingWindow(FA.get(), rows, cols);
-    applyHammingWindow(FB.get(), rows, cols);
+    applyHammingWindow(FA, rows, cols);
+    applyHammingWindow(FB, rows, cols);
 
-    if (!fft2D(FA.get(), P, Q, false) || !fft2D(FB.get(), P, Q, false)) {
-        std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0); return 0;
+    if (!fft2D(FA, P, Q, false) || !fft2D(FB, P, Q, false)) {
+        std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0);
+        fftwf_free(FA); fftwf_free(FB);
+        return 0;
     }
 
     for (int i = 0; i < total; ++i)
         FA[i] = FA[i] * std::conj(FB[i]);
 
-    if (!fft2D(FA.get(), P, Q, true)) {
-        std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0); return 0;
+    if (!fft2D(FA, P, Q, true)) {
+        std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0);
+        fftwf_free(FA); fftwf_free(FB);
+        return 0;
     }
 
     int outRows = 2 * rows - 1, outCols = 2 * cols - 1;
     float maxV = -1e9f;
+    // 表面中心必须存 lag(0,0) (FA[0]):
+    // 表面行 r 对应滞后 r-(rows-1), 负滞后映射到循环索引 P+lag
     for (int r = 0; r < outRows; ++r) {
-        int srcR = (r < rows) ? (P - rows + r) : (r - rows + 1);
+        int srcR = (r < rows - 1) ? (P + r - rows + 1) : (r - rows + 1);
         for (int c = 0; c < outCols; ++c) {
-            int srcC = (c < cols) ? (Q - cols + c) : (c - cols + 1);
+            int srcC = (c < cols - 1) ? (Q + c - cols + 1) : (c - cols + 1);
             float v = FA[srcR * Q + srcC].real();
             correlationSurface[r * outCols + c] = v;
             if (v > maxV) maxV = v;
         }
     }
+    fftwf_free(FA); fftwf_free(FB);
     return maxV;
 #else
+    static bool warned = false;
+    if (!warned) {
+        warned = true;
+        qWarning() << "fftAmpCorrelate: FFTW3 not available — correlation disabled, offsets fall back to orbit/init values";
+    }
     Q_UNUSED(a); Q_UNUSED(b);
     std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0);
     return 0;

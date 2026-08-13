@@ -57,11 +57,21 @@ bool SincResampler::resampleNonTopsar(PipelineContext& ctx) {
     for (int row = 0; row < mH; ++row) {
         if (mCancelled) return false;
         double aLoc = static_cast<double>(row) / mH;
-        double rowOff = ctx.aziPoly.coeffs[0] + ctx.aziPoly.coeffs[1] * aLoc;
-        int sRowBase = row + (int)rowOff;
-        double syFrac = rowOff - (int)rowOff;
 
-        int sY0 = sRowBase - readR; int sYH = readR * 2 + 1;
+        // 逐列方位偏移 (range-dependent azimuth): 条带覆盖 min/max
+        double minRo = 1e9, maxRo = -1e9;
+        QVector<double> rowOffs(mW);
+        for (int c = 0; c < mW; ++c) {
+            double rN = static_cast<double>(c) / mW;
+            rowOffs[c] = ctx.aziPoly.coeffs[0] + ctx.aziPoly.coeffs[1] * aLoc
+                       + ctx.aziPoly.coeffs[2] * rN;
+            minRo = qMin(minRo, rowOffs[c]);
+            maxRo = qMax(maxRo, rowOffs[c]);
+        }
+        int minRoI = (int)std::floor(minRo), maxRoI = (int)std::ceil(maxRo);
+
+        int sY0 = row + minRoI - readR;
+        int sYH = (maxRoI - minRoI) + readR * 2 + 1;
         if (sY0 < 0) { sYH += sY0; sY0 = 0; }
         if (sY0 + sYH > sH) sYH = sH - sY0;
         if (sYH <= 0) { rowBuf.fill({0, 0}); }
@@ -72,7 +82,8 @@ bool SincResampler::resampleNonTopsar(PipelineContext& ctx) {
                 double colOff = ctx.rangePoly.coeffs[0] + ctx.rangePoly.coeffs[1]*rN
                     + ctx.rangePoly.coeffs[2]*aLoc + ctx.rangePoly.coeffs[3]*rN*aLoc
                     + ctx.rangePoly.coeffs[4]*rN*rN + ctx.rangePoly.coeffs[5]*aLoc*aLoc;
-                double sx = c + colOff, sy = syFrac;
+                double sx = c + colOff;
+                double sy = (row + rowOffs[c]) - sY0;   // 条带内位置
                 if (sx >= 0 && sx < sW - 1)
                     rowBuf[c] = useSinc ? sincInterp2D(sWin, sW, sYH, sx, sy, sincW, beta)
                                         : bilinearInterp2D(sWin, sW, sYH, sx, sy);
@@ -110,10 +121,10 @@ static sar::ComplexSoAView extractSoaView(
     return {soaBurst.re + offset, soaBurst.im + offset, sW * h};
 }
 
-// ── 计算一行的 slave 坐标 ──
+// ── 计算一行的 slave 坐标 (方位偏移逐列: range-dependent azimuth) ──
 struct RowCoords {
     QVector<double> sx;
-    double syFrac;
+    QVector<double> sy;   // 每列方位插值位置 (条带内坐标)
     int sY0, sYH;
 };
 
@@ -122,12 +133,21 @@ static RowCoords computeRowCoords(int gRow, int mW, int mH, int sH,
 {
     RowCoords rc;
     rc.sx.resize(mW);
+    rc.sy.resize(mW);
     double aLoc = (double)gRow / mH;
-    double rowOff = aP.coeffs[0] + aP.coeffs[1] * aLoc;
-    int sRowBase = gRow + (int)rowOff;
-    rc.syFrac = rowOff - (int)rowOff;
 
-    rc.sY0 = sRowBase - readR; rc.sYH = readR * 2 + 1;
+    double minRo = 1e9, maxRo = -1e9;
+    QVector<double> rowOffs(mW);
+    for (int c = 0; c < mW; ++c) {
+        double rN = (double)c / mW;
+        rowOffs[c] = aP.coeffs[0] + aP.coeffs[1]*aLoc + aP.coeffs[2]*rN;
+        minRo = qMin(minRo, rowOffs[c]);
+        maxRo = qMax(maxRo, rowOffs[c]);
+    }
+    int minRoI = (int)std::floor(minRo), maxRoI = (int)std::ceil(maxRo);
+
+    rc.sY0 = gRow + minRoI - readR;
+    rc.sYH = (maxRoI - minRoI) + readR * 2 + 1;
     if (rc.sY0 < 0) { rc.sYH += rc.sY0; rc.sY0 = 0; }
     if (rc.sY0 + rc.sYH > sH) rc.sYH = sH - rc.sY0;
 
@@ -135,7 +155,10 @@ static RowCoords computeRowCoords(int gRow, int mW, int mH, int sH,
         double rN = (double)c / mW;
         double colOff = rP.coeffs[0] + rP.coeffs[1]*rN + rP.coeffs[2]*aLoc
                       + rP.coeffs[3]*rN*aLoc + rP.coeffs[4]*rN*rN + rP.coeffs[5]*aLoc*aLoc;
-        rc.sx[c] = c - colOff;
+        // 与 resampleNonTopsar 及粗配准测量构造一致:
+        // master(c) ≈ slave(c + rangeOff) → sx = c + colOff
+        rc.sx[c] = c + colOff;
+        rc.sy[c] = (gRow + rowOffs[c]) - rc.sY0;
     }
     return rc;
 }
@@ -186,7 +209,8 @@ static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
         sar::sincInterp1D_Horizontal_SoA(stripView, cfg.sW, actualStripH, rc.sx,
             *cfg.sincLUT, cfg.sincW, tempSoA, cfg.mW);
         syBuf.resize(cfg.mW);
-        syBuf.fill(rc.syFrac + cfg.sincW);
+        for (int c = 0; c < cfg.mW; ++c)
+            syBuf[c] = rc.sy[c];   // 条带内位置 (旧约定 syFrac+sincW == 条带内位置)
         sar::sincInterp1D_Vertical_SoA(
             tempSoA.view(0, actualStripH * cfg.mW),
             actualStripH, cfg.mW, syBuf, *cfg.sincLUT, cfg.sincW, rowBuf.data());
@@ -253,31 +277,50 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         const auto& br = ctx.burstResults[b];
         int burstRow0 = b * L;
 
+        // ── 辅影像 burst: 按 burstPairs 匹配结果取对应索引/起始行 ──
+        int slaveBurstIdx = b;
+        int sN = ctx.slaveBand->burstCount > 0 ? ctx.slaveBand->burstCount : N;
+        if (ctx.burstPairs.size() == N
+            && ctx.burstPairs[b].isValid
+            && ctx.burstPairs[b].slaveBurstIdx >= 0
+            && ctx.burstPairs[b].slaveBurstIdx < sN)
+            slaveBurstIdx = ctx.burstPairs[b].slaveBurstIdx;
+        int sL = ctx.slaveBand->linesPerBurst > 0 ? ctx.slaveBand->linesPerBurst : L;
+        int slaveRow0 = slaveBurstIdx * sL;
+        const auto& sStarts = ctx.slaveBand->burstStartLines;
+        if (sStarts.size() > slaveBurstIdx)
+            slaveRow0 = sStarts[slaveBurstIdx];
+
         // ── 获取 burst SoA 数据 ──
         qint64 readUs = 0, derampUs = 0;
         sar::ComplexSoA soaBurst;          // 拥有内存 (非缓存路径)
         sar::ComplexSoAView burstView;     // 最终使用的视图
-        int actualBurstH = L;              // 实际 burst 行数 (末 burst 可能少于 L)
+        int actualBurstH = sL;             // 实际 burst 行数 (末 burst 可能少于 sL)
 
         if (ctx.useBurstCache && ctx.slaveSdr) {
             // ── 缓存路径: 零拷贝, 数据已 deinterleaved + deramped ──
-            burstView = ctx.slaveSdr->burstSoaView(b);
+            burstView = ctx.slaveSdr->burstSoaView(slaveBurstIdx);
             if (!burstView.re || !burstView.im) {
                 ctx.errorMessage = QStringLiteral("SincResampler: null cached burst view");
                 return false;
             }
             actualBurstH = burstView.size / sW;
-            if (actualBurstH <= 0 || actualBurstH > L) {
-                qWarning() << QStringLiteral("[Step9] Invalid burst view b=%1 size=%2 sW=%3 L=%4")
-                    .arg(b).arg(burstView.size).arg(sW).arg(L);
+            if (actualBurstH <= 0 || actualBurstH > sL) {
+                qWarning() << QStringLiteral("[Step9] Invalid burst view b=%1 size=%2 sW=%3 sL=%4")
+                    .arg(slaveBurstIdx).arg(burstView.size).arg(sW).arg(sL);
                 ctx.errorMessage = QStringLiteral("SincResampler: invalid cached burst view");
                 return false;
             }
         } else {
             // ── 原有路径: AoS 读取 + AVX2 deinterleave + deramp ──
+            int readH = qMin(sL, sH - slaveRow0);
+            if (readH <= 0) {
+                ctx.errorMessage = QStringLiteral("SincResampler: slave burst out of bounds");
+                return false;
+            }
             QElapsedTimer rt; rt.start();
             QVector<std::complex<float>> fullBurst =
-                ctx.slaveReader->readBandWindow(0, 0, burstRow0, sW, L);
+                ctx.slaveReader->readBandWindow(0, 0, slaveRow0, sW, readH);
             readUs = rt.nsecsElapsed() / 1000;
             if (fullBurst.isEmpty()) {
                 ctx.errorMessage = QStringLiteral("SincResampler: readBandWindow empty");
@@ -287,7 +330,7 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             rt.start();
             soaBurst.fromAos(fullBurst.constData(), fullBurst.size());
             if (doDeramp)
-                sar::applyDeramp_SoA(soaBurst, sW, actualBurstH, burstRow0, b, prf, kt);
+                sar::applyDeramp_SoA(soaBurst, sW, actualBurstH, slaveRow0, slaveBurstIdx, prf, kt);
             derampUs = rt.nsecsElapsed() / 1000;
             fullBurst.clear();
             burstView = soaBurst.view(0, sW * actualBurstH);

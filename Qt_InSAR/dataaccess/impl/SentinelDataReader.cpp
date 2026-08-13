@@ -238,7 +238,8 @@ static std::vector<unsigned char> readZipEntry(const QString& zipPath,
 
 // ── 最小 TIFF IFD 解析: 提取 StripOffsets / StripByteCounts 首值 ──
 static bool parseTiffStripOffset(const uint8_t* data, size_t dataSize,
-    uint32_t* outFirstStripOff, uint32_t* outStripByteCount)
+    uint32_t* outFirstStripOff, uint32_t* outStripByteCount,
+    uint32_t* outNumStrips, uint32_t* outRowsPerStrip, uint32_t* outWidth)
 {
     if (dataSize < 8) return false;
 
@@ -280,18 +281,23 @@ static bool parseTiffStripOffset(const uint8_t* data, size_t dataSize,
         return 0;
     };
 
-    uint32_t stripOff = 0, stripBC = 0;
+    uint32_t stripOff = 0, stripBC = 0, numStrips = 0, rowsPerStrip = 0, imgW = 0;
     for (int i = 0; i < numTags; ++i, tp += 12) {
         if (tp + 12 > data + dataSize) return false;
         uint16_t tag = r16(tp);
         if (tag == 273) stripOff = tagVal(tp, nullptr);
-        else if (tag == 279) stripBC = tagVal(tp, nullptr);
-        if (stripOff && stripBC) break;
+        else if (tag == 279) { stripBC = tagVal(tp, &numStrips); }
+        else if (tag == 278) rowsPerStrip = tagVal(tp, nullptr);
+        else if (tag == 256) imgW = tagVal(tp, nullptr);
+        if (stripOff && stripBC && rowsPerStrip && imgW) break;
     }
     if (!stripOff || !stripBC) return false;
 
     *outFirstStripOff = stripOff;
     *outStripByteCount = stripBC;
+    if (outNumStrips) *outNumStrips = numStrips;
+    if (outRowsPerStrip) *outRowsPerStrip = rowsPerStrip;
+    if (outWidth) *outWidth = imgW;
     return true;
 }
 
@@ -314,13 +320,18 @@ bool SentinelDataReader::open(const QString& zipPath, const QString& entryName,
     }
 
     // ═══ Step 2: 解析 TIFF IFD → 获取 strip 偏移 ═══
-    uint32_t firstStripOff = 0, stripByteCount = 0;
+    uint32_t firstStripOff = 0, stripByteCount = 0, numStrips = 0, rowsPerStrip = 0, tiffW = 0;
     if (!parseTiffStripOffset(mRawTiff.data(), mRawTiff.size(),
-            &firstStripOff, &stripByteCount)) {
+            &firstStripOff, &stripByteCount, &numStrips, &rowsPerStrip, &tiffW)) {
         qWarning() << "[SDR] TIFF IFD parse failed";
         close();
         return false;
     }
+    qDebug() << "[SDR] TIFF layout: strips=" << numStrips
+             << "rowsPerStrip=" << rowsPerStrip
+             << "stripByteCount=" << stripByteCount
+             << "tiffWidth=" << tiffW
+             << "expectedRowBytes=" << (tiffW * 4);
 
     // ═══ Step 3: /vsimem/ → GDAL 读宽/高/地理参考 ═══
     mMemPath = QString("/vsimem/_sdr_%1.tif").arg(

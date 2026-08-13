@@ -55,15 +55,24 @@ void RegistrationServiceImpl::execute() {
 
     // 从轨道向量计算基线
     SarSensorInfo mSi = master->sensorInfo();
-    auto baseline = sar::computeBaseline(
-        master->orbitStateVectors(),
-        slave->orbitStateVectors(),
-        mSi.acquisitionStart,
-        mSi.nearRange,
-        mSi.farRange);
+    sar::BaselineResult baseline;
+    if (mParams.estimateBaseline) {
+        baseline = sar::computeBaseline(
+            master->orbitStateVectors(),
+            slave->orbitStateVectors(),
+            mSi.acquisitionStart,
+            mSi.nearRange,
+            mSi.farRange);
+        if (baseline.valid) {
+            mParams.baselinePerp = baseline.perpBaseline;
+            mParams.baselinePar  = baseline.parBaseline;
+        }
+    }
     if (baseline.valid) {
-        mParams.baselinePerp = baseline.perpBaseline;
-        mParams.baselinePar  = baseline.parBaseline;
+        qDebug() << QStringLiteral("[Reg] pair: master=%1 slave=%2 baselinePerp=%3m baselinePar=%4m")
+            .arg(mParams.masterDisplayName, mParams.slaveDisplayName)
+            .arg(baseline.perpBaseline, 0, 'f', 1)
+            .arg(baseline.parBaseline, 0, 'f', 1);
     }
 
     const auto& mBands = master->bands();

@@ -22,9 +22,9 @@ struct RangePolynomial {
     double rmse = 0.0;
 };
 
-// ── 方位向多项式: Δa = b0 + b1·a (低阶, TOPS对高阶敏感) ──
+// ── 方位向多项式: Δa = b0 + b1·a + b2·r (range-dependent azimuth) ──
 struct AzimuthPolynomial {
-    double coeffs[2] = {};
+    double coeffs[3] = {};
     double rmse = 0.0;
 };
 

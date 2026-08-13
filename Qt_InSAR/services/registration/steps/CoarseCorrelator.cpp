@@ -29,6 +29,7 @@ static void profileLog(const QString& msg) {
 
 struct CoarseWorkItem {
     int row, col;
+    int slaveRow = 0;   // 经 burstPairs 匹配映射后的辅影像行
     double initRangeOff, initAziOff;
 };
 
@@ -37,6 +38,7 @@ struct CoarseConfig {
     int sW, sH, winSize;
     bool useNcc;
     int searchHalf;
+    bool isTopsar = false;   // TOPSAR: 方位偏移取轨道初值, 相关只测 range
     SentinelDataReader* masterSdr = nullptr;
     SentinelDataReader* slaveSdr  = nullptr;
     bool useBurstCache = false;
@@ -92,7 +94,7 @@ static QVector<OffsetPoint> processCoarseBatch(
             if (cfg.useNcc) {
                 int slaveWinSz = cfg.winSize + 2 * cfg.searchHalf;
                 int sX0 = w.col + (int)w.initRangeOff - half - cfg.searchHalf;
-                int sY0 = w.row + (int)w.initAziOff - half - cfg.searchHalf;
+                int sY0 = w.slaveRow + (int)w.initAziOff - half - cfg.searchHalf;
                 if (sX0 < 0 || sY0 < 0 || sX0 + slaveWinSz > cfg.sW || sY0 + slaveWinSz > cfg.sH) continue;
                 t.start();
                 auto sWin = sR.readBandWindow(0, sX0, sY0, slaveWinSz, slaveWinSz);
@@ -103,11 +105,13 @@ static QVector<OffsetPoint> processCoarseBatch(
                 nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
                              slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
                 qint64 fftTime = t.nsecsElapsed() / 1000;
-                pt.rangeOff += subDx; pt.aziOff += subDy; pt.correlation = 1.0;
+                pt.rangeOff += subDx;
+                if (!cfg.isTopsar) pt.aziOff += subDy;
+                pt.correlation = 1.0;
                 prof.add(readTime, fftTime, 0);
             } else {
                 int sX0c = w.col + (int)w.initRangeOff - half;
-                int sY0c = w.row + (int)w.initAziOff - half;
+                int sY0c = w.slaveRow + (int)w.initAziOff - half;
                 if (sX0c < 0 || sY0c < 0 || sX0c + cfg.winSize > cfg.sW || sY0c + cfg.winSize > cfg.sH) continue;
                 t.start();
                 auto sWinC = sR.readBandWindow(0, sX0c, sY0c, cfg.winSize, cfg.winSize);
@@ -123,7 +127,8 @@ static QVector<OffsetPoint> processCoarseBatch(
                 double subDx, subDy;
                 findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
                 qint64 peakTime = t.nsecsElapsed() / 1000;
-                pt.rangeOff += subDx; pt.aziOff += subDy;
+                pt.rangeOff += subDx;
+                if (!cfg.isTopsar) pt.aziOff += subDy;
                 pt.correlation = maxV;
                 prof.add(readTime, fftTime, peakTime);
             }
@@ -149,7 +154,7 @@ static QVector<OffsetPoint> processCoarseBatch(
             if (cfg.useNcc) {
                 int slaveWinSz = cfg.winSize + 2 * cfg.searchHalf;
                 int sX0 = w.col + (int)w.initRangeOff - half - cfg.searchHalf;
-                int sY0 = w.row + (int)w.initAziOff - half - cfg.searchHalf;
+                int sY0 = w.slaveRow + (int)w.initAziOff - half - cfg.searchHalf;
                 if (sX0 < 0 || sY0 < 0 || sX0 + slaveWinSz > cfg.sW || sY0 + slaveWinSz > cfg.sH) continue;
                 QVector<std::complex<float>> sWin(slaveWinSz * slaveWinSz);
                 t.start();
@@ -160,11 +165,13 @@ static QVector<OffsetPoint> processCoarseBatch(
                 nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
                              slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
                 qint64 fftTime = t.nsecsElapsed() / 1000;
-                pt.rangeOff += subDx; pt.aziOff += subDy; pt.correlation = 1.0;
+                pt.rangeOff += subDx;
+                if (!cfg.isTopsar) pt.aziOff += subDy;
+                pt.correlation = 1.0;
                 prof.add(readTime, fftTime, 0);
             } else {
                 int sX0c = w.col + (int)w.initRangeOff - half;
-                int sY0c = w.row + (int)w.initAziOff - half;
+                int sY0c = w.slaveRow + (int)w.initAziOff - half;
                 if (sX0c < 0 || sY0c < 0 || sX0c + cfg.winSize > cfg.sW || sY0c + cfg.winSize > cfg.sH) continue;
                 QVector<std::complex<float>> sWinC(cfg.winSize * cfg.winSize);
                 t.start();
@@ -180,7 +187,8 @@ static QVector<OffsetPoint> processCoarseBatch(
                 double subDx, subDy;
                 findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
                 qint64 peakTime = t.nsecsElapsed() / 1000;
-                pt.rangeOff += subDx; pt.aziOff += subDy;
+                pt.rangeOff += subDx;
+                if (!cfg.isTopsar) pt.aziOff += subDy;
                 pt.correlation = maxV;
                 prof.add(readTime, fftTime, peakTime);
             }
@@ -218,7 +226,10 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
         for (int k = 0; k < nPerBurst; ++k) {
             CoarseWorkItem wi;
             wi.row = startRow + (k + 1) * L / (nPerBurst + 1);
-            wi.col = static_cast<int>(w * (0.1 + 0.8 * k / (nPerBurst - 1.0)));
+            double colFrac = (nPerBurst > 1)
+                ? (0.1 + 0.8 * k / (nPerBurst - 1.0)) : 0.5;
+            wi.col = static_cast<int>(w * colFrac);
+            wi.slaveRow = ctx.slaveRowFor(wi.row);
             for (const auto& io : ctx.initialOffsets)
                 if (io.burstIndex == b) { wi.initRangeOff = io.rangeOff; wi.initAziOff = io.aziOff; break; }
             items.append(wi);
@@ -245,6 +256,7 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     cfg.winSize = winSize;
     cfg.useNcc = useNcc;
     cfg.searchHalf = searchHalf;
+    cfg.isTopsar = ctx.isTopsar;
     cfg.masterSdr = ctx.masterSdr;
     cfg.slaveSdr  = ctx.slaveSdr;
     cfg.useBurstCache = ctx.useBurstCache;

@@ -103,18 +103,6 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
     mSincBeta->setSingleStep(0.5);
     mSincBeta->setValue(2.5);
     form3->addRow(tr("Kaiser \xce\xb2:"), mSincBeta);
-    mOutResRange = new QDoubleSpinBox;
-    mOutResRange->setDecimals(4);
-    mOutResRange->setRange(0, 9999);
-    mOutResRange->setValue(0);
-    mOutResRange->setSpecialValueText(tr("保持原始"));
-    form3->addRow(tr("距离向分辨率:"), mOutResRange);
-    mOutResAzimuth = new QDoubleSpinBox;
-    mOutResAzimuth->setDecimals(4);
-    mOutResAzimuth->setRange(0, 9999);
-    mOutResAzimuth->setValue(0);
-    mOutResAzimuth->setSpecialValueText(tr("保持原始"));
-    form3->addRow(tr("方位向分辨率:"), mOutResAzimuth);
     tabs->addTab(tab3, tr("重采样"));
 
     // ===== Tab 4: 输出 =====
@@ -208,7 +196,7 @@ QWidget* RegistrationDialog::createRoute2Page()
     mR2ControlPoints->setValue(64);
     f->addRow(tr("控制点数(每burst):"), mR2ControlPoints);
 
-    f->addRow(new QLabel(tr("精配准: FFTW3复数域相位相关")));
+    f->addRow(new QLabel(tr("精配准: FFT幅度域相关 + 亚像素峰值")));
 
     mR2FineWindow = new QSpinBox;
     mR2FineWindow->setRange(64, 512);
@@ -228,16 +216,6 @@ QWidget* RegistrationDialog::createRoute2Page()
     mR2PolyDegree->addItem("3", 3);
     mR2PolyDegree->setCurrentIndex(1);
     f->addRow(tr("多项式阶数:"), mR2PolyDegree);
-
-    mR2EnableFineFFT = new QCheckBox(tr("启用FFTW3精配准"));
-    mR2EnableFineFFT->setChecked(true);
-    f->addRow(mR2EnableFineFFT);
-
-    mR2FineFFTWindow = new QSpinBox;
-    mR2FineFFTWindow->setRange(64, 512);
-    mR2FineFFTWindow->setValue(256);
-    mR2FineFFTWindow->setPrefix(tr("窗口: "));
-    f->addRow(tr("FFTW3窗口:"), mR2FineFFTWindow);
 
     return page;
 }
@@ -259,7 +237,7 @@ QWidget* RegistrationDialog::createRoute3Page()
     mR3ControlPoints->setValue(64);
     f->addRow(tr("控制点数(每burst):"), mR3ControlPoints);
 
-    f->addRow(new QLabel(tr("精配准: FFTW3复数域相位相关 + RANSAC多项式拟合")));
+    f->addRow(new QLabel(tr("精配准: FFT幅度域相关 + RANSAC多项式拟合")));
 
     mR3FineWindow = new QSpinBox;
     mR3FineWindow->setRange(64, 512);
@@ -279,16 +257,6 @@ QWidget* RegistrationDialog::createRoute3Page()
     mR3PolyDegree->addItem("3", 3);
     mR3PolyDegree->setCurrentIndex(1);
     f->addRow(tr("多项式阶数:"), mR3PolyDegree);
-
-    mR3EnableFineFFT = new QCheckBox(tr("启用FFTW3精配准"));
-    mR3EnableFineFFT->setChecked(true);
-    f->addRow(mR3EnableFineFFT);
-
-    mR3FineFFTWindow = new QSpinBox;
-    mR3FineFFTWindow->setRange(64, 512);
-    mR3FineFFTWindow->setValue(256);
-    mR3FineFFTWindow->setPrefix(tr("窗口: "));
-    f->addRow(tr("FFTW3窗口:"), mR3FineFFTWindow);
 
     QLabel* note = new QLabel(tr("推荐参数: 窗口256×256, 点数64/burst, 多项式2阶。接近SNAP/ISCE标准流程。"));
     note->setWordWrap(true);
@@ -342,30 +310,24 @@ void RegistrationDialog::setParams(const RegistrationParams& p)
     mR2NccWindow->setValue(p.coarseWindowSize);
     mR2SearchWindow->setValue(p.coarseSearchWindow);
     mR2ControlPoints->setValue(p.offsetPerBurst);
-    mR2FineWindow->setValue(p.fineFFTWindow);
+    mR2FineWindow->setValue(p.fineWindowSize);
     mR2CorrThreshold->setValue(p.correlationThreshold);
     int idx = mR2PolyDegree->findData(p.polynomialDegree);
     if (idx >= 0) mR2PolyDegree->setCurrentIndex(idx);
-    mR2EnableFineFFT->setChecked(p.enableFineFFT);
-    mR2FineFFTWindow->setValue(p.fineFFTWindow);
 
     // Route3
     mR3CoarseFFT->setValue(p.coarseWindowSize);
     mR3ControlPoints->setValue(p.offsetPerBurst);
-    mR3FineWindow->setValue(p.fineFFTWindow);
+    mR3FineWindow->setValue(p.fineWindowSize);
     mR3CorrThreshold->setValue(p.correlationThreshold);
     idx = mR3PolyDegree->findData(p.polynomialDegree);
     if (idx >= 0) mR3PolyDegree->setCurrentIndex(idx);
-    mR3EnableFineFFT->setChecked(p.enableFineFFT);
-    mR3FineFFTWindow->setValue(p.fineFFTWindow);
 
     // 重采样
     idx = mResamplingMethod->findData(p.resamplingMethod);
     if (idx >= 0) mResamplingMethod->setCurrentIndex(idx);
     mSincWindow->setValue(p.sincWindowSize);
     mSincBeta->setValue(p.sincBeta);
-    mOutResRange->setValue(p.outputResolutionRange);
-    mOutResAzimuth->setValue(p.outputResolutionAzimuth);
 
     // 输出
     mOutputDir->setText(p.outputDir);
@@ -393,17 +355,14 @@ RegistrationParams RegistrationDialog::params() const
         p.coarseMethod = "Orbit";
         p.fineMethod = "SubPixel";
         p.enableEsd = false;
-        p.enableFineFFT = false;
         break;
     case RegRoute::Route2_NCC_FFTW:
         p.coarseWindowSize = mR2NccWindow->value();
         p.coarseSearchWindow = mR2SearchWindow->value();
         p.offsetPerBurst = mR2ControlPoints->value();
-        p.fineFFTWindow = mR2FineWindow->value();
+        p.fineWindowSize = mR2FineWindow->value();
         p.correlationThreshold = mR2CorrThreshold->value();
         p.polynomialDegree = mR2PolyDegree->currentData().toInt();
-        p.enableFineFFT = mR2EnableFineFFT->isChecked();
-        p.fineFFTWindow = mR2FineFFTWindow->value();
         p.coarseMethod = "CrossCorrelation";
         p.fineMethod = "FFT";
         p.enableEsd = mEnableEsd->isChecked();
@@ -411,11 +370,9 @@ RegistrationParams RegistrationDialog::params() const
     case RegRoute::Route3_FFT_FFTW:
         p.coarseWindowSize = mR3CoarseFFT->value();
         p.offsetPerBurst = mR3ControlPoints->value();
-        p.fineFFTWindow = mR3FineWindow->value();
+        p.fineWindowSize = mR3FineWindow->value();
         p.correlationThreshold = mR3CorrThreshold->value();
         p.polynomialDegree = mR3PolyDegree->currentData().toInt();
-        p.enableFineFFT = mR3EnableFineFFT->isChecked();
-        p.fineFFTWindow = mR3FineFFTWindow->value();
         p.coarseMethod = "FFT";
         p.fineMethod = "FFT";
         p.enableEsd = mEnableEsd->isChecked();
@@ -426,8 +383,6 @@ RegistrationParams RegistrationDialog::params() const
     p.resamplingMethod = mResamplingMethod->currentData().toString();
     p.sincWindowSize = mSincWindow->value();
     p.sincBeta = mSincBeta->value();
-    p.outputResolutionRange = mOutResRange->value();
-    p.outputResolutionAzimuth = mOutResAzimuth->value();
 
     // 输出
     p.outputDir = mOutputDir->text();

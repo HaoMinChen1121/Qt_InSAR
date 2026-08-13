@@ -383,16 +383,6 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mEsdCheck->setToolTip(QStringLiteral("增强频谱分集 (TOPSAR)"));
     pnlRoute->addSmallWidget(mEsdCheck);
 
-    mFineFftCheck = new QCheckBox(QStringLiteral("FFTW3"), this);
-    mFineFftCheck->setChecked(true);
-    pnlRoute->addSmallWidget(mFineFftCheck);
-
-    mFineFftWinSpin = new QSpinBox(this);
-    mFineFftWinSpin->setRange(64, 512);
-    mFineFftWinSpin->setValue(256);
-    mFineFftWinSpin->setPrefix(QStringLiteral("FFT窗: "));
-    pnlRoute->addSmallWidget(mFineFftWinSpin);
-
     // 路线切换联动
     connect(mRouteCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int /*idx*/) {
@@ -401,12 +391,10 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
         bool isR2 = (r == RegRoute::Route2_NCC_FFTW);
         mFineWinSpin->setEnabled(!isR1);
         mEsdCheck->setEnabled(!isR1);
-        mFineFftCheck->setEnabled(!isR1);
-        mFineFftWinSpin->setEnabled(!isR1);
         mSearchWinSpin->setVisible(isR2);
 
         // 更新默认窗口大小
-        if (isR1)      { mCoarseWinSpin->setValue(64);  mFineWinSpin->setValue(0); }
+        if (isR1)      { mCoarseWinSpin->setValue(64);  mFineWinSpin->setValue(128); }
         else if (isR2) { mCoarseWinSpin->setValue(128); mFineWinSpin->setValue(256); }
         else           { mCoarseWinSpin->setValue(256); mFineWinSpin->setValue(256); }
 
@@ -489,26 +477,21 @@ RegistrationParams MainWindow::collectRegParams() const
         p.coarseMethod = "Orbit";
         p.fineMethod = "SubPixel";
         p.enableEsd = false;
-        p.enableFineFFT = false;
         p.offsetPerBurst = 32;
         break;
     case RegRoute::Route2_NCC_FFTW:
         p.coarseMethod = "CrossCorrelation";
         p.fineMethod = "FFT";
         if (mSearchWinSpin) p.coarseSearchWindow = mSearchWinSpin->value();
-        if (mFineWinSpin) p.fineFFTWindow = mFineWinSpin->value();
+        if (mFineWinSpin) p.fineWindowSize = mFineWinSpin->value();
         if (mEsdCheck) p.enableEsd = mEsdCheck->isChecked();
-        if (mFineFftCheck) p.enableFineFFT = mFineFftCheck->isChecked();
-        if (mFineFftWinSpin) p.fineFFTWindow = mFineFftWinSpin->value();
         p.offsetPerBurst = 8;
         break;
     case RegRoute::Route3_FFT_FFTW:
         p.coarseMethod = "FFT";
         p.fineMethod = "FFT";
-        if (mFineWinSpin) p.fineFFTWindow = mFineWinSpin->value();
+        if (mFineWinSpin) p.fineWindowSize = mFineWinSpin->value();
         if (mEsdCheck) p.enableEsd = mEsdCheck->isChecked();
-        if (mFineFftCheck) p.enableFineFFT = mFineFftCheck->isChecked();
-        if (mFineFftWinSpin) p.fineFFTWindow = mFineFftWinSpin->value();
         p.offsetPerBurst = 8;
         break;
     }
@@ -529,15 +512,11 @@ void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
     if (mCoarseWinSpin)
         mCoarseWinSpin->setValue(p.coarseWindowSize);
     if (mFineWinSpin)
-        mFineWinSpin->setValue(p.fineFFTWindow);
+        mFineWinSpin->setValue(p.fineWindowSize);
     if (mSearchWinSpin)
         mSearchWinSpin->setValue(p.coarseSearchWindow);
     if (mEsdCheck)
         mEsdCheck->setChecked(p.enableEsd);
-    if (mFineFftCheck)
-        mFineFftCheck->setChecked(p.enableFineFFT);
-    if (mFineFftWinSpin)
-        mFineFftWinSpin->setValue(p.fineFFTWindow);
 
     // 保留产品来源的轨道/多普勒/路径，不被对话框覆盖 (波长/间距/PRF由产品XML提供)
     QList<OrbitStateVector> mov = mRegParams.masterOrbitVectors;

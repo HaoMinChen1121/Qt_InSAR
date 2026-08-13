@@ -30,6 +30,27 @@ struct PipelineContext {
     QVector<BurstMatchPair> burstPairs;
     bool isTopsar = false;
 
+    // 主影像行 → 辅影像行: 按 burstPairs 匹配结果 + 辅 burst 起始行映射
+    // (辅影像 burst 数与主影像不同/时序错位时, 行号不能直接通用)
+    int slaveRowFor(int masterRow) const {
+        if (!slaveBand) return masterRow;
+        int mL = data.linesPerBurst > 0 ? data.linesPerBurst : 1;
+        int b = qMax(0, masterRow / mL);
+        int local = masterRow - b * mL;
+        int sIdx = b;
+        if (burstPairs.size() > b && burstPairs[b].isValid
+            && burstPairs[b].slaveBurstIdx >= 0) {
+            int sc = slaveBand->burstCount;
+            if (sc <= 0 || burstPairs[b].slaveBurstIdx < sc)
+                sIdx = burstPairs[b].slaveBurstIdx;
+        }
+        int sL = slaveBand->linesPerBurst > 0 ? slaveBand->linesPerBurst : mL;
+        int sRow0 = (slaveBand->burstStartLines.size() > sIdx)
+            ? slaveBand->burstStartLines[sIdx] : sIdx * sL;
+        if (local >= sL) local = sL - 1;
+        return sRow0 + local;
+    }
+
     // ── Step 3: 初始偏移 ──
     QVector<BurstOffset> initialOffsets;
 

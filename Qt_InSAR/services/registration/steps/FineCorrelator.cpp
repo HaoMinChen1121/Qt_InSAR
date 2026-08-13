@@ -27,6 +27,7 @@ static void fineProfileLog(const QString& msg) {
 
 struct FineWorkItem {
     int row, col, origIdx;
+    int slaveRow = 0;   // 经 burstPairs 匹配映射后的辅影像行
     double rangeOff, aziOff;
 };
 
@@ -39,6 +40,7 @@ struct FineProfile {
 struct FineConfig {
     QString masterPath, slavePath;
     int sW, sH, winSize;
+    bool isTopsar = false;   // TOPSAR: 方位偏移保持粗配准值, 精相关只测 range
     SentinelDataReader* masterSdr = nullptr;
     SentinelDataReader* slaveSdr  = nullptr;
     bool useBurstCache = false;
@@ -80,7 +82,7 @@ static QVector<OffsetPoint> processFineBatch(
             if (mWin.size() < cfg.winSize * cfg.winSize) continue;
 
             int sX0 = w.col + (int)w.rangeOff - half;
-            int sY0 = w.row + (int)w.aziOff - half;
+            int sY0 = w.slaveRow + (int)w.aziOff - half;
             if (sX0 < 0) sX0 = 0; if (sY0 < 0) sY0 = 0;
             if (sX0 + cfg.winSize > cfg.sW) sX0 = cfg.sW - cfg.winSize;
             if (sY0 + cfg.winSize > cfg.sH) sY0 = cfg.sH - cfg.winSize;
@@ -101,10 +103,11 @@ static QVector<OffsetPoint> processFineBatch(
             findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
             qint64 peakTime = t.nsecsElapsed() / 1000;
 
-            if (std::abs(subDx) > 5.0 || std::abs(subDy) > 3.0) {
+            if (std::abs(subDx) > 5.0 || (!cfg.isTopsar && std::abs(subDy) > 3.0)) {
                 pt.correlation = -1.0;
             } else {
-                pt.rangeOff += subDx; pt.aziOff += subDy;
+                pt.rangeOff += subDx;
+                if (!cfg.isTopsar) pt.aziOff += subDy;
                 pt.correlation = maxV;
             }
             prof.add(readTime, fftTime, peakTime);
@@ -126,7 +129,7 @@ static QVector<OffsetPoint> processFineBatch(
             qint64 readTime = t.nsecsElapsed() / 1000;
 
             int sX0 = w.col + (int)w.rangeOff - half;
-            int sY0 = w.row + (int)w.aziOff - half;
+            int sY0 = w.slaveRow + (int)w.aziOff - half;
             if (sX0 < 0) sX0 = 0; if (sY0 < 0) sY0 = 0;
             if (sX0 + cfg.winSize > cfg.sW) sX0 = cfg.sW - cfg.winSize;
             if (sY0 + cfg.winSize > cfg.sH) sY0 = cfg.sH - cfg.winSize;
@@ -147,10 +150,11 @@ static QVector<OffsetPoint> processFineBatch(
             findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
             qint64 peakTime = t.nsecsElapsed() / 1000;
 
-            if (std::abs(subDx) > 5.0 || std::abs(subDy) > 3.0) {
+            if (std::abs(subDx) > 5.0 || (!cfg.isTopsar && std::abs(subDy) > 3.0)) {
                 pt.correlation = -1.0;
             } else {
-                pt.rangeOff += subDx; pt.aziOff += subDy;
+                pt.rangeOff += subDx;
+                if (!cfg.isTopsar) pt.aziOff += subDy;
                 pt.correlation = maxV;
             }
             prof.add(readTime, fftTime, peakTime);
@@ -182,7 +186,7 @@ bool FineCorrelator::execute(PipelineContext& ctx) {
     QVector<FineWorkItem> items; items.reserve(N);
     for (int i = 0; i < N; ++i) {
         const auto& op = ctx.offsetPoints[i];
-        items.append({op.row, op.col, i, op.rangeOff, op.aziOff});
+        items.append({op.row, op.col, i, ctx.slaveRowFor(op.row), op.rangeOff, op.aziOff});
     }
 
     int nThreads = qBound(1, QThread::idealThreadCount(), 12);
@@ -200,6 +204,7 @@ bool FineCorrelator::execute(PipelineContext& ctx) {
     cfg.masterPath = ctx.masterLocalPath.isEmpty() ? ctx.masterBand->rasterPath : ctx.masterLocalPath;
     cfg.slavePath  = ctx.slaveLocalPath.isEmpty()  ? ctx.slaveBand->rasterPath  : ctx.slaveLocalPath;
     cfg.sW = sW; cfg.sH = sH; cfg.winSize = winSize;
+    cfg.isTopsar = ctx.isTopsar;
     cfg.masterSdr = ctx.masterSdr;
     cfg.slaveSdr  = ctx.slaveSdr;
     cfg.useBurstCache = ctx.useBurstCache;

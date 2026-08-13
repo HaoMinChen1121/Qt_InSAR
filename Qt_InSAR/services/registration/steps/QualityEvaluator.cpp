@@ -26,12 +26,13 @@ bool QualityEvaluator::execute(PipelineContext& ctx) {
             const auto& aP = ctx.burstResults[bIdx].aziPoly;
             predR = rP.coeffs[0] + rP.coeffs[1]*rn + rP.coeffs[2]*an
                   + rP.coeffs[3]*rn*an + rP.coeffs[4]*rn*rn + rP.coeffs[5]*an*an;
-            predA = aP.coeffs[0] + aP.coeffs[1]*an;
+            predA = aP.coeffs[0] + aP.coeffs[1]*an + aP.coeffs[2]*rn;
         } else {
             predR = ctx.rangePoly.coeffs[0] + ctx.rangePoly.coeffs[1]*rn
                   + ctx.rangePoly.coeffs[2]*an + ctx.rangePoly.coeffs[3]*rn*an
                   + ctx.rangePoly.coeffs[4]*rn*rn + ctx.rangePoly.coeffs[5]*an*an;
-            predA = ctx.aziPoly.coeffs[0] + ctx.aziPoly.coeffs[1]*an;
+            predA = ctx.aziPoly.coeffs[0] + ctx.aziPoly.coeffs[1]*an
+                  + ctx.aziPoly.coeffs[2]*rn;
         }
         double resR = pt.rangeOff - predR, resA = pt.aziOff - predA;
         sumSq += resR*resR + resA*resA; ++cnt;
@@ -73,12 +74,13 @@ bool QualityEvaluator::execute(PipelineContext& ctx) {
                 const auto& aP = ctx.burstResults[b].aziPoly;
                 pR = rP.coeffs[0] + rP.coeffs[1]*rn + rP.coeffs[2]*an
                    + rP.coeffs[3]*rn*an + rP.coeffs[4]*rn*rn + rP.coeffs[5]*an*an;
-                pA = aP.coeffs[0] + aP.coeffs[1]*an;
+                pA = aP.coeffs[0] + aP.coeffs[1]*an + aP.coeffs[2]*rn;
             } else {
                 pR = ctx.rangePoly.coeffs[0] + ctx.rangePoly.coeffs[1]*rn
                    + ctx.rangePoly.coeffs[2]*an + ctx.rangePoly.coeffs[3]*rn*an
                    + ctx.rangePoly.coeffs[4]*rn*rn + ctx.rangePoly.coeffs[5]*an*an;
-                pA = ctx.aziPoly.coeffs[0] + ctx.aziPoly.coeffs[1]*an;
+                pA = ctx.aziPoly.coeffs[0] + ctx.aziPoly.coeffs[1]*an
+                   + ctx.aziPoly.coeffs[2]*rn;
             }
             ss += (pt.rangeOff-pR)*(pt.rangeOff-pR) + (pt.aziOff-pA)*(pt.aziOff-pA); ++nc;
         }

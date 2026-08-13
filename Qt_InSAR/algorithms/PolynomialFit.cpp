@@ -28,31 +28,34 @@ static bool solveLinear(double* A, double* b, int n) {
     return true;
 }
 
-// 单次拟合 (6系数Range + 2系数Azi)
-static bool fitOnce(const QVector<OffsetPoint>& pts, int mW, int mH,
+// 单次拟合 (6系数Range + aziOrder系数Azi)
+static bool fitOnce(const QVector<OffsetPoint>& pts, int mW, int mH, int aziOrder,
                     RangePolynomial& rP, AzimuthPolynomial& aP) {
     int N = pts.size();
     if (N < 6) return false;
-    double rATA[36] = {}, rATb[6] = {}, aATA[4] = {}, aATb[2] = {};
+    if (aziOrder < 1) aziOrder = 1;
+    if (aziOrder > 3) aziOrder = 3;
+    double rATA[36] = {}, rATb[6] = {};
+    double aATA[9] = {}, aATb[3] = {};
     for (const auto& p : pts) {
         double r = (double)p.col / mW, a = (double)p.row / mH;
         double rB[6] = {1, r, a, r*a, r*r, a*a};
-        double aB[2] = {1, a};
+        double aB[3] = {1, a, r};
         for (int i = 0; i < 6; ++i) {
             for (int j = 0; j < 6; ++j) rATA[i*6+j] += rB[i]*rB[j];
             rATb[i] += rB[i] * p.rangeOff;
         }
-        for (int i = 0; i < 2; ++i) {
-            for (int j = 0; j < 2; ++j) aATA[i*2+j] += aB[i]*aB[j];
+        for (int i = 0; i < aziOrder; ++i) {
+            for (int j = 0; j < aziOrder; ++j) aATA[i*aziOrder+j] += aB[i]*aB[j];
             aATb[i] += aB[i] * p.aziOff;
         }
     }
-    double rC[36], rB_[6], aC[4], aB_[2];
+    double rC[36], rB_[6], aC[9], aB_[3];
     std::copy(rATA, rATA+36, rC); std::copy(rATb, rATb+6, rB_);
-    std::copy(aATA, aATA+4, aC); std::copy(aATb, aATb+2, aB_);
-    if (!solveLinear(rC, rB_, 6) || !solveLinear(aC, aB_, 2)) return false;
+    std::copy(aATA, aATA+9, aC); std::copy(aATb, aATb+3, aB_);
+    if (!solveLinear(rC, rB_, 6) || !solveLinear(aC, aB_, aziOrder)) return false;
     for (int i = 0; i < 6; ++i) rP.coeffs[i] = rB_[i];
-    for (int i = 0; i < 2; ++i) aP.coeffs[i] = aB_[i];
+    for (int i = 0; i < 3; ++i) aP.coeffs[i] = (i < aziOrder) ? aB_[i] : 0.0;
     return true;
 }
 
@@ -60,7 +63,7 @@ static double residual(const OffsetPoint& p, const RangePolynomial& rP,
                        const AzimuthPolynomial& aP, int mW, int mH) {
     double r = (double)p.col / mW, a = (double)p.row / mH;
     double pR = rP.coeffs[0]+rP.coeffs[1]*r+rP.coeffs[2]*a+rP.coeffs[3]*r*a+rP.coeffs[4]*r*r+rP.coeffs[5]*a*a;
-    double pA = aP.coeffs[0]+aP.coeffs[1]*a;
+    double pA = aP.coeffs[0]+aP.coeffs[1]*a+aP.coeffs[2]*r;
     double dr = p.rangeOff - pR, da = p.aziOff - pA;
     return std::sqrt(dr*dr + da*da);
 }
@@ -68,6 +71,7 @@ static double residual(const OffsetPoint& p, const RangePolynomial& rP,
 bool fitJointPolynomial(const QVector<OffsetPoint>& points,
                         int masterW, int masterH,
                         int /*burstStartRow*/, int /*burstHeight*/,
+                        int aziOrder,
                         RangePolynomial& rPoly, AzimuthPolynomial& aPoly)
 {
     int N = points.size();
@@ -90,7 +94,7 @@ bool fitJointPolynomial(const QVector<OffsetPoint>& points,
         for (int i = 0; i < 6; ++i) sample[i] = points[idx[i]];
 
         RangePolynomial rP; AzimuthPolynomial aP;
-        if (!fitOnce(sample, masterW, masterH, rP, aP)) continue;
+        if (!fitOnce(sample, masterW, masterH, aziOrder, rP, aP)) continue;
 
         // 计数内点
         QVector<bool> inliers(N, false);
@@ -117,7 +121,7 @@ bool fitJointPolynomial(const QVector<OffsetPoint>& points,
         inlierPts = points;
     }
 
-    if (!fitOnce(inlierPts, masterW, masterH, rPoly, aPoly))
+    if (!fitOnce(inlierPts, masterW, masterH, aziOrder, rPoly, aPoly))
         return false;
 
     // RMSE — 分别计算 range 和 azimuth
@@ -125,7 +129,7 @@ bool fitJointPolynomial(const QVector<OffsetPoint>& points,
     for (const auto& p : inlierPts) {
         double rn = (double)p.col / masterW, an = (double)p.row / masterH;
         double pR = rPoly.coeffs[0]+rPoly.coeffs[1]*rn+rPoly.coeffs[2]*an+rPoly.coeffs[3]*rn*an+rPoly.coeffs[4]*rn*rn+rPoly.coeffs[5]*an*an;
-        double pA = aPoly.coeffs[0]+aPoly.coeffs[1]*an;
+        double pA = aPoly.coeffs[0]+aPoly.coeffs[1]*an+aPoly.coeffs[2]*rn;
         double dr = p.rangeOff - pR, da = p.aziOff - pA;
         ssR += dr * dr;
         ssA += da * da;
@@ -133,5 +137,53 @@ bool fitJointPolynomial(const QVector<OffsetPoint>& points,
     rPoly.rmse = std::sqrt(ssR / inlierPts.size());
     aPoly.rmse = std::sqrt(ssA / inlierPts.size());
 
+    return true;
+}
+
+bool fitReducedPolynomial(const QVector<OffsetPoint>& points,
+                          int mW, int mH,
+                          RangePolynomial& rPoly, AzimuthPolynomial& aPoly)
+{
+    rPoly = RangePolynomial();
+    aPoly = AzimuthPolynomial();
+    const int N = points.size();
+    if (N < 1) return false;
+
+    double s1 = 0, sr = 0, srr = 0, sbR = 0, sbrR = 0;
+    double sa = 0, saa = 0, sbA = 0, sbaA = 0;
+    for (const auto& p : points) {
+        double r = (mW > 0) ? (double)p.col / mW : 0.0;
+        double a = (mH > 0) ? (double)p.row / mH : 0.0;
+        s1 += 1.0; sr += r; srr += r * r;
+        sbR += p.rangeOff; sbrR += p.rangeOff * r;
+        sa += a; saa += a * a;
+        sbA += p.aziOff; sbaA += p.aziOff * a;
+    }
+
+    double AR[4] = {s1, sr, sr, srr}, bR[2] = {sbR, sbrR};
+    if (solveLinear(AR, bR, 2)) {
+        rPoly.coeffs[0] = bR[0]; rPoly.coeffs[1] = bR[1];
+    } else {
+        rPoly.coeffs[0] = sbR / s1;
+    }
+
+    double AA[4] = {s1, sa, sa, saa}, bA[2] = {sbA, sbaA};
+    if (solveLinear(AA, bA, 2)) {
+        aPoly.coeffs[0] = bA[0]; aPoly.coeffs[1] = bA[1];
+    } else {
+        aPoly.coeffs[0] = sbA / s1;
+    }
+
+    double ssR = 0, ssA = 0;
+    for (const auto& p : points) {
+        double r = (mW > 0) ? (double)p.col / mW : 0.0;
+        double a = (mH > 0) ? (double)p.row / mH : 0.0;
+        double pR = rPoly.coeffs[0] + rPoly.coeffs[1] * r;
+        double pA = aPoly.coeffs[0] + aPoly.coeffs[1] * a;
+        double dR = p.rangeOff - pR, dA = p.aziOff - pA;
+        ssR += dR * dR; ssA += dA * dA;
+    }
+    rPoly.rmse = std::sqrt(ssR / N);
+    aPoly.rmse = std::sqrt(ssA / N);
     return true;
 }

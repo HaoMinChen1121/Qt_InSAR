@@ -38,23 +38,17 @@ struct RegistrationParams
 
     // ── 粗配准 ──
     QString   coarseMethod = "Orbit";       // "Orbit" / "CrossCorrelation" / "FFT"
-    int       coarseControlPoints = 64;
     int       coarseSearchWindow = 64;
     int       coarseWindowSize  = 32;       // NCC窗口
     int       offsetPerBurst    = 8;        // 每burst采样点数
     // ── 精配准 ──
     QString   fineMethod = "SubPixel";      // "SubPixel" / "Oversample"
-    int       fineWindowSize = 32;
+    int       fineWindowSize = 256;         // 精配准窗口 (UI 可调)
     double    correlationThreshold = 0.3;
-    int       polynomialDegree = 2;
-    // ── FFTW3 ──
-    bool      enableFineFFT   = false;     // FFTW3复数域精配准
-    int       fineFFTWindow   = 256;       // 精配准FFT窗口
+    int       polynomialDegree = 2;         // 方位模型阶数: 1=[1] 2=[1,a] 3=[1,a,r]
 
     // ── 重采样 ──
     QString   resamplingMethod = "Sinc";    // "Sinc" / "Bilinear" / "Bicubic"
-    double    outputResolutionRange = 0;    // 0=保持原始
-    double    outputResolutionAzimuth = 0;
     int       sincWindowSize = 8;   // 33→17 taps, 计算量减半
     double    sincBeta = 2.5;
 

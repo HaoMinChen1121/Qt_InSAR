@@ -101,8 +101,11 @@ static QString extractVsizip(const QString& vsiPath)
 
 bool DataReader::execute(PipelineContext& ctx) {
     bool isTopsar = (ctx.masterBand->burstCount > 1);
-
-    if (isTopsar) {
+    // 调试开关: 强制走 GDAL 解码路径 (与缓存路径 A/B 对比诊断)
+    bool forceGdal = qEnvironmentVariableIntValue("INSAR_FORCE_GDAL_CORR") != 0;
+    if (isTopsar && forceGdal)
+        qDebug() << "[DataReader] INSAR_FORCE_GDAL_CORR set — using GDAL path for TOPSAR";
+    if (isTopsar && !forceGdal) {
         auto parseVsiPath = [](const QString& vsiPath) -> QPair<QString,QString> {
             if (!vsiPath.startsWith("/vsizip/")) return {vsiPath, QString()};
             QString inner = vsiPath.mid(8);

@@ -82,19 +82,42 @@ void computeOrbitOffset(const QList<OrbitStateVector>& mOrb,
     }
     double t0 = (mOrb.first().relativeTime + mOrb.last().relativeTime) * 0.5;
     double tAzi = t0 + centerRow / prf;
-    double R = nearRange + centerCol * rangeSpacing;
+
+    // 线性插值 (10s 间隔轨道矢量, 与 BaselineEstimator 一致;
+    // 三次样条在逐 burst 采样点上产生 ±210m 级数值振荡)
+    auto lerpOrbit = [](const QList<OrbitStateVector>& orb, double t,
+                        double& x, double& y, double& z,
+                        double& vx, double& vy, double& vz) {
+        int i0 = 0;
+        for (int i = 0; i < orb.size() - 1; ++i) {
+            if (orb[i].relativeTime <= t && orb[i + 1].relativeTime >= t) {
+                i0 = i; break;
+            }
+        }
+        const auto& s0 = orb[i0];
+        const auto& s1 = orb[qMin(i0 + 1, orb.size() - 1)];
+        double dt = s1.relativeTime - s0.relativeTime;
+        double f = (std::abs(dt) > 1e-9) ? (t - s0.relativeTime) / dt : 0.0;
+        f = qMax(0.0, qMin(1.0, f));
+        x = s0.x + f * (s1.x - s0.x);
+        y = s0.y + f * (s1.y - s0.y);
+        z = s0.z + f * (s1.z - s0.z);
+        vx = s0.vx + f * (s1.vx - s0.vx);
+        vy = s0.vy + f * (s1.vy - s0.vy);
+        vz = s0.vz + f * (s1.vz - s0.vz);
+    };
 
     double mx_t, my_t, mz_t, mvx_t, mvy_t, mvz_t;
     double sx_t, sy_t, sz_t, svx_t, svy_t, svz_t;
-    interpolateOrbit(mOrb, tAzi, mx_t, my_t, mz_t, mvx_t, mvy_t, mvz_t);
-    interpolateOrbit(sOrb, tAzi, sx_t, sy_t, sz_t, svx_t, svy_t, svz_t);
+    lerpOrbit(mOrb, tAzi, mx_t, my_t, mz_t, mvx_t, mvy_t, mvz_t);
+    lerpOrbit(sOrb, tAzi, sx_t, sy_t, sz_t, svx_t, svy_t, svz_t);
 
     double mVmag = std::sqrt(mvx_t * mvx_t + mvy_t * mvy_t + mvz_t * mvz_t);
 
     // 初值设 0 — 同轨道 S1 对 range 偏移在亚像素级
     // 旧公式 rangeOff = -|baseline|/rangeSpacing 高估 ~35px,
     // 导致近距采样点 slave 窗口越界被丢弃, 多项式拟合偏倚
-    (void)rangeSpacing;
+    (void)nearRange; (void)centerCol; (void)rangeSpacing;
     rangeOff = 0.0;
     aziOff = ((sx_t - mx_t) * mvx_t + (sy_t - my_t) * mvy_t
             + (sz_t - mz_t) * mvz_t) / (mVmag * aziSpacing);

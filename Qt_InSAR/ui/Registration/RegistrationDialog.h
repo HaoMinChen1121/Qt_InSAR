@@ -58,8 +58,6 @@ private:
     QSpinBox* mR2FineWindow;
     QDoubleSpinBox* mR2CorrThreshold;
     QComboBox* mR2PolyDegree;
-    QCheckBox* mR2EnableFineFFT;
-    QSpinBox* mR2FineFFTWindow;
 
     // ── Route3 控件 ──
     QSpinBox* mR3CoarseFFT;
@@ -67,16 +65,12 @@ private:
     QSpinBox* mR3FineWindow;
     QDoubleSpinBox* mR3CorrThreshold;
     QComboBox* mR3PolyDegree;
-    QCheckBox* mR3EnableFineFFT;
-    QSpinBox* mR3FineFFTWindow;
 
     // ESD (路线2/3)
     QCheckBox* mEnableEsd;
 
     // Tab 3: 重采样
     QComboBox* mResamplingMethod;
-    QDoubleSpinBox* mOutResRange;
-    QDoubleSpinBox* mOutResAzimuth;
     QSpinBox* mSincWindow;
     QDoubleSpinBox* mSincBeta;
 
