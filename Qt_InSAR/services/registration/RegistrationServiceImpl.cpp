@@ -1,18 +1,10 @@
 #include "RegistrationServiceImpl.h"
 #include "PipelineContext.h"
+#include "strategy/StrategyFactory.h"
+#include "strategy/ProductDetector.h"
+#include "strategy/PipelineBuilder.h"
+#include "steps/IRegStep.h"
 #include "dataaccess/impl/SentinelDataReader.h"
-
-#include "steps/DataReader.h"
-#include "steps/TOPSARDeramp.h"
-#include "steps/BurstMatcher.h"
-#include "steps/OrbitInitializer.h"
-#include "steps/CoarseCorrelator.h"
-#include "steps/OffsetExtractor.h"
-#include "steps/PolynomialFitter.h"
-#include "steps/FineCorrelator.h"
-#include "steps/EsdCorrector.h"
-#include "steps/SincResampler.h"
-#include "steps/QualityEvaluator.h"
 
 #include "dataaccess/SarProductFactory.h"
 #include "algorithms/BaselineEstimator.h"
@@ -98,6 +90,7 @@ void RegistrationServiceImpl::execute() {
     QString prefix = slaveDate.isEmpty() ? mParams.outputPrefix : slaveDate + "_" + mParams.outputPrefix;
 
     int succeeded = 0; QString lastOut;
+    QString lastCoarseMethod = QStringLiteral("FFT");
     for (int i = 0; i < pairs.size(); ++i) {
         if (mCancelled) break;
         emit progressChanged(i * 100 / pairs.size(),
@@ -110,8 +103,25 @@ void RegistrationServiceImpl::execute() {
             ? QDir::tempPath() + "/" + prefix + "_" + pairName + "_reg.tif"
             : mParams.outputDir + "/" + prefix + "_" + pairName + "_reg.tif";
 
+        // ── 策略解析链: ProductDetector → ProductMode + Level →
+        //    StrategyFactory → 默认策略 → applyOverrides → 最终策略 ──
+        QString detectWarning;
+        ProductMode pm = ProductDetector::detect(master->sensorInfo(),
+                                                 pairs[i].m.burstCount, &detectWarning);
+        RegistrationStrategy strat = StrategyFactory::create(pm, mParams.level);
+        strat.applyOverrides(mParams);
+        if (!detectWarning.isEmpty())
+            qWarning() << "[Reg] ProductDetector:" << detectWarning;
+        qDebug() << "[Reg] strategy:" << productModeName(pm)
+                 << "level=" << processingLevelName(mParams.level)
+                 << "coarse=" << correlationMethodName(strat.coarseCorr)
+                 << "fine=" << strat.useFine
+                 << "esd=" << (strat.azimuthCorrection == AzimuthCorrection::ESD);
+        lastCoarseMethod = correlationMethodName(strat.coarseCorr);
+
         PipelineContext ctx;
         ctx.params     = &mParams;
+        ctx.strategy   = &strat;
         ctx.masterBand = &pairs[i].m;
         ctx.slaveBand  = &pairs[i].s;
         ctx.masterSensorInfo = master->sensorInfo();
@@ -119,20 +129,8 @@ void RegistrationServiceImpl::execute() {
         ctx.totalPairs = pairs.size();
         ctx.outputPath = outPath;
 
-        // 运行 10 步管道
-        // FineCorrelator 必须在 PolynomialFitter 之前 — 多项式需要在精化后的点上拟合
-        QVector<IRegStep*> steps;
-        steps << new DataReader
-              << new TOPSARDeramp
-              << new BurstMatcher
-              << new OrbitInitializer
-              << new CoarseCorrelator
-              << new OffsetExtractor
-              << new FineCorrelator
-              << new PolynomialFitter
-              << new EsdCorrector
-              << new SincResampler
-              << new QualityEvaluator;
+        // 运行管道 (步骤链由策略构建; 阶段4: 所有策略返回相同的 11 步)
+        QVector<IRegStep*> steps = buildPipelineSteps(strat);
 
         bool ok = true;
         for (int si = 0; si < steps.size(); ++si) {
@@ -188,7 +186,7 @@ void RegistrationServiceImpl::execute() {
         qsar.created = QDateTime::currentDateTime().toString(Qt::ISODate);
         qsar.sourceMaster = mParams.masterDisplayName;
         qsar.sourceSlave  = mParams.slaveDisplayName;
-        qsar.coarseMethod = "FFT";
+        qsar.coarseMethod = lastCoarseMethod;
         qsar.resamplingMethod = mParams.resamplingMethod;
         qsar.outputPrefix = mParams.outputPrefix;
         QString qsarDir;

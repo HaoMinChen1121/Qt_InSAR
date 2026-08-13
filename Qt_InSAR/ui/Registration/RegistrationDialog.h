@@ -3,7 +3,6 @@
 
 #include <QDialog>
 #include <QButtonGroup>
-#include <QStackedWidget>
 #include "domain/params/RegistrationParams.h"
 
 class QLineEdit;
@@ -24,15 +23,17 @@ public:
     RegistrationParams params() const;
 
 private slots:
-    void onRouteChanged(int routeIdx);
+    void onLevelChanged(int levelIdx);
 
 private:
-    QWidget* createRoute1Page();
-    QWidget* createRoute2Page();
-    QWidget* createRoute3Page();
+    void saveCurrentProfile() const;
+    void loadProfile(ProcessingLevel level);
+    void updateStrategyView();
 
     // 保留元数据 (路径/轨道/传感器)，不被对话框覆盖
-    RegistrationParams mMetaHolder;
+    // mutable: params() 为 const, 但需要把 UI 值写回当前等级 profile
+    mutable RegistrationParams mMetaHolder;
+    ProcessingLevel mActiveLevel = ProcessingLevel::Standard;
 
     // Tab 1: 主辅影像
     QLineEdit* mMasterPath;
@@ -40,34 +41,20 @@ private:
     QLabel* mMasterMeta;
     QLabel* mSlaveMeta;
 
-    // 路线选择
-    QButtonGroup* mRouteGroup;
-    QRadioButton* mRoute1Btn;
-    QRadioButton* mRoute2Btn;
-    QRadioButton* mRoute3Btn;
-    QStackedWidget* mRouteStack;
-
-    // ── Route1 控件 ──
-    QSpinBox* mR1CoarseFFT;
-    QSpinBox* mR1ControlPoints;
-
-    // ── Route2 控件 ──
-    QSpinBox* mR2NccWindow;
-    QSpinBox* mR2SearchWindow;
-    QSpinBox* mR2ControlPoints;
-    QSpinBox* mR2FineWindow;
-    QDoubleSpinBox* mR2CorrThreshold;
-    QComboBox* mR2PolyDegree;
-
-    // ── Route3 控件 ──
-    QSpinBox* mR3CoarseFFT;
-    QSpinBox* mR3ControlPoints;
-    QSpinBox* mR3FineWindow;
-    QDoubleSpinBox* mR3CorrThreshold;
-    QComboBox* mR3PolyDegree;
-
-    // ESD (路线2/3)
-    QCheckBox* mEnableEsd;
+    // Tab 2: 策略
+    QLabel* mProductModeLabel;       // 产品模式 (自动识别, 只读)
+    QButtonGroup* mLevelGroup;
+    QRadioButton* mFastBtn;
+    QRadioButton* mStandardBtn;
+    QRadioButton* mHighBtn;
+    QLabel* mStrategySummary;        // 策略解释 (多行)
+    QComboBox* mCoarseEngineCombo;   // 粗配准引擎覆盖: 策略默认/FFT幅度/NCC
+    QSpinBox* mCoarseWindow;
+    QSpinBox* mSearchWindow;
+    QSpinBox* mFineWindow;
+    QSpinBox* mOffsetPerBurst;
+    QDoubleSpinBox* mCorrThreshold;
+    QComboBox* mPolyDegree;
 
     // Tab 3: 重采样
     QComboBox* mResamplingMethod;

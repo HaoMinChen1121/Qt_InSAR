@@ -3,19 +3,38 @@
 
 #include <QString>
 #include <QList>
+#include <optional>
 #include "domain/OrbitInfo.h"
 #include "domain/SarSensorInfo.h"
+#include "domain/registration/ProcessingLevel.h"
+#include "domain/registration/ProductMode.h"
+#include "domain/registration/CorrelationMethod.h"
 
-enum class RegRoute {
-    Route1_OrbitFFT  = 0,   // 快速: 轨道几何 + 小窗口FFT幅度相关 → 重采样
-    Route2_NCC_FFTW  = 1,   // 稳健: NCC搜索 → FFTW3复数相位相关 → ESD → 重采样
-    Route3_FFT_FFTW  = 2    // 标准: FFT幅度域 → 多项式拟合 → FFTW3相位相关 → ESD → 重采样 (推荐)
+// 每处理等级独立的一套用户参数 (等级切换不互相覆盖)
+struct RegistrationProfileParams {
+    int    coarseWindowSize = 256;
+    int    coarseSearchWindow = 64;   // NCC 搜索半径
+    int    fineWindowSize = 256;
+    int    offsetPerBurst = 8;
+    double correlationThreshold = 0.3;
+    int    polynomialDegree = 2;      // 方位模型阶数: 1=[1] 2=[1,a] 3=[1,a,r]
 };
 
 struct RegistrationParams
 {
-    // ── 配准路线 ──
-    RegRoute  route = RegRoute::Route3_FFT_FFTW;  // 默认标准路线
+    // ── 策略 ──
+    ProcessingLevel level = ProcessingLevel::Standard;
+    ProductMode  productMode = ProductMode::GENERIC;   // 控制器选产品时填充 (UI 显示用)
+    std::optional<CorrelationMethod> coarseCorrOverride;  // 用户覆盖粗配准引擎 (无值=策略默认)
+    RegistrationProfileParams profiles[3];   // Fast/Standard/High 各一份
+
+    // ── 当前生效的扁平参数 (由 profiles[level] 同步, 管线直接读取) ──
+    int       coarseSearchWindow = 64;
+    int       coarseWindowSize  = 256;
+    int       offsetPerBurst    = 8;        // 每burst采样点数
+    int       fineWindowSize = 256;         // 精配准窗口
+    double    correlationThreshold = 0.3;
+    int       polynomialDegree = 2;
 
     // ── 输入 — 产品 (SAFE/zip 根路径) ──
     QString   masterProductPath;   // 主产品路径
@@ -36,17 +55,6 @@ struct RegistrationParams
     double  masterNearRange = 0;
     double  masterPrf = 0;
 
-    // ── 粗配准 ──
-    QString   coarseMethod = "Orbit";       // "Orbit" / "CrossCorrelation" / "FFT"
-    int       coarseSearchWindow = 64;
-    int       coarseWindowSize  = 32;       // NCC窗口
-    int       offsetPerBurst    = 8;        // 每burst采样点数
-    // ── 精配准 ──
-    QString   fineMethod = "SubPixel";      // "SubPixel" / "Oversample"
-    int       fineWindowSize = 256;         // 精配准窗口 (UI 可调)
-    double    correlationThreshold = 0.3;
-    int       polynomialDegree = 2;         // 方位模型阶数: 1=[1] 2=[1,a] 3=[1,a,r]
-
     // ── 重采样 ──
     QString   resamplingMethod = "Sinc";    // "Sinc" / "Bilinear" / "Bicubic"
     int       sincWindowSize = 8;   // 33→17 taps, 计算量减半
@@ -56,7 +64,6 @@ struct RegistrationParams
     QString   outputDir;
     QString   outputPrefix = "registered";
     bool      estimateBaseline = true;
-    bool      enableEsd = true;      // TOPSAR ESD 方位向精化
     int       esdOverlapLines = 0;    // ESD重叠行数 (0=自动取 L/10)
     double    deltaFdoppler = 0.0;   // TOPSAR burst间多普勒质心差 (Hz), 由产品XML填充
 

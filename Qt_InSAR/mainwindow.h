@@ -119,13 +119,15 @@ private:
     QToolButton*     mBtnSlave = nullptr;
     QLabel*          mLblMasterInfo = nullptr;
     QLabel*          mLblSlaveInfo = nullptr;
-    QComboBox*       mRouteCombo = nullptr;
-    QComboBox*       mCoarseMethodCombo = nullptr;  // 保留，向后兼容
+    QComboBox*       mLevelCombo = nullptr;
     QSpinBox*        mCoarseWinSpin = nullptr;
     QSpinBox*        mFineWinSpin = nullptr;
     QSpinBox*        mSearchWinSpin = nullptr;
-    QCheckBox*       mEsdCheck = nullptr;
     RegistrationParams mRegParams;
+    ProcessingLevel  mActiveLevel = ProcessingLevel::Standard;
+    bool             mLevelLoading = false;
+    void saveRibbonProfile(ProcessingLevel level);
+    void loadRibbonProfile(ProcessingLevel level);
     InterferogramParams mIfgParams;
     QSpinBox* mIfgRgSpin = nullptr;
     QSpinBox* mIfgAzSpin = nullptr;

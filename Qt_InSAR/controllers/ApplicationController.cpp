@@ -7,6 +7,7 @@
 #include "ui/SarMetadataPanel.h"
 
 #include "services/registration/RegistrationServiceImpl.h"
+#include "services/registration/strategy/ProductDetector.h"
 #include "services/interferogram/InterferogramServiceImpl.h"
 #include "services/impl/FilterServiceImpl.h"
 #include "services/impl/UnwrappingServiceImpl.h"
@@ -15,6 +16,7 @@
 #include "dataaccess/SarProductFactory.h"
 #include "renderers/RasterRenderer.h"
 #include "renderers/Sentinel1RasterProvider.h"
+#include "renderers/InSarTiffRasterProvider.h"
 #include "dataaccess/impl/SentinelZipProduct.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/QsarIO.h"
@@ -63,6 +65,18 @@ QString toSentinel1Uri(const QString& path)
     QString entry = real.mid(zipPos + 5);
     return Sentinel1RasterProvider::buildUri(zipPath, entry);
 }
+
+// 本项目输出的复数 GeoTIFF (单波段 CFloat32) → insartiff URI
+QString toInSarTiffUri(const QString& path)
+{
+    GDALDatasetH hDS = GDALOpenEx(path.toUtf8().constData(),
+        GDAL_OF_RASTER | GDAL_OF_READONLY, nullptr, nullptr, nullptr);
+    if (!hDS) return QString();
+    bool ours = (GDALGetRasterCount(hDS) == 1)
+        && (GDALGetRasterDataType(GDALGetRasterBand(hDS, 1)) == GDT_CFloat32);
+    GDALClose(hDS);
+    return ours ? InSarTiffRasterProvider::buildUri(path) : QString();
+}
 } // namespace
 
 ApplicationController::ApplicationController(MainWindow* mainWindow, QObject* parent)
@@ -76,9 +90,11 @@ ApplicationController::~ApplicationController() { shutdown(); }
 
 void ApplicationController::initialize()
 {
-    // 注册自定义 Sentinel-1 ZIP 栅格 Provider (SNAP 式直接读取)
+    // 注册自定义栅格 Provider: Sentinel-1 ZIP 直接读取 + 本项目输出 GeoTIFF
     QgsProviderRegistry::instance()->registerProvider(
         new Sentinel1ProviderMetadata());
+    QgsProviderRegistry::instance()->registerProvider(
+        new InSarTiffProviderMetadata());
     wireConnections();
 }
 
@@ -182,7 +198,8 @@ void ApplicationController::wireConnections()
                 name = path.section('/', -1);
 
             // /vsizip/ 路径 → 自定义 sentinel1zip Provider (ZIP 内直接渲染)
-            // 转换失败 (非 .zip) 则保持原路径交给 GDAL
+            // 本项目输出 GeoTIFF → insartiff Provider (幅度渲染+快速采样统计)
+            // 转换失败则保持原路径交给 GDAL
             QString uri = path;
             QString providerKey;
             if (path.startsWith("/vsi", Qt::CaseInsensitive)) {
@@ -190,6 +207,12 @@ void ApplicationController::wireConnections()
                 if (!converted.isEmpty()) {
                     uri = converted;
                     providerKey = QStringLiteral("sentinel1zip");
+                }
+            } else {
+                QString converted = toInSarTiffUri(path);
+                if (!converted.isEmpty()) {
+                    uri = converted;
+                    providerKey = QStringLiteral("insartiff");
                 }
             }
 
@@ -361,6 +384,9 @@ void ApplicationController::onMasterProductSelected(const QString& productPath)
     rp.masterNearRange = info.sensorInfo.nearRange;
     rp.masterPrf = info.sensorInfo.prf;
     rp.wavelength = info.sensorInfo.wavelength;
+    // 产品模式 (UI 策略页显示用; 运行时以服务内 ProductDetector 检测为准)
+    int burstCount = info.bands.isEmpty() ? 0 : info.bands.first().burstCount;
+    rp.productMode = ProductDetector::detect(info.sensorInfo, burstCount);
 
     mMainWindow->updateImageSelectionLabel(mMainWindow->masterInfoLabel(), info.displayName);
     qDebug() << "[Reg] Master product:" << info.displayName;

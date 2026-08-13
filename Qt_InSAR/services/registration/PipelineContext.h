@@ -4,12 +4,14 @@
 #include "domain/params/RegistrationParams.h"
 #include "dataaccess/ISarProduct.h"
 #include "types/RegistrationTypes.h"
+#include "domain/registration/RegistrationStrategy.h"
 
 class GdalSlcReader;
 class SentinelDataReader;
 
 struct PipelineContext {
     const RegistrationParams* params = nullptr;
+    const RegistrationStrategy* strategy = nullptr;  // ProductMode×Level 解析结果
     const SarBandDescriptor*  masterBand = nullptr;
     const SarBandDescriptor*  slaveBand  = nullptr;
     SarSensorInfo             masterSensorInfo;  // 从主产品XML解析的传感器元数据

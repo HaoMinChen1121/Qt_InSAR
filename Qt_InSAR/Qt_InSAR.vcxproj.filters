@@ -4,6 +4,7 @@
     <Filter Include="Application"><UniqueIdentifier>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</UniqueIdentifier></Filter>
     <Filter Include="Domain"><UniqueIdentifier>{B2C3D4E5-F6A7-8901-BCDE-F12345678901}</UniqueIdentifier></Filter>
     <Filter Include="Domain\Params"><UniqueIdentifier>{C3D4E5F6-A7B8-9012-CDEF-123456789012}</UniqueIdentifier></Filter>
+    <Filter Include="Domain\Registration"><UniqueIdentifier>{D4E5F6A7-B8C9-0123-DEF1-234567890123}</UniqueIdentifier></Filter>
     <Filter Include="Algorithms"><UniqueIdentifier>{A0B1C2D3-E4F5-6789-ABCD-EF0123456789}</UniqueIdentifier></Filter>
     <Filter Include="DataAccess"><UniqueIdentifier>{D4E5F6A7-B8C9-0123-DEFA-234567890123}</UniqueIdentifier></Filter>
     <Filter Include="DataAccess\Impl"><UniqueIdentifier>{E5F6A7B8-C9D0-1234-EFAB-345678901234}</UniqueIdentifier></Filter>
@@ -14,6 +15,7 @@
     <Filter Include="Services\Registration"><UniqueIdentifier>{F1A2B3C4-D5E6-7890-ABCD-123456789ABC}</UniqueIdentifier></Filter>
     <Filter Include="Services\Registration\Steps"><UniqueIdentifier>{A2B3C4D5-E6F7-8901-BCDE-23456789ABCD}</UniqueIdentifier></Filter>
     <Filter Include="Services\Registration\Types"><UniqueIdentifier>{B3C4D5E6-F7A8-9012-CDEF-3456789ABCDE}</UniqueIdentifier></Filter>
+    <Filter Include="Services\Registration\Strategy"><UniqueIdentifier>{C4D5E6F7-A8B9-0123-DEF0-456789ABCDEF}</UniqueIdentifier></Filter>
     <Filter Include="Services\Interferogram"><UniqueIdentifier>{C1D2E3F4-A5B6-7890-CDEF-4567890ABCDE}</UniqueIdentifier></Filter>
     <Filter Include="Services\Interferogram\Steps"><UniqueIdentifier>{D2E3F4A5-B6C7-8901-DEFA-5678901ABCDE}</UniqueIdentifier></Filter>
     <Filter Include="Controllers"><UniqueIdentifier>{B8C9D0E1-F2A3-4567-BCDE-678901234567}</UniqueIdentifier></Filter>
@@ -119,6 +121,9 @@
     <ClCompile Include="services\impl\UnwrappingServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
     <ClCompile Include="services\impl\GeocodingServiceImpl.cpp"><Filter>Services\Impl</Filter></ClCompile>
     <ClCompile Include="services\registration\RegistrationServiceImpl.cpp"><Filter>Services\Registration</Filter></ClCompile>
+    <ClCompile Include="services\registration\strategy\StrategyFactory.cpp"><Filter>Services\Registration\Strategy</Filter></ClCompile>
+    <ClCompile Include="services\registration\strategy\ProductDetector.cpp"><Filter>Services\Registration\Strategy</Filter></ClCompile>
+    <ClCompile Include="services\registration\strategy\PipelineBuilder.cpp"><Filter>Services\Registration\Strategy</Filter></ClCompile>
     <QtMoc Include="services\registration\RegistrationServiceImpl.h"><Filter>Services\Registration</Filter></QtMoc>
     <QtMoc Include="services\interferogram\InterferogramServiceImpl.h"><Filter>Services\Interferogram</Filter></QtMoc>
     <QtMoc Include="services\impl\FilterServiceImpl.h"><Filter>Services\Impl</Filter></QtMoc>
@@ -144,6 +149,13 @@
   <!-- Services\Registration -->
   <ItemGroup>
     <ClInclude Include="services\registration\PipelineContext.h"><Filter>Services\Registration</Filter></ClInclude>
+    <ClInclude Include="services\registration\strategy\StrategyFactory.h"><Filter>Services\Registration\Strategy</Filter></ClInclude>
+    <ClInclude Include="services\registration\strategy\ProductDetector.h"><Filter>Services\Registration\Strategy</Filter></ClInclude>
+    <ClInclude Include="services\registration\strategy\PipelineBuilder.h"><Filter>Services\Registration\Strategy</Filter></ClInclude>
+    <ClInclude Include="domain\registration\RegistrationStrategy.h"><Filter>Domain\Registration</Filter></ClInclude>
+    <ClInclude Include="domain\registration\ProductMode.h"><Filter>Domain\Registration</Filter></ClInclude>
+    <ClInclude Include="domain\registration\ProcessingLevel.h"><Filter>Domain\Registration</Filter></ClInclude>
+    <ClInclude Include="domain\registration\CorrelationMethod.h"><Filter>Domain\Registration</Filter></ClInclude>
   </ItemGroup>
   <!-- Services\Registration\Types -->
   <ItemGroup>
@@ -189,9 +201,11 @@
     <ClCompile Include="renderers\RasterRenderer.cpp"><Filter>Renderers</Filter></ClCompile>
     <ClCompile Include="renderers\TileCache.cpp"><Filter>Renderers</Filter></ClCompile>
     <ClCompile Include="renderers\Sentinel1RasterProvider.cpp"><Filter>Renderers</Filter></ClCompile>
+    <ClCompile Include="renderers\InSarTiffRasterProvider.cpp"><Filter>Renderers</Filter></ClCompile>
     <ClInclude Include="renderers\RasterRenderer.h"><Filter>Renderers</Filter></ClInclude>
     <ClInclude Include="renderers\TileCache.h"><Filter>Renderers</Filter></ClInclude>
     <ClInclude Include="renderers\Sentinel1RasterProvider.h"><Filter>Renderers</Filter></ClInclude>
+    <ClInclude Include="renderers\InSarTiffRasterProvider.h"><Filter>Renderers</Filter></ClInclude>
   </ItemGroup>
   <!-- UI -->
   <ItemGroup>

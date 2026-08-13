@@ -103,6 +103,104 @@ static bool fft2D(std::complex<float>* data, int rows, int cols, bool inverse) {
 }
 #endif
 
+// ── 表面解包公共逻辑: 循环相关 → 以 lag(0,0) 为中心的线性滞后表面 ──
+static float unwrapSurface(const std::complex<float>* FA, int P, int Q,
+                           float* correlationSurface, int rows, int cols)
+{
+    int outRows = 2 * rows - 1, outCols = 2 * cols - 1;
+    float maxV = -1e9f;
+    // 表面中心必须存 lag(0,0) (FA[0]):
+    // 表面行 r 对应滞后 r-(rows-1), 负滞后映射到循环索引 P+lag
+    for (int r = 0; r < outRows; ++r) {
+        int srcR = (r < rows - 1) ? (P + r - rows + 1) : (r - rows + 1);
+        for (int c = 0; c < outCols; ++c) {
+            int srcC = (c < cols - 1) ? (Q + c - cols + 1) : (c - cols + 1);
+            float v = FA[srcR * Q + srcC].real();
+            correlationSurface[r * outCols + c] = v;
+            if (v > maxV) maxV = v;
+        }
+    }
+    return maxV;
+}
+
+// ── FFTW3 相位相关 (复数域 + Hamming窗 + 归一化互功率谱, 实验性) ──
+float fftPhaseCorrelate(const std::complex<float>* a,
+                        const std::complex<float>* b,
+                        float* correlationSurface, int rows, int cols)
+{
+#if HAS_FFTW
+    int P = nextPow2(2 * rows - 1), Q = nextPow2(2 * cols - 1), total = P * Q;
+
+    auto* FA = reinterpret_cast<std::complex<float>*>(
+        fftwf_malloc(total * sizeof(std::complex<float>)));
+    auto* FB = reinterpret_cast<std::complex<float>*>(
+        fftwf_malloc(total * sizeof(std::complex<float>)));
+    if (!FA || !FB) {
+        if (FA) fftwf_free(FA);
+        if (FB) fftwf_free(FB);
+        std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0);
+        return 0;
+    }
+    std::memset(FA, 0, total * sizeof(std::complex<float>));
+    std::memset(FB, 0, total * sizeof(std::complex<float>));
+
+    for (int r = 0; r < rows; ++r) {
+        std::memcpy(FA + r * Q, a + r * cols, cols * sizeof(std::complex<float>));
+        std::memcpy(FB + r * Q, b + r * cols, cols * sizeof(std::complex<float>));
+    }
+    applyHammingWindow(FA, rows, cols);
+    applyHammingWindow(FB, rows, cols);
+
+    if (!fft2D(FA, P, Q, false) || !fft2D(FB, P, Q, false)) {
+        std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0);
+        fftwf_free(FA); fftwf_free(FB);
+        return 0;
+    }
+
+    // 互功率谱归一化: R = F_A · conj(F_B) / (|F_A · conj(F_B)| + eps)
+    for (int i = 0; i < total; ++i) {
+        auto cross = FA[i] * std::conj(FB[i]);
+        FA[i] = cross / (std::abs(cross) + 1e-6f);
+    }
+
+    if (!fft2D(FA, P, Q, true)) {
+        std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0);
+        fftwf_free(FA); fftwf_free(FB);
+        return 0;
+    }
+
+    float maxV = unwrapSurface(FA, P, Q, correlationSurface, rows, cols);
+    fftwf_free(FA); fftwf_free(FB);
+    return maxV;
+#else
+    static bool warned = false;
+    if (!warned) {
+        warned = true;
+        qWarning() << "fftPhaseCorrelate: FFTW3 not available — correlation disabled";
+    }
+    Q_UNUSED(a); Q_UNUSED(b);
+    std::fill(correlationSurface, correlationSurface + (2*rows-1)*(2*cols-1), 0);
+    return 0;
+#endif
+}
+
+// ── 引擎分派 ──
+float correlateSurface(const std::complex<float>* a,
+                       const std::complex<float>* b,
+                       float* correlationSurface,
+                       int rows, int cols,
+                       CorrelationMethod method)
+{
+    switch (method) {
+    case CorrelationMethod::FFT_PHASE:
+        return fftPhaseCorrelate(a, b, correlationSurface, rows, cols);
+    case CorrelationMethod::NCC:
+    case CorrelationMethod::FFT_AMPLITUDE:
+    default:
+        return fftAmpCorrelate(a, b, correlationSurface, rows, cols);
+    }
+}
+
 // ── FFTW3 幅度域互相关 (幅度提取 + Hamming窗 + 互相关, 不归一化) ──
 float fftAmpCorrelate(const std::complex<float>* a,
                       const std::complex<float>* b,
@@ -154,19 +252,7 @@ float fftAmpCorrelate(const std::complex<float>* a,
         return 0;
     }
 
-    int outRows = 2 * rows - 1, outCols = 2 * cols - 1;
-    float maxV = -1e9f;
-    // 表面中心必须存 lag(0,0) (FA[0]):
-    // 表面行 r 对应滞后 r-(rows-1), 负滞后映射到循环索引 P+lag
-    for (int r = 0; r < outRows; ++r) {
-        int srcR = (r < rows - 1) ? (P + r - rows + 1) : (r - rows + 1);
-        for (int c = 0; c < outCols; ++c) {
-            int srcC = (c < cols - 1) ? (Q + c - cols + 1) : (c - cols + 1);
-            float v = FA[srcR * Q + srcC].real();
-            correlationSurface[r * outCols + c] = v;
-            if (v > maxV) maxV = v;
-        }
-    }
+    float maxV = unwrapSurface(FA, P, Q, correlationSurface, rows, cols);
     fftwf_free(FA); fftwf_free(FB);
     return maxV;
 #else

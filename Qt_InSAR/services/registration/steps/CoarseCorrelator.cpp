@@ -38,7 +38,8 @@ struct CoarseConfig {
     int sW, sH, winSize;
     bool useNcc;
     int searchHalf;
-    bool isTopsar = false;   // TOPSAR: 方位偏移取轨道初值, 相关只测 range
+    bool azimuthFromOrbit = false;   // 策略: 方位偏移取轨道初值, 相关只测 range
+    CorrelationMethod method = CorrelationMethod::FFT_AMPLITUDE;  // FFT 路径引擎
     SentinelDataReader* masterSdr = nullptr;
     SentinelDataReader* slaveSdr  = nullptr;
     bool useBurstCache = false;
@@ -106,7 +107,7 @@ static QVector<OffsetPoint> processCoarseBatch(
                              slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
                 qint64 fftTime = t.nsecsElapsed() / 1000;
                 pt.rangeOff += subDx;
-                if (!cfg.isTopsar) pt.aziOff += subDy;
+                if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = 1.0;
                 prof.add(readTime, fftTime, 0);
             } else {
@@ -121,14 +122,14 @@ static QVector<OffsetPoint> processCoarseBatch(
                 int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
                 QVector<float> surf(outRows * outCols);
                 t.start();
-                float maxV = fftAmpCorrelate(mWin.data(), sWinC.data(), surf.data(), cfg.winSize, cfg.winSize);
+                float maxV = correlateSurface(mWin.data(), sWinC.data(), surf.data(), cfg.winSize, cfg.winSize, cfg.method);
                 qint64 fftTime = t.nsecsElapsed() / 1000;
                 t.start();
                 double subDx, subDy;
                 findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
                 qint64 peakTime = t.nsecsElapsed() / 1000;
                 pt.rangeOff += subDx;
-                if (!cfg.isTopsar) pt.aziOff += subDy;
+                if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = maxV;
                 prof.add(readTime, fftTime, peakTime);
             }
@@ -166,7 +167,7 @@ static QVector<OffsetPoint> processCoarseBatch(
                              slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
                 qint64 fftTime = t.nsecsElapsed() / 1000;
                 pt.rangeOff += subDx;
-                if (!cfg.isTopsar) pt.aziOff += subDy;
+                if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = 1.0;
                 prof.add(readTime, fftTime, 0);
             } else {
@@ -181,14 +182,14 @@ static QVector<OffsetPoint> processCoarseBatch(
                 int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
                 QVector<float> surf(outRows * outCols);
                 t.start();
-                float maxV = fftAmpCorrelate(mWin.data(), sWinC.data(), surf.data(), cfg.winSize, cfg.winSize);
+                float maxV = correlateSurface(mWin.data(), sWinC.data(), surf.data(), cfg.winSize, cfg.winSize, cfg.method);
                 qint64 fftTime = t.nsecsElapsed() / 1000;
                 t.start();
                 double subDx, subDy;
                 findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
                 qint64 peakTime = t.nsecsElapsed() / 1000;
                 pt.rangeOff += subDx;
-                if (!cfg.isTopsar) pt.aziOff += subDy;
+                if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = maxV;
                 prof.add(readTime, fftTime, peakTime);
             }
@@ -216,7 +217,8 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     int N = ctx.data.burstCount, L = ctx.data.linesPerBurst;
     int nPerBurst = p.offsetPerBurst;
     int winSize = p.coarseWindowSize;
-    bool useNcc = (p.route == RegRoute::Route2_NCC_FFTW);
+    bool useNcc = ctx.strategy
+        && ctx.strategy->coarseCorr == CorrelationMethod::NCC;
     int searchHalf = useNcc ? p.coarseSearchWindow : 0;
 
     QVector<CoarseWorkItem> items;
@@ -256,7 +258,12 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
     cfg.winSize = winSize;
     cfg.useNcc = useNcc;
     cfg.searchHalf = searchHalf;
-    cfg.isTopsar = ctx.isTopsar;
+    cfg.method = ctx.strategy ? ctx.strategy->coarseCorr
+                              : CorrelationMethod::FFT_AMPLITUDE;
+    // 策略驱动: OrbitGeometry/Hybrid → 方位取轨道初值 (TOPS 硬结论)
+    cfg.azimuthFromOrbit = !ctx.strategy
+        || ctx.strategy->azimuthModel == AzimuthOffsetModel::OrbitGeometry
+        || ctx.strategy->azimuthModel == AzimuthOffsetModel::Hybrid;
     cfg.masterSdr = ctx.masterSdr;
     cfg.slaveSdr  = ctx.slaveSdr;
     cfg.useBurstCache = ctx.useBurstCache;
@@ -292,7 +299,9 @@ bool CoarseCorrelator::execute(PipelineContext& ctx) {
         .arg(dispatchUs / 1000).arg(computeUs / 1000).arg(totalUs / 1000);
     profileLog(timingMsg);
     qDebug() << QStringLiteral("[Step4] %1 coarse %2/%3 valid range:[%4,%5]avg=%6 azi:[%7,%8]avg=%9")
-        .arg(useNcc ? "NCC" : "FFT").arg(validN).arg(ctx.offsetPoints.size())
+        .arg(correlationMethodName(ctx.strategy ? ctx.strategy->coarseCorr
+                                                : CorrelationMethod::FFT_AMPLITUDE))
+        .arg(validN).arg(ctx.offsetPoints.size())
         .arg(minR,0,'f',2).arg(maxR,0,'f',2).arg(validN>0?sumR/validN:0,0,'f',2)
         .arg(minA,0,'f',2).arg(maxA,0,'f',2).arg(validN>0?sumA/validN:0,0,'f',2);
     return validN >= 6;

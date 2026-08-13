@@ -3,8 +3,8 @@
 #include <QDebug>
 
 bool OffsetExtractor::execute(PipelineContext& ctx) {
-    // 路线1无多项式拟合，不需要过滤
-    if (ctx.params->route == RegRoute::Route1_OrbitFFT)
+    // Fast 等级无精配准，不需要过滤
+    if (!ctx.strategy || !ctx.strategy->useFine)
         return true;
 
     const auto& p = *ctx.params;

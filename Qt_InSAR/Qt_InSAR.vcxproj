@@ -150,6 +150,9 @@
     <ClCompile Include="dataaccess\impl\QsarIO.cpp" />
     <!-- Service stubs -->
     <ClCompile Include="services\registration\RegistrationServiceImpl.cpp" />
+    <ClCompile Include="services\registration\strategy\StrategyFactory.cpp" />
+    <ClCompile Include="services\registration\strategy\ProductDetector.cpp" />
+    <ClCompile Include="services\registration\strategy\PipelineBuilder.cpp" />
     <ClCompile Include="services\interferogram\InterferogramServiceImpl.cpp" />
     <ClCompile Include="services\interferogram\steps\IfgGenerator.cpp" />
     <ClCompile Include="services\interferogram\steps\IWMerger.cpp" />
@@ -165,6 +168,7 @@
     <ClCompile Include="renderers\RasterRenderer.cpp" />
     <ClCompile Include="renderers\TileCache.cpp" />
     <ClCompile Include="renderers\Sentinel1RasterProvider.cpp" />
+    <ClCompile Include="renderers\InSarTiffRasterProvider.cpp" />
     <!-- UI Core -->
     <ClCompile Include="ui\MapCanvasWidget.cpp" />
     <ClCompile Include="ui\LayerPanel.cpp" />
@@ -234,6 +238,13 @@
     <ClInclude Include="domain\params\RegistrationParams.h" />
     <ClInclude Include="domain\params\TimeSeriesParams.h" />
     <ClInclude Include="services\registration\PipelineContext.h" />
+    <ClInclude Include="services\registration\strategy\StrategyFactory.h" />
+    <ClInclude Include="services\registration\strategy\ProductDetector.h" />
+    <ClInclude Include="services\registration\strategy\PipelineBuilder.h" />
+    <ClInclude Include="domain\registration\RegistrationStrategy.h" />
+    <ClInclude Include="domain\registration\ProductMode.h" />
+    <ClInclude Include="domain\registration\ProcessingLevel.h" />
+    <ClInclude Include="domain\registration\CorrelationMethod.h" />
     <ClInclude Include="services\registration\types\RegistrationTypes.h" />
     <ClInclude Include="services\registration\steps\IRegStep.h" />
     <ClInclude Include="services\registration\steps\BurstMatcher.h" />
@@ -262,6 +273,7 @@
     <ClInclude Include="renderers\RasterRenderer.h" />
     <ClInclude Include="renderers\TileCache.h" />
     <ClInclude Include="renderers\Sentinel1RasterProvider.h" />
+    <ClInclude Include="renderers\InSarTiffRasterProvider.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">

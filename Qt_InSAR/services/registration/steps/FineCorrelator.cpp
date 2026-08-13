@@ -40,7 +40,8 @@ struct FineProfile {
 struct FineConfig {
     QString masterPath, slavePath;
     int sW, sH, winSize;
-    bool isTopsar = false;   // TOPSAR: 方位偏移保持粗配准值, 精相关只测 range
+    bool azimuthFromOrbit = false;   // 策略: 方位偏移保持粗配准值, 精相关只测 range
+    CorrelationMethod method = CorrelationMethod::FFT_AMPLITUDE;  // 精配准引擎
     SentinelDataReader* masterSdr = nullptr;
     SentinelDataReader* slaveSdr  = nullptr;
     bool useBurstCache = false;
@@ -95,7 +96,7 @@ static QVector<OffsetPoint> processFineBatch(
             int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
             QVector<float> surf(outRows * outCols);
             t.start();
-            float maxV = fftAmpCorrelate(mWin.data(), sWin.data(), surf.data(), cfg.winSize, cfg.winSize);
+            float maxV = correlateSurface(mWin.data(), sWin.data(), surf.data(), cfg.winSize, cfg.winSize, cfg.method);
             qint64 fftTime = t.nsecsElapsed() / 1000;
 
             t.start();
@@ -103,11 +104,11 @@ static QVector<OffsetPoint> processFineBatch(
             findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
             qint64 peakTime = t.nsecsElapsed() / 1000;
 
-            if (std::abs(subDx) > 5.0 || (!cfg.isTopsar && std::abs(subDy) > 3.0)) {
+            if (std::abs(subDx) > 5.0 || (!cfg.azimuthFromOrbit && std::abs(subDy) > 3.0)) {
                 pt.correlation = -1.0;
             } else {
                 pt.rangeOff += subDx;
-                if (!cfg.isTopsar) pt.aziOff += subDy;
+                if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = maxV;
             }
             prof.add(readTime, fftTime, peakTime);
@@ -142,7 +143,7 @@ static QVector<OffsetPoint> processFineBatch(
             int outRows = 2 * cfg.winSize - 1, outCols = 2 * cfg.winSize - 1;
             QVector<float> surf(outRows * outCols);
             t.start();
-            float maxV = fftAmpCorrelate(mWin.data(), sWin.data(), surf.data(), cfg.winSize, cfg.winSize);
+            float maxV = correlateSurface(mWin.data(), sWin.data(), surf.data(), cfg.winSize, cfg.winSize, cfg.method);
             qint64 fftTime = t.nsecsElapsed() / 1000;
 
             t.start();
@@ -150,11 +151,11 @@ static QVector<OffsetPoint> processFineBatch(
             findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
             qint64 peakTime = t.nsecsElapsed() / 1000;
 
-            if (std::abs(subDx) > 5.0 || (!cfg.isTopsar && std::abs(subDy) > 3.0)) {
+            if (std::abs(subDx) > 5.0 || (!cfg.azimuthFromOrbit && std::abs(subDy) > 3.0)) {
                 pt.correlation = -1.0;
             } else {
                 pt.rangeOff += subDx;
-                if (!cfg.isTopsar) pt.aziOff += subDy;
+                if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = maxV;
             }
             prof.add(readTime, fftTime, peakTime);
@@ -175,8 +176,7 @@ static QVector<OffsetPoint> processFineBatch(
 bool FineCorrelator::execute(PipelineContext& ctx) {
     QElapsedTimer stepTimer; stepTimer.start();
     const auto& p = *ctx.params;
-    if (p.route == RegRoute::Route1_OrbitFFT) return true;
-    if (p.fineMethod != "FFT") return true;
+    if (!ctx.strategy || !ctx.strategy->useFine) return true;
 
     int sW = ctx.data.slaveWidth, sH = ctx.data.slaveHeight;
     int winSize = p.fineWindowSize > 0 ? p.fineWindowSize : 128;
@@ -204,7 +204,11 @@ bool FineCorrelator::execute(PipelineContext& ctx) {
     cfg.masterPath = ctx.masterLocalPath.isEmpty() ? ctx.masterBand->rasterPath : ctx.masterLocalPath;
     cfg.slavePath  = ctx.slaveLocalPath.isEmpty()  ? ctx.slaveBand->rasterPath  : ctx.slaveLocalPath;
     cfg.sW = sW; cfg.sH = sH; cfg.winSize = winSize;
-    cfg.isTopsar = ctx.isTopsar;
+    cfg.method = ctx.strategy ? ctx.strategy->fineCorr
+                              : CorrelationMethod::FFT_AMPLITUDE;
+    cfg.azimuthFromOrbit = !ctx.strategy
+        || ctx.strategy->azimuthModel == AzimuthOffsetModel::OrbitGeometry
+        || ctx.strategy->azimuthModel == AzimuthOffsetModel::Hybrid;
     cfg.masterSdr = ctx.masterSdr;
     cfg.slaveSdr  = ctx.slaveSdr;
     cfg.useBurstCache = ctx.useBurstCache;

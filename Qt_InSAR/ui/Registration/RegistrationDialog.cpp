@@ -1,4 +1,5 @@
 #include "RegistrationDialog.h"
+#include "services/registration/strategy/StrategyFactory.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -19,7 +20,7 @@
 RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
 {
     setWindowTitle(tr("影像配准参数"));
-    setMinimumSize(640, 520);
+    setMinimumSize(640, 560);
 
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
     QTabWidget* tabs = new QTabWidget(this);
@@ -49,40 +50,73 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
     QWidget* tab2 = new QWidget;
     QVBoxLayout* layout2 = new QVBoxLayout(tab2);
 
-    // ── 路线选择 ──
-    QGroupBox* routeGroup = new QGroupBox(tr("配准路线"));
-    QHBoxLayout* routeLayout = new QHBoxLayout(routeGroup);
+    // ── 产品模式 (自动识别, 只读) ──
+    mProductModeLabel = new QLabel(tr("未检测"));
+    mProductModeLabel->setStyleSheet("font-weight: bold;");
+    layout2->addWidget(mProductModeLabel);
 
-    mRouteGroup = new QButtonGroup(this);
-    mRouteGroup->setExclusive(true);
+    // ── 处理等级 ──
+    QGroupBox* levelGroup = new QGroupBox(tr("处理等级"));
+    QHBoxLayout* levelLayout = new QHBoxLayout(levelGroup);
+    mLevelGroup = new QButtonGroup(this);
+    mLevelGroup->setExclusive(true);
+    mFastBtn = new QRadioButton(tr("◇ 快速\n   跳过精配准/ESD"));
+    mStandardBtn = new QRadioButton(tr("★ 标准 (推荐)\n   完整流程"));
+    mHighBtn = new QRadioButton(tr("◆ 高精度\n   更多控制点/高阶模型"));
+    mLevelGroup->addButton(mFastBtn, static_cast<int>(ProcessingLevel::Fast));
+    mLevelGroup->addButton(mStandardBtn, static_cast<int>(ProcessingLevel::Standard));
+    mLevelGroup->addButton(mHighBtn, static_cast<int>(ProcessingLevel::High));
+    mStandardBtn->setChecked(true);
+    levelLayout->addWidget(mFastBtn);
+    levelLayout->addWidget(mStandardBtn);
+    levelLayout->addWidget(mHighBtn);
+    layout2->addWidget(levelGroup);
 
-    mRoute1Btn = new QRadioButton(tr("◇ 快速 — 轨道+FFT幅度\n   浏览产品 / 非高精度应用"));
-    mRoute2Btn = new QRadioButton(tr("△ 稳健 — NCC+FFTW相位相关\n   高稳定性 / 复杂区域"));
-    mRoute3Btn = new QRadioButton(tr("★ 标准 — FFT幅度+相位相关 (推荐)\n   Sentinel-1 IW TOPS SLC 标准处理"));
+    // ── 策略解释 (只读, 随等级/引擎联动) ──
+    mStrategySummary = new QLabel;
+    mStrategySummary->setWordWrap(true);
+    mStrategySummary->setStyleSheet(
+        "background: #f4f4f4; border: 1px solid #ddd; padding: 6px;");
+    layout2->addWidget(mStrategySummary);
 
-    mRouteGroup->addButton(mRoute1Btn, 0);
-    mRouteGroup->addButton(mRoute2Btn, 1);
-    mRouteGroup->addButton(mRoute3Btn, 2);
-    mRoute3Btn->setChecked(true);
+    // ── 粗配准引擎覆盖 ──
+    QFormLayout* form2 = new QFormLayout;
+    mCoarseEngineCombo = new QComboBox;
+    mCoarseEngineCombo->addItem(tr("策略默认 (推荐)"), -1);
+    mCoarseEngineCombo->addItem(QStringLiteral("FFT 幅度"), static_cast<int>(CorrelationMethod::FFT_AMPLITUDE));
+    mCoarseEngineCombo->addItem(QStringLiteral("NCC"), static_cast<int>(CorrelationMethod::NCC));
+    form2->addRow(tr("粗配准引擎:"), mCoarseEngineCombo);
 
-    routeLayout->addWidget(mRoute1Btn);
-    routeLayout->addWidget(mRoute2Btn);
-    routeLayout->addWidget(mRoute3Btn);
-    layout2->addWidget(routeGroup);
+    // ── 参数 (当前等级) ──
+    mCoarseWindow = new QSpinBox;
+    mCoarseWindow->setRange(32, 512);
+    form2->addRow(tr("粗窗口:"), mCoarseWindow);
 
-    // ── 堆叠参数页 ──
-    mRouteStack = new QStackedWidget;
-    mRouteStack->addWidget(createRoute1Page());
-    mRouteStack->addWidget(createRoute2Page());
-    mRouteStack->addWidget(createRoute3Page());
-    mRouteStack->setCurrentIndex(2); // 默认标准路线
-    layout2->addWidget(mRouteStack);
+    mSearchWindow = new QSpinBox;
+    mSearchWindow->setRange(8, 512);
+    mSearchWindow->setPrefix(QStringLiteral("±"));
+    form2->addRow(tr("NCC搜索半径:"), mSearchWindow);
 
-    // ── ESD (路线2/3共享) ──
-    mEnableEsd = new QCheckBox(tr("ESD增强频谱分集 (TOPSAR方位向精化至<0.001像素)"));
-    mEnableEsd->setChecked(true);
-    layout2->addWidget(mEnableEsd);
+    mFineWindow = new QSpinBox;
+    mFineWindow->setRange(64, 512);
+    form2->addRow(tr("精配准窗口:"), mFineWindow);
 
+    mOffsetPerBurst = new QSpinBox;
+    mOffsetPerBurst->setRange(4, 128);
+    form2->addRow(tr("控制点数(每burst):"), mOffsetPerBurst);
+
+    mCorrThreshold = new QDoubleSpinBox;
+    mCorrThreshold->setRange(0.0, 1.0);
+    mCorrThreshold->setSingleStep(0.05);
+    form2->addRow(tr("相关性阈值:"), mCorrThreshold);
+
+    mPolyDegree = new QComboBox;
+    mPolyDegree->addItem(QStringLiteral("1 (常数)"), 1);
+    mPolyDegree->addItem(QStringLiteral("2 (方位线性)"), 2);
+    mPolyDegree->addItem(QStringLiteral("3 (含距离耦合)"), 3);
+    form2->addRow(tr("方位多项式阶数:"), mPolyDegree);
+
+    layout2->addLayout(form2);
     layout2->addStretch();
     tabs->addTab(tab2, tr("配准策略"));
 
@@ -129,9 +163,11 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
     connect(btnBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
     mainLayout->addWidget(btnBox);
 
-    // 路线切换联动
-    connect(mRouteGroup, QOverload<int>::of(&QButtonGroup::idClicked),
-            this, &RegistrationDialog::onRouteChanged);
+    // 等级/引擎切换联动
+    connect(mLevelGroup, QOverload<int>::of(&QButtonGroup::idClicked),
+            this, &RegistrationDialog::onLevelChanged);
+    connect(mCoarseEngineCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { updateStrategyView(); });
 
     connect(masterBrowse, &QPushButton::clicked, this, [this]() {
         QString f = QFileDialog::getOpenFileName(this, tr("选择主影像"));
@@ -147,130 +183,57 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
     });
 }
 
-// ── 三个路线的参数页面 ──
-
-QWidget* RegistrationDialog::createRoute1Page()
+// ── 等级切换: 保存当前等级参数 → 加载新等级 (每等级独立, 不互相覆盖) ──
+void RegistrationDialog::onLevelChanged(int levelIdx)
 {
-    QWidget* page = new QWidget;
-    QFormLayout* f = new QFormLayout(page);
-    f->addRow(new QLabel(tr("粗配准: 轨道几何预测 + 小窗口FFT幅度域互相关")));
-
-    mR1CoarseFFT = new QSpinBox;
-    mR1CoarseFFT->setRange(32, 256);
-    mR1CoarseFFT->setValue(64);
-    mR1CoarseFFT->setPrefix(tr("粗窗口: "));
-    f->addRow(tr("FFT窗口大小:"), mR1CoarseFFT);
-
-    mR1ControlPoints = new QSpinBox;
-    mR1ControlPoints->setRange(16, 128);
-    mR1ControlPoints->setValue(32);
-    f->addRow(tr("控制点数(每burst):"), mR1ControlPoints);
-
-    QLabel* note = new QLabel(tr("注: 无精配准步骤，适合快速浏览。TOPSAR模式下精度有限。"));
-    note->setWordWrap(true);
-    note->setStyleSheet("color: #888;");
-    f->addRow(note);
-    return page;
+    saveCurrentProfile();
+    mActiveLevel = static_cast<ProcessingLevel>(levelIdx);
+    loadProfile(mActiveLevel);
+    updateStrategyView();
 }
 
-QWidget* RegistrationDialog::createRoute2Page()
+void RegistrationDialog::saveCurrentProfile() const
 {
-    QWidget* page = new QWidget;
-    QFormLayout* f = new QFormLayout(page);
-    f->addRow(new QLabel(tr("粗配准: 幅度NCC滑动窗口搜索")));
-
-    mR2NccWindow = new QSpinBox;
-    mR2NccWindow->setRange(32, 256);
-    mR2NccWindow->setValue(128);
-    mR2NccWindow->setPrefix(tr("NCC窗口: "));
-    f->addRow(tr("NCC窗口大小:"), mR2NccWindow);
-
-    mR2SearchWindow = new QSpinBox;
-    mR2SearchWindow->setRange(8, 512);
-    mR2SearchWindow->setValue(64);
-    mR2SearchWindow->setPrefix(tr("搜索半径: \xc2\xb1"));
-    f->addRow(tr("NCC搜索范围:"), mR2SearchWindow);
-
-    mR2ControlPoints = new QSpinBox;
-    mR2ControlPoints->setRange(16, 512);
-    mR2ControlPoints->setValue(64);
-    f->addRow(tr("控制点数(每burst):"), mR2ControlPoints);
-
-    f->addRow(new QLabel(tr("精配准: FFT幅度域相关 + 亚像素峰值")));
-
-    mR2FineWindow = new QSpinBox;
-    mR2FineWindow->setRange(64, 512);
-    mR2FineWindow->setValue(256);
-    mR2FineWindow->setPrefix(tr("精窗口: "));
-    f->addRow(tr("精配准窗口:"), mR2FineWindow);
-
-    mR2CorrThreshold = new QDoubleSpinBox;
-    mR2CorrThreshold->setRange(0.0, 1.0);
-    mR2CorrThreshold->setSingleStep(0.05);
-    mR2CorrThreshold->setValue(0.3);
-    f->addRow(tr("相关性阈值:"), mR2CorrThreshold);
-
-    mR2PolyDegree = new QComboBox;
-    mR2PolyDegree->addItem("1", 1);
-    mR2PolyDegree->addItem("2", 2);
-    mR2PolyDegree->addItem("3", 3);
-    mR2PolyDegree->setCurrentIndex(1);
-    f->addRow(tr("多项式阶数:"), mR2PolyDegree);
-
-    return page;
+    RegistrationProfileParams& prof =
+        mMetaHolder.profiles[static_cast<int>(mActiveLevel)];
+    prof.coarseWindowSize = mCoarseWindow->value();
+    prof.coarseSearchWindow = mSearchWindow->value();
+    prof.fineWindowSize = mFineWindow->value();
+    prof.offsetPerBurst = mOffsetPerBurst->value();
+    prof.correlationThreshold = mCorrThreshold->value();
+    prof.polynomialDegree = mPolyDegree->currentData().toInt();
 }
 
-QWidget* RegistrationDialog::createRoute3Page()
+void RegistrationDialog::loadProfile(ProcessingLevel level)
 {
-    QWidget* page = new QWidget;
-    QFormLayout* f = new QFormLayout(page);
-    f->addRow(new QLabel(tr("粗配准: 幅度域大窗口FFT互相关 + 亚像素峰值")));
-
-    mR3CoarseFFT = new QSpinBox;
-    mR3CoarseFFT->setRange(64, 512);
-    mR3CoarseFFT->setValue(256);
-    mR3CoarseFFT->setPrefix(tr("粗窗口: "));
-    f->addRow(tr("FFT窗口大小:"), mR3CoarseFFT);
-
-    mR3ControlPoints = new QSpinBox;
-    mR3ControlPoints->setRange(16, 512);
-    mR3ControlPoints->setValue(64);
-    f->addRow(tr("控制点数(每burst):"), mR3ControlPoints);
-
-    f->addRow(new QLabel(tr("精配准: FFT幅度域相关 + RANSAC多项式拟合")));
-
-    mR3FineWindow = new QSpinBox;
-    mR3FineWindow->setRange(64, 512);
-    mR3FineWindow->setValue(256);
-    mR3FineWindow->setPrefix(tr("精窗口: "));
-    f->addRow(tr("精配准窗口:"), mR3FineWindow);
-
-    mR3CorrThreshold = new QDoubleSpinBox;
-    mR3CorrThreshold->setRange(0.0, 1.0);
-    mR3CorrThreshold->setSingleStep(0.05);
-    mR3CorrThreshold->setValue(0.3);
-    f->addRow(tr("相关性阈值:"), mR3CorrThreshold);
-
-    mR3PolyDegree = new QComboBox;
-    mR3PolyDegree->addItem("1", 1);
-    mR3PolyDegree->addItem("2", 2);
-    mR3PolyDegree->addItem("3", 3);
-    mR3PolyDegree->setCurrentIndex(1);
-    f->addRow(tr("多项式阶数:"), mR3PolyDegree);
-
-    QLabel* note = new QLabel(tr("推荐参数: 窗口256×256, 点数64/burst, 多项式2阶。接近SNAP/ISCE标准流程。"));
-    note->setWordWrap(true);
-    note->setStyleSheet("color: #888;");
-    f->addRow(note);
-    return page;
+    const RegistrationProfileParams& prof =
+        mMetaHolder.profiles[static_cast<int>(level)];
+    mCoarseWindow->setValue(prof.coarseWindowSize);
+    mSearchWindow->setValue(prof.coarseSearchWindow);
+    mFineWindow->setValue(prof.fineWindowSize);
+    mOffsetPerBurst->setValue(prof.offsetPerBurst);
+    mCorrThreshold->setValue(prof.correlationThreshold);
+    int idx = mPolyDegree->findData(prof.polynomialDegree);
+    if (idx >= 0) mPolyDegree->setCurrentIndex(idx);
 }
 
-void RegistrationDialog::onRouteChanged(int routeIdx)
+// ── 策略解释 (随产品模式/等级/引擎覆盖联动) ──
+void RegistrationDialog::updateStrategyView()
 {
-    mRouteStack->setCurrentIndex(routeIdx);
-    // 路线1无ESD
-    mEnableEsd->setEnabled(routeIdx != 0);
-    if (routeIdx == 0) mEnableEsd->setChecked(false);
+    mProductModeLabel->setText(QStringLiteral("产品模式: %1 (自动识别)")
+        .arg(productModeName(mMetaHolder.productMode)));
+
+    RegistrationStrategy strat = StrategyFactory::create(
+        mMetaHolder.productMode, mActiveLevel);
+    int engData = mCoarseEngineCombo->currentData().toInt();
+    if (engData >= 0) {
+        strat.coarseCorr = static_cast<CorrelationMethod>(engData);
+        strat.summary.prepend(QStringLiteral("(粗配准引擎已覆盖) "));
+    }
+    QString text = strat.summary;
+    if (!strat.note.isEmpty())
+        text += QStringLiteral("\n说明: ") + strat.note;
+    mStrategySummary->setText(text);
 }
 
 // ── setParams / params ──
@@ -278,6 +241,7 @@ void RegistrationDialog::onRouteChanged(int routeIdx)
 void RegistrationDialog::setParams(const RegistrationParams& p)
 {
     mMetaHolder = p;
+    mActiveLevel = p.level;
 
     mMasterPath->setText(p.masterPath);
     mSlavePath->setText(p.slavePath);
@@ -295,36 +259,21 @@ void RegistrationDialog::setParams(const RegistrationParams& p)
     mMasterMeta->setText(QStringLiteral("主: %1").arg(metaText(true)));
     mSlaveMeta->setText(QStringLiteral("辅: %1").arg(metaText(false)));
 
-    // 路线
-    int routeIdx = static_cast<int>(p.route);
-    if (routeIdx < 0 || routeIdx > 2) routeIdx = 2;
-    mRouteGroup->button(routeIdx)->setChecked(true);
-    mRouteStack->setCurrentIndex(routeIdx);
-    mEnableEsd->setEnabled(routeIdx != 0);
+    // 等级
+    QAbstractButton* lvlBtn = mLevelGroup->button(static_cast<int>(p.level));
+    if (lvlBtn) lvlBtn->setChecked(true);
 
-    // Route1
-    mR1CoarseFFT->setValue(p.coarseWindowSize);
-    mR1ControlPoints->setValue(p.offsetPerBurst);
+    // 引擎覆盖
+    int engIdx = mCoarseEngineCombo->findData(
+        p.coarseCorrOverride.has_value()
+            ? static_cast<int>(p.coarseCorrOverride.value()) : -1);
+    if (engIdx >= 0) mCoarseEngineCombo->setCurrentIndex(engIdx);
+    else mCoarseEngineCombo->setCurrentIndex(0);
 
-    // Route2
-    mR2NccWindow->setValue(p.coarseWindowSize);
-    mR2SearchWindow->setValue(p.coarseSearchWindow);
-    mR2ControlPoints->setValue(p.offsetPerBurst);
-    mR2FineWindow->setValue(p.fineWindowSize);
-    mR2CorrThreshold->setValue(p.correlationThreshold);
-    int idx = mR2PolyDegree->findData(p.polynomialDegree);
-    if (idx >= 0) mR2PolyDegree->setCurrentIndex(idx);
-
-    // Route3
-    mR3CoarseFFT->setValue(p.coarseWindowSize);
-    mR3ControlPoints->setValue(p.offsetPerBurst);
-    mR3FineWindow->setValue(p.fineWindowSize);
-    mR3CorrThreshold->setValue(p.correlationThreshold);
-    idx = mR3PolyDegree->findData(p.polynomialDegree);
-    if (idx >= 0) mR3PolyDegree->setCurrentIndex(idx);
+    loadProfile(p.level);
 
     // 重采样
-    idx = mResamplingMethod->findData(p.resamplingMethod);
+    int idx = mResamplingMethod->findData(p.resamplingMethod);
     if (idx >= 0) mResamplingMethod->setCurrentIndex(idx);
     mSincWindow->setValue(p.sincWindowSize);
     mSincBeta->setValue(p.sincBeta);
@@ -333,51 +282,35 @@ void RegistrationDialog::setParams(const RegistrationParams& p)
     mOutputDir->setText(p.outputDir);
     mOutputPrefix->setText(p.outputPrefix);
     mEstimateBaseline->setChecked(p.estimateBaseline);
-    mEnableEsd->setChecked(p.enableEsd);
+
+    updateStrategyView();
 }
 
 RegistrationParams RegistrationDialog::params() const
 {
     RegistrationParams p = mMetaHolder;
 
-    int routeIdx = mRouteGroup->checkedId();
-    if (routeIdx < 0) routeIdx = 2;
-    p.route = static_cast<RegRoute>(routeIdx);
+    saveCurrentProfile();
+    p.level = mActiveLevel;
 
     p.masterPath = mMasterPath->text();
     p.slavePath = mSlavePath->text();
 
-    // 根据路线读取对应参数
-    switch (p.route) {
-    case RegRoute::Route1_OrbitFFT:
-        p.coarseWindowSize = mR1CoarseFFT->value();
-        p.offsetPerBurst = mR1ControlPoints->value();
-        p.coarseMethod = "Orbit";
-        p.fineMethod = "SubPixel";
-        p.enableEsd = false;
-        break;
-    case RegRoute::Route2_NCC_FFTW:
-        p.coarseWindowSize = mR2NccWindow->value();
-        p.coarseSearchWindow = mR2SearchWindow->value();
-        p.offsetPerBurst = mR2ControlPoints->value();
-        p.fineWindowSize = mR2FineWindow->value();
-        p.correlationThreshold = mR2CorrThreshold->value();
-        p.polynomialDegree = mR2PolyDegree->currentData().toInt();
-        p.coarseMethod = "CrossCorrelation";
-        p.fineMethod = "FFT";
-        p.enableEsd = mEnableEsd->isChecked();
-        break;
-    case RegRoute::Route3_FFT_FFTW:
-        p.coarseWindowSize = mR3CoarseFFT->value();
-        p.offsetPerBurst = mR3ControlPoints->value();
-        p.fineWindowSize = mR3FineWindow->value();
-        p.correlationThreshold = mR3CorrThreshold->value();
-        p.polynomialDegree = mR3PolyDegree->currentData().toInt();
-        p.coarseMethod = "FFT";
-        p.fineMethod = "FFT";
-        p.enableEsd = mEnableEsd->isChecked();
-        break;
-    }
+    // 引擎覆盖
+    int engData = mCoarseEngineCombo->currentData().toInt();
+    if (engData >= 0)
+        p.coarseCorrOverride = static_cast<CorrelationMethod>(engData);
+    else
+        p.coarseCorrOverride.reset();
+
+    // 扁平参数 ← 当前等级 (管线读取)
+    const auto& prof = p.profiles[static_cast<int>(p.level)];
+    p.coarseWindowSize = prof.coarseWindowSize;
+    p.coarseSearchWindow = prof.coarseSearchWindow;
+    p.fineWindowSize = prof.fineWindowSize;
+    p.offsetPerBurst = prof.offsetPerBurst;
+    p.correlationThreshold = prof.correlationThreshold;
+    p.polynomialDegree = prof.polynomialDegree;
 
     // 重采样
     p.resamplingMethod = mResamplingMethod->currentData().toString();

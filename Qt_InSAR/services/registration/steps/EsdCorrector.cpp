@@ -47,8 +47,9 @@ static void resampleEsdWindow(
 }
 
 bool EsdCorrector::execute(PipelineContext& ctx) {
-    if (ctx.params->route == RegRoute::Route1_OrbitFFT) return true;
-    if (!ctx.isTopsar || !ctx.params->enableEsd) return true;
+    if (!ctx.strategy || ctx.strategy->azimuthCorrection != AzimuthCorrection::ESD)
+        return true;
+    if (!ctx.isTopsar) return true;
 
     int N = ctx.data.burstCount;
     int L = ctx.data.linesPerBurst;

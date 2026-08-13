@@ -21,6 +21,19 @@
 
 #include "controllers/ApplicationController.h"
 
+namespace {
+// profiles[level] → 扁平参数 (管线直接读取)
+void syncProfileToFlat(RegistrationParams& p) {
+    const auto& prof = p.profiles[static_cast<int>(p.level)];
+    p.coarseWindowSize = prof.coarseWindowSize;
+    p.coarseSearchWindow = prof.coarseSearchWindow;
+    p.fineWindowSize = prof.fineWindowSize;
+    p.offsetPerBurst = prof.offsetPerBurst;
+    p.correlationThreshold = prof.correlationThreshold;
+    p.polynomialDegree = prof.polynomialDegree;
+}
+} // namespace
+
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
@@ -348,16 +361,16 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mLblSlaveInfo->setMaximumHeight(36);
     pnlIO->addSmallWidget(mLblSlaveInfo);
 
-    // ── Panel 2: 配准路线 ──
-    SARibbonPanel* pnlRoute = page->addPanel(QStringLiteral("配准路线"));
+    // ── Panel 2: 处理等级 (策略由产品模式自动决定) ──
+    SARibbonPanel* pnlRoute = page->addPanel(QStringLiteral("处理等级"));
 
-    mRouteCombo = new QComboBox(this);
-    mRouteCombo->addItem(QStringLiteral("★ 标准 (推荐)"), static_cast<int>(RegRoute::Route3_FFT_FFTW));
-    mRouteCombo->addItem(QStringLiteral("△ 稳健"), static_cast<int>(RegRoute::Route2_NCC_FFTW));
-    mRouteCombo->addItem(QStringLiteral("◇ 快速"), static_cast<int>(RegRoute::Route1_OrbitFFT));
-    mRouteCombo->setMinimumWidth(130);
-    mRouteCombo->setToolTip(QStringLiteral("标准: FFT幅度+相位 | 稳健: NCC+相位 | 快速: 轨道+FFT"));
-    pnlRoute->addSmallWidget(mRouteCombo);
+    mLevelCombo = new QComboBox(this);
+    mLevelCombo->addItem(QStringLiteral("★ 标准 (推荐)"), static_cast<int>(ProcessingLevel::Standard));
+    mLevelCombo->addItem(QStringLiteral("◆ 高精度"), static_cast<int>(ProcessingLevel::High));
+    mLevelCombo->addItem(QStringLiteral("◇ 快速"), static_cast<int>(ProcessingLevel::Fast));
+    mLevelCombo->setMinimumWidth(130);
+    mLevelCombo->setToolTip(QStringLiteral("处理等级只调整参数预设; 配准策略由产品模式自动决定"));
+    pnlRoute->addSmallWidget(mLevelCombo);
 
     mCoarseWinSpin = new QSpinBox(this);
     mCoarseWinSpin->setRange(32, 512);
@@ -375,31 +388,19 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
     mSearchWinSpin->setRange(8, 512);
     mSearchWinSpin->setValue(64);
     mSearchWinSpin->setPrefix(QStringLiteral("搜索±"));
-    mSearchWinSpin->setVisible(false); // 默认路线3隐藏
+    mSearchWinSpin->setVisible(false);
     pnlRoute->addSmallWidget(mSearchWinSpin);
 
-    mEsdCheck = new QCheckBox(QStringLiteral("ESD"), this);
-    mEsdCheck->setChecked(true);
-    mEsdCheck->setToolTip(QStringLiteral("增强频谱分集 (TOPSAR)"));
-    pnlRoute->addSmallWidget(mEsdCheck);
-
-    // 路线切换联动
-    connect(mRouteCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+    // 等级切换: 保存当前等级参数 → 加载新等级参数 (每等级独立, 不互相覆盖)
+    connect(mLevelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int /*idx*/) {
-        RegRoute r = static_cast<RegRoute>(mRouteCombo->currentData().toInt());
-        bool isR1 = (r == RegRoute::Route1_OrbitFFT);
-        bool isR2 = (r == RegRoute::Route2_NCC_FFTW);
-        mFineWinSpin->setEnabled(!isR1);
-        mEsdCheck->setEnabled(!isR1);
-        mSearchWinSpin->setVisible(isR2);
-
-        // 更新默认窗口大小
-        if (isR1)      { mCoarseWinSpin->setValue(64);  mFineWinSpin->setValue(128); }
-        else if (isR2) { mCoarseWinSpin->setValue(128); mFineWinSpin->setValue(256); }
-        else           { mCoarseWinSpin->setValue(256); mFineWinSpin->setValue(256); }
-
-        if (isR1) mEsdCheck->setChecked(false);
-        else if (!isR1 && !mEsdCheck->isEnabled()) mEsdCheck->setChecked(true);
+        if (mLevelLoading) return;
+        saveRibbonProfile(mActiveLevel);
+        mActiveLevel = static_cast<ProcessingLevel>(mLevelCombo->currentData().toInt());
+        loadRibbonProfile(mActiveLevel);
+        if (mSearchWinSpin)
+            mSearchWinSpin->setVisible(mRegParams.coarseCorrOverride.has_value()
+                && mRegParams.coarseCorrOverride.value() == CorrelationMethod::NCC);
     });
 
     // ── Panel 3: 执行 ──
@@ -449,15 +450,16 @@ void MainWindow::createCategoryRegistration(SARibbonCategory* page)
         emit baselineEstimateRequested();
     });
 
-    // ── 初始参数 ──
-    mRegParams.route = RegRoute::Route3_FFT_FFTW;
-    mRegParams.coarseMethod = "FFT";
-    mRegParams.fineMethod = "FFT";
+    // ── 初始参数: 每等级独立预设 ──
+    mRegParams.level = ProcessingLevel::Standard;
     mRegParams.resamplingMethod = "Sinc";
     mRegParams.outputPrefix = "registered";
-    mRegParams.coarseWindowSize = 128;
-    mRegParams.offsetPerBurst = 8;
-    mRegParams.enableEsd = true;
+    mRegParams.profiles[0] = RegistrationProfileParams{64, 64, 128, 32, 0.3, 2};   // Fast
+    mRegParams.profiles[1] = RegistrationProfileParams{256, 64, 256, 8, 0.3, 2};   // Standard
+    mRegParams.profiles[2] = RegistrationProfileParams{256, 64, 256, 16, 0.3, 3};  // High
+    syncProfileToFlat(mRegParams);
+    mActiveLevel = mRegParams.level;
+    loadRibbonProfile(mActiveLevel);
 }
 
 // ── 配准参数收集 ──
@@ -465,58 +467,37 @@ RegistrationParams MainWindow::collectRegParams() const
 {
     RegistrationParams p = mRegParams;
 
-    if (mRouteCombo) {
-        p.route = static_cast<RegRoute>(mRouteCombo->currentData().toInt());
-    }
-    if (mCoarseWinSpin) {
-        p.coarseWindowSize = mCoarseWinSpin->value();
-    }
+    if (mLevelCombo)
+        p.level = static_cast<ProcessingLevel>(mLevelCombo->currentData().toInt());
 
-    switch (p.route) {
-    case RegRoute::Route1_OrbitFFT:
-        p.coarseMethod = "Orbit";
-        p.fineMethod = "SubPixel";
-        p.enableEsd = false;
-        p.offsetPerBurst = 32;
-        break;
-    case RegRoute::Route2_NCC_FFTW:
-        p.coarseMethod = "CrossCorrelation";
-        p.fineMethod = "FFT";
-        if (mSearchWinSpin) p.coarseSearchWindow = mSearchWinSpin->value();
-        if (mFineWinSpin) p.fineWindowSize = mFineWinSpin->value();
-        if (mEsdCheck) p.enableEsd = mEsdCheck->isChecked();
-        p.offsetPerBurst = 8;
-        break;
-    case RegRoute::Route3_FFT_FFTW:
-        p.coarseMethod = "FFT";
-        p.fineMethod = "FFT";
-        if (mFineWinSpin) p.fineWindowSize = mFineWinSpin->value();
-        if (mEsdCheck) p.enableEsd = mEsdCheck->isChecked();
-        p.offsetPerBurst = 8;
-        break;
-    }
+    // 当前等级参数 ← Ribbon 控件
+    RegistrationProfileParams& prof = p.profiles[static_cast<int>(p.level)];
+    if (mCoarseWinSpin) prof.coarseWindowSize = mCoarseWinSpin->value();
+    if (mFineWinSpin)   prof.fineWindowSize = mFineWinSpin->value();
+    if (mSearchWinSpin) prof.coarseSearchWindow = mSearchWinSpin->value();
+
+    syncProfileToFlat(p);
     return p;
 }
 
 // ── 从对话框回写参数到 Ribbon ──
 void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
 {
-    if (mRouteCombo) {
-        for (int i = 0; i < mRouteCombo->count(); ++i) {
-            if (mRouteCombo->itemData(i).toInt() == static_cast<int>(p.route)) {
-                mRouteCombo->setCurrentIndex(i);
+    mLevelLoading = true;
+    if (mLevelCombo) {
+        for (int i = 0; i < mLevelCombo->count(); ++i) {
+            if (mLevelCombo->itemData(i).toInt() == static_cast<int>(p.level)) {
+                mLevelCombo->setCurrentIndex(i);
                 break;
             }
         }
     }
-    if (mCoarseWinSpin)
-        mCoarseWinSpin->setValue(p.coarseWindowSize);
-    if (mFineWinSpin)
-        mFineWinSpin->setValue(p.fineWindowSize);
+    mLevelLoading = false;
+    mActiveLevel = p.level;
+    loadRibbonProfile(p.level);
     if (mSearchWinSpin)
-        mSearchWinSpin->setValue(p.coarseSearchWindow);
-    if (mEsdCheck)
-        mEsdCheck->setChecked(p.enableEsd);
+        mSearchWinSpin->setVisible(p.coarseCorrOverride.has_value()
+            && p.coarseCorrOverride.value() == CorrelationMethod::NCC);
 
     // 保留产品来源的轨道/多普勒/路径，不被对话框覆盖 (波长/间距/PRF由产品XML提供)
     QList<OrbitStateVector> mov = mRegParams.masterOrbitVectors;
@@ -540,6 +521,22 @@ void MainWindow::applyParamsToRibbon(const RegistrationParams& p)
     mRegParams.slaveDisplayName = sd;
     mRegParams.masterPath = mp;
     mRegParams.slavePath = sp;
+}
+
+void MainWindow::saveRibbonProfile(ProcessingLevel level)
+{
+    RegistrationProfileParams& prof = mRegParams.profiles[static_cast<int>(level)];
+    if (mCoarseWinSpin) prof.coarseWindowSize = mCoarseWinSpin->value();
+    if (mFineWinSpin)   prof.fineWindowSize = mFineWinSpin->value();
+    if (mSearchWinSpin) prof.coarseSearchWindow = mSearchWinSpin->value();
+}
+
+void MainWindow::loadRibbonProfile(ProcessingLevel level)
+{
+    const RegistrationProfileParams& prof = mRegParams.profiles[static_cast<int>(level)];
+    if (mCoarseWinSpin) mCoarseWinSpin->setValue(prof.coarseWindowSize);
+    if (mFineWinSpin)   mFineWinSpin->setValue(prof.fineWindowSize);
+    if (mSearchWinSpin) mSearchWinSpin->setValue(prof.coarseSearchWindow);
 }
 
 // ── 干涉图参数回写Ribbon ──

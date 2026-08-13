@@ -6,6 +6,11 @@
 bool TOPSARDeramp::execute(PipelineContext& ctx)
 {
     if (!ctx.isTopsar) return true;
+    // 仅 TOPS 偏移模型需要 deramp (SCANSAR 等其它 burst 模式不 deramp)
+    if (ctx.strategy && ctx.strategy->offsetModel != OffsetModelKind::TOPS) {
+        qDebug() << "[TOPSARDeramp] skip — offset model is not TOPS";
+        return true;
+    }
     if (!ctx.slaveSdr) {
         // GDAL 非缓存路径: 幅度相关不受 deramp 影响, 重采样阶段再对辅影像 deramp
         qDebug() << "[TOPSARDeramp] skip — no burst cache (deramp deferred to resampler)";
