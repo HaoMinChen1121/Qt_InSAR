@@ -19,6 +19,14 @@
 
 static constexpr int S1_ORBIT_REPEAT_CYCLE = 175; // Sentinel-1 12天/175轨道重复周期
 
+// ESA 相对轨道号约定: rel = ((abs − 73) % 175) + 1
+// (S1A/S1B 重复周期起点均为绝对轨道 73; 实测 abs 40626 → rel 129, 与 ASF Path 一致)
+static int s1RelativeOrbit(int absOrbit)
+{
+    return ((absOrbit - 73) % S1_ORBIT_REPEAT_CYCLE + S1_ORBIT_REPEAT_CYCLE)
+        % S1_ORBIT_REPEAT_CYCLE + 1;
+}
+
 // 前向声明 (定义在 parseAnnotationStream 之前)
 class SlcAnnotationReader;
 static bool parseAnnotationFromReader(SlcAnnotationReader& reader,
@@ -222,8 +230,7 @@ bool Sentinel1Product::openZip(const QString& zipPath) {
     // orbit = parts[6] (after filtering: S1A/IW/SLC/1SDV/date/date/orbit/...)
     if (zipParts.size() >= 7) {
         mOrbitNumberAbs = zipParts[6].toInt();
-        mOrbitNumberRel = mOrbitNumberAbs % S1_ORBIT_REPEAT_CYCLE;
-        if (mOrbitNumberRel == 0) mOrbitNumberRel = S1_ORBIT_REPEAT_CYCLE;
+        mOrbitNumberRel = s1RelativeOrbit(mOrbitNumberAbs);
         mSensorInfo.absoluteOrbit = mOrbitNumberAbs;
         mSensorInfo.relativeOrbit = mOrbitNumberRel;
         if (mSensorInfo.orbitDirection.isEmpty())
@@ -414,8 +421,7 @@ bool Sentinel1Product::parseManifest(const QString& manifestPath) {
         // 轨道号
         if (parts.size() >= 7) {
             mOrbitNumberAbs = parts[6].toInt();
-            mOrbitNumberRel = mOrbitNumberAbs % S1_ORBIT_REPEAT_CYCLE;
-            if (mOrbitNumberRel == 0) mOrbitNumberRel = S1_ORBIT_REPEAT_CYCLE;
+            mOrbitNumberRel = s1RelativeOrbit(mOrbitNumberAbs);
             mSensorInfo.absoluteOrbit = mOrbitNumberAbs;
             mSensorInfo.relativeOrbit = mOrbitNumberRel;
             mSensorInfo.orbitDirection = (mOrbitNumberRel % 2 == 1)
@@ -526,14 +532,17 @@ static bool parseAnnotationFromReader(SlcAnnotationReader& reader,
     if (swathName.isEmpty()) return false;
 
     if (!ann.identity.passDirection.isEmpty()) {
-        QString p = ann.identity.passDirection;
-        if (p == "ASCENDING")      mSensorInfo.orbitDirection = QStringLiteral("Ascending");
-        else if (p == "DESCENDING") mSensorInfo.orbitDirection = QStringLiteral("Descending");
+        // XML 值为混合大小写 ("Ascending"), 必须大小写不敏感比较
+        // (旧实现全大写比较永不匹配 → 升降轨回退误判, 2026-08 实测)
+        const QString p = ann.identity.passDirection;
+        if (p.compare(QStringLiteral("ASCENDING"), Qt::CaseInsensitive) == 0)
+            mSensorInfo.orbitDirection = QStringLiteral("Ascending");
+        else if (p.compare(QStringLiteral("DESCENDING"), Qt::CaseInsensitive) == 0)
+            mSensorInfo.orbitDirection = QStringLiteral("Descending");
     }
     if (ann.identity.absoluteOrbitNumber > 0) {
         mOrbitNumberAbs = ann.identity.absoluteOrbitNumber;
-        mOrbitNumberRel = mOrbitNumberAbs % S1_ORBIT_REPEAT_CYCLE;
-        if (mOrbitNumberRel == 0) mOrbitNumberRel = S1_ORBIT_REPEAT_CYCLE;
+        mOrbitNumberRel = s1RelativeOrbit(mOrbitNumberAbs);
     }
     if (!ann.dopplerEstimates.isEmpty() && !ann.dopplerEstimates[0].dataDcPoly.isEmpty())
         mDoppler.centroid = ann.dopplerEstimates[0].dataDcPoly[0];

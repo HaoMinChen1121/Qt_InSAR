@@ -119,6 +119,10 @@ void computeOrbitOffset(const QList<OrbitStateVector>& mOrb,
     // 导致近距采样点 slave 窗口越界被丢弃, 多项式拟合偏倚
     (void)nearRange; (void)centerCol; (void)rangeSpacing;
     rangeOff = 0.0;
-    aziOff = ((sx_t - mx_t) * mvx_t + (sy_t - my_t) * mvy_t
-            + (sz_t - mz_t) * mvz_t) / (mVmag * aziSpacing);
+    // 方位偏移 = 重采样源行偏移 (master 行 gRow ← slave 行 gRow + aziOff):
+    // (s−m)·v̂ > 0 表示辅星超前 → 同一地物出现在辅影像更早的行 (gRow − |off|),
+    // 故需取负号。2026-08 实测: 12 天对沿轨差 238 行时正号约定错 476 行,
+    // 且 ESD 只能修 burst 间相对误差、无法修常数误差 → 输出整体错位。
+    aziOff = -((sx_t - mx_t) * mvx_t + (sy_t - my_t) * mvy_t
+             + (sz_t - mz_t) * mvz_t) / (mVmag * aziSpacing);
 }

@@ -205,12 +205,16 @@ static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
             continue;
         }
 
+        // 条带被裁剪时校正 sy 原点 (实际条带起点可能晚于请求起点)
+        const int actualStripY0 = std::max(rc.sY0, cfg.burstRow0);
+        const double syShift = actualStripY0 - rc.sY0;
+
         // SoA直传: Horizontal SoA → tempSoA (SoA) → Vertical SoA → rowBuf (AoS)
         sar::sincInterp1D_Horizontal_SoA(stripView, cfg.sW, actualStripH, rc.sx,
             *cfg.sincLUT, cfg.sincW, tempSoA, cfg.mW);
         syBuf.resize(cfg.mW);
         for (int c = 0; c < cfg.mW; ++c)
-            syBuf[c] = rc.sy[c];   // 条带内位置 (旧约定 syFrac+sincW == 条带内位置)
+            syBuf[c] = rc.sy[c] - syShift;   // 条带内位置 (裁剪原点校正)
         sar::sincInterp1D_Vertical_SoA(
             tempSoA.view(0, actualStripH * cfg.mW),
             actualStripH, cfg.mW, syBuf, *cfg.sincLUT, cfg.sincW, rowBuf.data());
@@ -291,55 +295,100 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         if (sStarts.size() > slaveBurstIdx)
             slaveRow0 = sStarts[slaveBurstIdx];
 
+        // ── 方位偏移范围 vs 本 burst 窗口 ──
+        // 大方位偏移 (如 12 天对沿轨差 238 行) 时源位置落在相邻 burst,
+        // 窗口必须跨 burst 扩展; 缓存路径 (零拷贝 per-burst 视图) 无法跨 burst
+        const double a0 = br.aziPoly.coeffs[0];
+        const double a1 = br.aziPoly.coeffs[1];
+        const double a2 = br.aziPoly.coeffs[2];
+        const double aLoc0 = static_cast<double>(b * L) / mH;
+        const double aLoc1 = static_cast<double>(qMin((b + 1) * L, mH)) / mH;
+        const double v0 = a0 + a1 * aLoc0, v1 = a0 + a1 * aLoc1;
+        const double minAzi = std::min(v0, v1) - std::abs(a2);
+        const double maxAzi = std::max(v0, v1) + std::abs(a2);
+        // 条带必须覆盖本 burst 全部输出行的源位置: k + aziOff ∈ [sincW, sL−sincW),
+        // 即 首行源在条带内 (minAzi ≥ sincW) 且 末行源在条带内 ((L−1)+maxAzi < sL−sincW)
+        const bool stripFitsInBurst = (minAzi - sincW >= 0)
+            && (static_cast<double>(L - 1) + maxAzi + sincW < static_cast<double>(sL));
+
         // ── 获取 burst SoA 数据 ──
         qint64 readUs = 0, derampUs = 0;
         sar::ComplexSoA soaBurst;          // 拥有内存 (非缓存路径)
         sar::ComplexSoAView burstView;     // 最终使用的视图
-        int actualBurstH = sL;             // 实际 burst 行数 (末 burst 可能少于 sL)
+        int winRow0 = slaveRow0;           // 窗口原点 (缓存路径 = burst 起始行)
 
-        if (ctx.useBurstCache && ctx.slaveSdr) {
+        if (ctx.useBurstCache && ctx.slaveSdr && stripFitsInBurst) {
             // ── 缓存路径: 零拷贝, 数据已 deinterleaved + deramped ──
             burstView = ctx.slaveSdr->burstSoaView(slaveBurstIdx);
             if (!burstView.re || !burstView.im) {
                 ctx.errorMessage = QStringLiteral("SincResampler: null cached burst view");
                 return false;
             }
-            actualBurstH = burstView.size / sW;
-            if (actualBurstH <= 0 || actualBurstH > sL) {
-                qWarning() << QStringLiteral("[Step9] Invalid burst view b=%1 size=%2 sW=%3 sL=%4")
-                    .arg(slaveBurstIdx).arg(burstView.size).arg(sW).arg(sL);
+            if (burstView.size / sW <= 0 || burstView.size / sW > sL) {
                 ctx.errorMessage = QStringLiteral("SincResampler: invalid cached burst view");
                 return false;
             }
-        } else {
-            // ── 原有路径: AoS 读取 + AVX2 deinterleave + deramp ──
-            int readH = qMin(sL, sH - slaveRow0);
+        } else if (ctx.useBurstCache && ctx.slaveSdr) {
+            // ── SDR 直读扩展窗口 (缓存数据已由 TOPSARDeramp deramp) ──
+            winRow0 = std::max(0, slaveRow0
+                + static_cast<int>(std::floor(minAzi)) - sincW);
+            const int readH = std::min(sH - winRow0,
+                sL + static_cast<int>(std::ceil(maxAzi))
+                    - static_cast<int>(std::floor(minAzi)) + 2 * sincW);
             if (readH <= 0) {
                 ctx.errorMessage = QStringLiteral("SincResampler: slave burst out of bounds");
                 return false;
             }
             QElapsedTimer rt; rt.start();
+            QVector<std::complex<float>> fullBurst(static_cast<qsizetype>(sW) * readH);
+            ctx.slaveSdr->readWindow(0, winRow0, sW, readH, fullBurst.data());
+            readUs = rt.nsecsElapsed() / 1000;
+            const int winH = readH;
+            soaBurst.fromAos(fullBurst.constData(), fullBurst.size());
+            fullBurst.clear();
+            burstView = soaBurst.view(0, sW * winH);
+            qDebug().nospace() << "[Step9] burst " << (b + 1)
+                << " expanded window (SDR) winRow0=" << winRow0
+                << " winH=" << winH
+                << " aziOff=[" << minAzi << "," << maxAzi << "]";
+        } else {
+            // ── GDAL AoS 路径: 窗口按方位偏移扩展 + deramp ──
+            // (缓存路径下 ctx.slaveReader 为 null, 必须走上面的 SDR 分支)
+            winRow0 = std::max(0, slaveRow0
+                + static_cast<int>(std::floor(minAzi)) - sincW);
+            const int readH = std::min(sH - winRow0,
+                sL + static_cast<int>(std::ceil(maxAzi))
+                    - static_cast<int>(std::floor(minAzi)) + 2 * sincW);
+            if (readH <= 0 || !ctx.slaveReader) {
+                ctx.errorMessage = QStringLiteral("SincResampler: no slave reader for expanded window");
+                return false;
+            }
+            QElapsedTimer rt; rt.start();
             QVector<std::complex<float>> fullBurst =
-                ctx.slaveReader->readBandWindow(0, 0, slaveRow0, sW, readH);
+                ctx.slaveReader->readBandWindow(0, 0, winRow0, sW, readH);
             readUs = rt.nsecsElapsed() / 1000;
             if (fullBurst.isEmpty()) {
                 ctx.errorMessage = QStringLiteral("SincResampler: readBandWindow empty");
                 return false;
             }
-            actualBurstH = fullBurst.size() / sW;
+            const int winH = fullBurst.size() / sW;
             rt.start();
             soaBurst.fromAos(fullBurst.constData(), fullBurst.size());
             if (doDeramp)
-                sar::applyDeramp_SoA(soaBurst, sW, actualBurstH, slaveRow0, slaveBurstIdx, prf, kt);
+                sar::applyDeramp_SoA(soaBurst, sW, winH, winRow0, slaveBurstIdx, prf, kt);
             derampUs = rt.nsecsElapsed() / 1000;
             fullBurst.clear();
-            burstView = soaBurst.view(0, sW * actualBurstH);
+            burstView = soaBurst.view(0, sW * winH);
+            qDebug().nospace() << "[Step9] burst " << (b + 1)
+                << " expanded window (GDAL) winRow0=" << winRow0
+                << " winH=" << winH
+                << " aziOff=[" << minAzi << "," << maxAzi << "]";
         }
 
-        // ── 构建工作项 + 分批 ──
+        // ── 构建工作项 + 分批 (输出行 = 主 burst 全部 L 行, 与窗口高度解耦) ──
         QVector<ResampleWorkItem> items;
-        items.reserve(actualBurstH);
-        for (int r = 0; r < actualBurstH; ++r)
+        items.reserve(L);
+        for (int r = 0; r < L; ++r)
             items.append({burstRow0 + r, burstRow0 + r,
                           br.rangePoly, br.aziPoly});
 
@@ -355,7 +404,7 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         // ── SoA直传: 所有线程共享 burst 只读视图 ──
         ResampleConfig rcfg;
         rcfg.fullBurstSoA = burstView;
-        rcfg.sW = sW; rcfg.burstH = actualBurstH; rcfg.burstRow0 = burstRow0;
+        rcfg.sW = sW; rcfg.burstH = burstView.size / sW; rcfg.burstRow0 = winRow0;
         rcfg.sH = sH;
         rcfg.mW = mW; rcfg.mH = mH;
         rcfg.sincW = sincW; rcfg.beta = beta;
