@@ -96,11 +96,6 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     f1->addRow(tr("距离向多视比:"), mRangeLooks);
     mAzimuthLooks = new QSpinBox; mAzimuthLooks->setRange(1, 32); mAzimuthLooks->setValue(4);
     f1->addRow(tr("方位向多视比:"), mAzimuthLooks);
-    mOutputType = new QComboBox;
-    mOutputType->addItems({tr("复数"), tr("相位"), tr("相干性")});
-    f1->addRow(tr("输出类型:"), mOutputType);
-    mSpectralFilter = new QCheckBox(tr("频谱偏移滤波")); mSpectralFilter->setChecked(true);
-    f1->addWidget(mSpectralFilter);
     mAzRampCorr = new QCheckBox(tr("deburst 方位时间校正"));
     mAzRampCorr->setChecked(true);
     mAzRampCorr->setToolTip(tr("去除逐 burst 残余方位斜坡, 保证 burst 拼接处相位连续 (TOPSAR)"));
@@ -109,34 +104,19 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     mPhaseAlign->setChecked(true);
     mPhaseAlign->setToolTip(tr("合并产品中子条带重叠区鲁棒估计常数+线性相位差并校正, 消除边界相位台阶"));
     f1->addWidget(mPhaseAlign);
+    mVisColor = new QCheckBox(tr("生成 HSV 彩色渲染 (默认展示)"));
+    mVisColor->setChecked(true);
+    mVisColor->setToolTip(tr("visualization/ 下生成彩色 GeoTIFF: 色相=相位, 饱和度=相干性, 亮度=幅度"));
+    f1->addWidget(mVisColor);
     tabs->addTab(tab1, tr("干涉图"));
 
     // ===== Tab 2: 去平地 =====
     QWidget* tab2 = new QWidget;
     QFormLayout* f2 = new QFormLayout(tab2);
-    mRefSource = new QComboBox;
-    mRefSource->addItems({tr("参考椭球"), tr("轨道数据"), tr("外部DEM")});
-    f2->addRow(tr("参考源:"), mRefSource);
-    mSemiMajor = new QDoubleSpinBox; mSemiMajor->setDecimals(1);
-    mSemiMajor->setRange(6370000, 6380000); mSemiMajor->setValue(6378137.0);
-    f2->addRow(tr("长半轴(m):"), mSemiMajor);
-    mEccentricity = new QDoubleSpinBox; mEccentricity->setDecimals(8);
-    mEccentricity->setRange(0, 1); mEccentricity->setValue(0.00669438);
-    f2->addRow(tr("偏心率:"), mEccentricity);
-    mOrbitFile = new QLineEdit;
-    f2->addRow(tr("轨道文件:"), mOrbitFile);
-    mFlatDemPath = new QLineEdit;
-    QPushButton* flatDemBrowse = new QPushButton(tr("浏览..."));
-    QHBoxLayout* flatDemLayout = new QHBoxLayout;
-    flatDemLayout->addWidget(mFlatDemPath, 1); flatDemLayout->addWidget(flatDemBrowse);
-    f2->addRow(tr("DEM文件:"), flatDemLayout);
-    connect(flatDemBrowse, &QPushButton::clicked, this, [this]() {
-        QString f = QFileDialog::getOpenFileName(this, tr("选择DEM文件"),
-            QString(), tr("DEM (*.tif *.tiff *.dem *.img);;所有 (*.*)"));
-        if (!f.isEmpty()) mFlatDemPath->setText(f);
-    });
-    mPreciseOrbit = new QCheckBox(tr("使用精密轨道")); mPreciseOrbit->setChecked(true);
-    f2->addWidget(mPreciseOrbit);
+    mEnableFlat = new QCheckBox(tr("启用去平地 (合并产品逐列几何)"));
+    mEnableFlat->setChecked(true);
+    mEnableFlat->setToolTip(tr("φ_flat = −4π/λ·B∥·sinθ(R), R/θ 由几何表逐列计算"));
+    f2->addWidget(mEnableFlat);
     mIncAngleLabel = new QLabel(tr("入射角: (选择主产品后自动获取)"), this);
     f2->addWidget(mIncAngleLabel);
     tabs->addTab(tab2, tr("去平地"));
@@ -144,6 +124,9 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     // ===== Tab 3: 差分 =====
     QWidget* tab3 = new QWidget;
     QFormLayout* f3 = new QFormLayout(tab3);
+    mEnableDiff = new QCheckBox(tr("启用差分 (DEM 地形相位去除)"));
+    mEnableDiff->setChecked(true);
+    f3->addWidget(mEnableDiff);
     mDiffDemPath = new QLineEdit;
     QPushButton* demBrowse = new QPushButton(tr("浏览..."));
     QHBoxLayout* demLayout = new QHBoxLayout;
@@ -154,16 +137,6 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
             QString(), tr("DEM (*.tif *.tiff *.dem *.img);;所有 (*.*)"));
         if (!f.isEmpty()) mDiffDemPath->setText(f);
     });
-    mDispDirection = new QComboBox;
-    mDispDirection->addItems({"LOS", tr("垂直向")});
-    f3->addRow(tr("形变方向:"), mDispDirection);
-    mAtmCorr = new QCheckBox(tr("大气校正"));
-    f3->addWidget(mAtmCorr);
-    mAtmModel = new QComboBox;
-    mAtmModel->addItems({tr("线性模型"), tr("幂律模型")});
-    f3->addRow(tr("大气模型:"), mAtmModel);
-    mTopoCorr = new QCheckBox(tr("地形相位去除")); mTopoCorr->setChecked(true);
-    f3->addWidget(mTopoCorr);
     tabs->addTab(tab3, tr("差分"));
 
     // ===== Tab 4: 输出 =====
@@ -180,6 +153,9 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     });
     mOutputPrefix = new QLineEdit("interferogram");
     f4->addRow(tr("文件前缀:"), mOutputPrefix);
+    mAutoLoad = new QCheckBox(tr("完成后自动加载可见图层"));
+    mAutoLoad->setChecked(true);
+    f4->addWidget(mAutoLoad);
     mLegacyPerIw = new QCheckBox(tr("保留逐子条带中间输出 (兼容旧流程)"));
     mLegacyPerIw->setChecked(false);
     mLegacyPerIw->setToolTip(tr("从合并产品按列切片生成 legacy_iw/ 下的逐 IW flat/diff (边缘缺重叠列)"));
@@ -206,17 +182,16 @@ void InterferogramDialog::setParams(const InterferogramParams& p)
     mSlaveQsar->setText(p.slaveQsarPath);
     mRangeLooks->setValue(p.rangeLooks);
     mAzimuthLooks->setValue(p.azimuthLooks);
-    mOutputType->setCurrentText(p.outputType);
-    mSpectralFilter->setChecked(p.spectralFilter);
     mAzRampCorr->setChecked(p.enableAzimuthRampCorrection);
     mPhaseAlign->setChecked(p.phaseAlign);
-    mRefSource->setCurrentText(p.referenceSource);
+    mVisColor->setChecked(p.enableVisualization);
+    mEnableFlat->setChecked(p.enableFlatEarth);
     mDiffDemPath->setText(p.demPath);
-    mDispDirection->setCurrentText(p.displacementDirection);
-    mAtmCorr->setChecked(p.atmosphericCorrection);
+    mEnableDiff->setChecked(p.enableDifferential);
     mOutputDir->setText(p.outputDir);
     mOutputPrefix->setText(p.outputPrefix);
     mLegacyPerIw->setChecked(p.legacyPerIwOutputs);
+    mAutoLoad->setChecked(p.autoLoadToCanvas);
 
     // 入射角显示由 updateIncAngle 回调处理 (editingFinished / browse)
     if (p.masterQsarPath.isEmpty())
@@ -231,15 +206,12 @@ InterferogramParams InterferogramDialog::params() const
     p.slaveQsarPath = mSlaveQsar->text();
     p.rangeLooks = mRangeLooks->value();
     p.azimuthLooks = mAzimuthLooks->value();
-    p.outputType = mOutputType->currentText();
-    p.spectralFilter = mSpectralFilter->isChecked();
     p.enableAzimuthRampCorrection = mAzRampCorr->isChecked();
     p.phaseAlign = mPhaseAlign->isChecked();
-    p.referenceSource = mRefSource->currentText();
+    p.enableVisualization = mVisColor->isChecked();
+    p.enableFlatEarth = mEnableFlat->isChecked();
     p.demPath = mDiffDemPath->text();
-    p.displacementDirection = mDispDirection->currentText();
-    p.atmosphericCorrection = mAtmCorr->isChecked();
-    p.enableDifferential = mTopoCorr->isChecked();
+    p.enableDifferential = mEnableDiff->isChecked();
     p.incidenceAngle = mCachedIncAngle;
     p.wavelength     = mCachedWavelength;
     p.nearRange      = mCachedNearRange;
@@ -248,6 +220,6 @@ InterferogramParams InterferogramDialog::params() const
     p.outputDir = mOutputDir->text();
     p.outputPrefix = mOutputPrefix->text();
     p.legacyPerIwOutputs = mLegacyPerIw->isChecked();
+    p.autoLoadToCanvas = mAutoLoad->isChecked();
     return p;
 }
-

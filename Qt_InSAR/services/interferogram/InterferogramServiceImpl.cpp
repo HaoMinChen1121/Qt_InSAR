@@ -6,6 +6,7 @@
 #include "steps/TopoPhaseRemover.h"
 #include "steps/IWMerger.h"
 #include "steps/GeomTable.h"
+#include "steps/PhaseVisualizer.h"
 #include "dataaccess/impl/QsarIO.h"
 #include "dataaccess/SarProductFactory.h"
 #include "algorithms/BaselineEstimator.h"
@@ -409,8 +410,13 @@ void InterferogramServiceImpl::execute()
                     SwathGeom g;
                     g.name = metas[i].swath;
                     g.startCol = cumCol;
-                    g.width = metas[i].width - (i < metas.size() - 1 ? trim : 0);
-                    g.nearRange = metas[i].nearRange;
+                    // 与 IWMerger 一致: 重叠区两侧都裁剪 (滚降带移除)
+                    const int trimLeft = (i > 0 ? trim : 0);
+                    const int trimRight = (i < metas.size() - 1 ? trim : 0);
+                    g.width = metas[i].width - trimLeft - trimRight;
+                    g.nearRange = metas[i].nearRange
+                        + trimLeft * metas[i].rangeSpacing
+                          * std::max(1, metas[i].rangeLooks);
                     g.rangeSpacing = metas[i].rangeSpacing
                         * std::max(1, metas[i].rangeLooks);   // 输出列间距
                     cumCol += g.width;
@@ -427,6 +433,7 @@ void InterferogramServiceImpl::execute()
             fctx.geomTablePath   = mergeBase + "_geom.json";
             fctx.flatOutputBase  = flatDir + "/S1_" + pol;
             fctx.diffOutputBase  = diffDir + "/S1_" + pol;
+            fctx.visualizationOutputBase = outputDir + "/visualization/S1_" + pol;
             fctx.outputBand.subSwath = "IW";
             fctx.outputBand.polarization = pol;
 
@@ -448,6 +455,15 @@ void InterferogramServiceImpl::execute()
                 } else if (!qsar.stages.contains("diff")) {
                     qsar.stages << "diff";
                 }
+            }
+
+            // Stage 3: HSV 彩色渲染
+            bool visOk = false;
+            if (mergedOk && mParams.enableVisualization) {
+                PhaseVisualizer vis;
+                visOk = vis.execute(fctx);
+                if (visOk && !qsar.stages.contains("visualization"))
+                    qsar.stages << "visualization";
             }
 
             // legacy 兼容输出: 从合并产品按列切片生成逐 IW flat/diff
@@ -476,7 +492,7 @@ void InterferogramServiceImpl::execute()
                 }
             }
 
-            // ── 合并产品 QSAR 波段 (可见: phase + coh; 中间体隐藏) ──
+            // ── 合并产品 QSAR 波段 (可见: phase_color + coh; 中间体隐藏) ──
             QsarBand qbM;
             qbM.subSwath = "IW"; qbM.polarization = pol;
             qbM.file = QStringLiteral("merge/S1_%1_phase.tif").arg(pol);
@@ -488,7 +504,7 @@ void InterferogramServiceImpl::execute()
             qbM.diffFile = fctx.outputBand.diffFile;
             qbM.diffPhaseFile = fctx.outputBand.diffPhaseFile;
             qbM.layerType = "phase";
-            qbM.defaultVisible = true;
+            qbM.defaultVisible = false;
             {
                 GdalSlcReader dimRdr;
                 if (dimRdr.open(mergeBase + "_ifg.tif")) {
@@ -498,6 +514,17 @@ void InterferogramServiceImpl::execute()
                 }
             }
             qsar.bands.append(qbM);
+            // 彩色渲染图层 (默认可见)
+            if (visOk) {
+                QsarBand qbColor;
+                qbColor.subSwath = "IW"; qbColor.polarization = pol;
+                qbColor.file = QStringLiteral("visualization/S1_%1_phase_color.tif").arg(pol);
+                qbColor.layerType = "phase_color";
+                qbColor.defaultVisible = true;
+                qbColor.width = qbM.width;
+                qbColor.height = qbM.height;
+                qsar.bands.append(qbColor);
+            }
             // 相干图层 (可见)
             QsarBand qbMCoh;
             qbMCoh.subSwath = "IW"; qbMCoh.polarization = pol;
@@ -526,6 +553,16 @@ void InterferogramServiceImpl::execute()
                 qbD.layerType = "diff_phase";
                 qbD.defaultVisible = false;
                 qsar.bands.append(qbD);
+            }
+            // 差分彩色图层 (隐藏)
+            if (visOk && QFileInfo::exists(outputDir + "/visualization/S1_"
+                                           + pol + "_diff_color.tif")) {
+                QsarBand qbDC;
+                qbDC.subSwath = "IW"; qbDC.polarization = pol;
+                qbDC.file = QStringLiteral("visualization/S1_%1_diff_color.tif").arg(pol);
+                qbDC.layerType = "diff_color";
+                qbDC.defaultVisible = false;
+                qsar.bands.append(qbDC);
             }
         }
     }

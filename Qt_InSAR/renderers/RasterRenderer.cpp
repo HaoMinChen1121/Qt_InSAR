@@ -7,6 +7,7 @@
 #include <qgsrasterlayer.h>
 #include <qgssinglebandgrayrenderer.h>
 #include <qgssinglebandpseudocolorrenderer.h>
+#include <qgsmultibandcolorrenderer.h>
 #include <qgsrastershader.h>
 #include <qgsrasterbandstats.h>
 #include <qgscontrastenhancement.h>
@@ -26,7 +27,9 @@ void RasterRenderer::applyAutoRenderer(QgsRasterLayer* layer,
 {
     if (!layer || !layer->dataProvider()) return;
 
-    if (layerName.contains(QStringLiteral("_phase")))
+    if (layerName.contains(QStringLiteral("_color")))
+        applyColorRgb(layer);
+    else if (layerName.contains(QStringLiteral("_phase")))
         applyPhaseCyclic(layer);
     else if (layerName.contains(QStringLiteral("_coh")))
         applyCoherenceGray(layer);
@@ -103,6 +106,18 @@ void RasterRenderer::applyAmplitudeGray(QgsRasterLayer* layer)
                           stats.mean + 3.0 * stats.stdDev);
     ce->setMinimumValue(clipMin);
     ce->setMaximumValue(clipMax);
+}
+
+// ----
+
+void RasterRenderer::applyColorRgb(QgsRasterLayer* layer)
+{
+    // visualization/ *_color.tif: 3-band Byte RGB 直读
+    QgsRasterDataProvider* provider = layer->dataProvider();
+    if (!provider) return;
+    QgsMultiBandColorRenderer* renderer =
+        new QgsMultiBandColorRenderer(provider, 1, 2, 3);
+    layer->setRenderer(renderer);
 }
 
 // ----

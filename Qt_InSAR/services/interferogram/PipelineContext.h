@@ -30,11 +30,12 @@ struct IfgPipelineContext {
     // ── S2 → S3: 去平地后路径 ──
     QString flatSourcePath;       // file to feed into differential stage
 
-    // ── 阶段二 (逐极化, 合并产品): merge → flat → topo ──
+    // ── 阶段二 (逐极化, 合并产品): merge → flat → topo → visualization ──
     QString mergeOutputBase;      // ".../merge/S1_VV"
     QString geomTablePath;        // ".../merge/S1_VV_geom.json"
     QString flatOutputBase;       // ".../flat/S1_VV"
     QString diffOutputBase;       // ".../diff/S1_VV"
+    QString visualizationOutputBase;  // ".../visualization/S1_VV"
 
     // ── 输出 ──
     QsarBand outputBand;

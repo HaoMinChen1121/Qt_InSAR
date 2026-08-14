@@ -27,18 +27,12 @@ private:
     // Tab 1: 干涉图
     QSpinBox* mRangeLooks;
     QSpinBox* mAzimuthLooks;
-    QComboBox* mOutputType;
-    QCheckBox* mSpectralFilter;
     QCheckBox* mAzRampCorr;         // deburst 方位时间校正
     QCheckBox* mPhaseAlign;         // IW 拼接相位一致性对齐
+    QCheckBox* mVisColor;           // 生成 HSV 彩色渲染
 
     // Tab 2: 去平地
-    QComboBox* mRefSource;
-    QDoubleSpinBox* mSemiMajor;
-    QDoubleSpinBox* mEccentricity;
-    QLineEdit* mOrbitFile;
-    QLineEdit* mFlatDemPath;
-    QCheckBox* mPreciseOrbit;
+    QCheckBox* mEnableFlat;         // 启用去平地 (合并产品逐列几何)
     QLabel*    mIncAngleLabel;
     double     mCachedIncAngle     = 0.0;
     double     mCachedWavelength   = 0.0;
@@ -48,15 +42,13 @@ private:
 
     // Tab 3: 差分
     QLineEdit* mDiffDemPath;
-    QComboBox* mDispDirection;
-    QCheckBox* mAtmCorr;
-    QComboBox* mAtmModel;
-    QCheckBox* mTopoCorr;
+    QCheckBox* mEnableDiff;         // 启用差分 (DEM 地形相位去除)
 
     // Tab 4: 输出
     QLineEdit* mOutputDir;
     QLineEdit* mOutputPrefix;
     QCheckBox* mLegacyPerIw;        // 保留逐子条带中间输出 (兼容旧流程)
+    QCheckBox* mAutoLoad;           // 完成后自动加载可见图层
 };
 
 #endif // INTERFEROGRAMDIALOG_H

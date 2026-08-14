@@ -191,8 +191,10 @@ static bool mergeT(
     if (nIW < 2) return false;
 
     int mW = 0;
-    for (int i = 0; i < nIW; ++i) mW += iwMetas[i].width;
-    mW -= overlapTrim * (nIW - 1);
+    for (int i = 0; i < nIW; ++i)
+        mW += iwMetas[i].width
+            - (i > 0 ? overlapTrim : 0)
+            - (i < nIW - 1 ? overlapTrim : 0);
 
     int topOff = 0, bottom = 0;
     commonExtent(iwMetas, &topOff, &bottom);
@@ -229,10 +231,12 @@ static bool mergeT(
         int dstCol = 0;
         for (int iw = 0; iw < nIW; ++iw) {
             const int srcRow = row - srcOff[iw];
-            int copyW = srcW[iw] - (iw < nIW - 1 ? overlapTrim : 0);
+            // 重叠区两侧都裁剪: 子条带边缘 = 天线滚降带 (幅度低 → 黑带)
+            const int colOff = (iw > 0 ? overlapTrim : 0);
+            const int copyW = srcW[iw] - colOff - (iw < nIW - 1 ? overlapTrim : 0);
             if (srcRow >= 0 && srcRow < iwMetas[iw].height
                 && readRow<T>(srcBand[iw], srcRow, srcW[iw], iwBuf)) {
-                std::memcpy(outBuf.data() + dstCol, iwBuf.data(), copyW * sizeof(T));
+                std::memcpy(outBuf.data() + dstCol, iwBuf.data() + colOff, copyW * sizeof(T));
             }
             dstCol += copyW;
         }
@@ -263,8 +267,10 @@ static bool mergeAlignedT(
     if (nIW < 2) return false;
 
     int mW = 0;
-    for (int i = 0; i < nIW; ++i) mW += iwMetas[i].width;
-    mW -= overlapTrim * (nIW - 1);
+    for (int i = 0; i < nIW; ++i)
+        mW += iwMetas[i].width
+            - (i > 0 ? overlapTrim : 0)
+            - (i < nIW - 1 ? overlapTrim : 0);
 
     int topOff = 0, bottom = 0;
     commonExtent(iwMetas, &topOff, &bottom);
@@ -337,12 +343,15 @@ static bool mergeAlignedT(
         int dstCol = 0;
         for (int iw = 0; iw < nIW; ++iw) {
             const int srcRow = row - srcOff[iw];
-            const int copyW = srcW[iw] - (iw < nIW - 1 ? overlapTrim : 0);
+            // 重叠区两侧都裁剪: 子条带边缘 = 天线滚降带 (幅度低 → 黑带)
+            const int colOff = (iw > 0 ? overlapTrim : 0);
+            const int copyW = srcW[iw] - colOff - (iw < nIW - 1 ? overlapTrim : 0);
             if (srcRow >= 0 && srcRow < iwMetas[iw].height
                 && readRow<T>(srcBand[iw], srcRow, srcW[iw], iwBuf)) {
                 for (int c = 0; c < copyW; ++c) {
-                    const double corr = aCorr[iw] + bCorr[iw] * c;
-                    outBuf[dstCol + c] = rotatePixel<T>(iwBuf[c], -corr);
+                    // 校正多项式在源列坐标上评估 (源列 = colOff + c)
+                    const double corr = aCorr[iw] + bCorr[iw] * (colOff + c);
+                    outBuf[dstCol + c] = rotatePixel<T>(iwBuf[colOff + c], -corr);
                 }
             }
             dstCol += copyW;

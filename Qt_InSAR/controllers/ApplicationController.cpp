@@ -146,7 +146,9 @@ void ApplicationController::wireConnections()
         [this, monitor](bool success, const QString& outputPath) {
             if (success) {
                 monitor->appendLog(QStringLiteral("干涉图生成完成: %1").arg(outputPath), "#4CAF50");
-                emit mMainWindow->layerPanel()->layerAddRequested({outputPath});
+                // autoLoadToCanvas=false 时只写 QSAR, 由用户手动加载
+                if (mInterferogramSvc->params().autoLoadToCanvas)
+                    emit mMainWindow->layerPanel()->layerAddRequested({outputPath});
             }
             monitor->onFinished(success, outputPath);
         });

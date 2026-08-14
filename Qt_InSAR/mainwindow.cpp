@@ -594,7 +594,6 @@ void MainWindow::createCategoryInterferogram(SARibbonCategory* page)
     connect(actExecIfg, &QAction::triggered, this, [this]() {
         mIfgParams.rangeLooks = mIfgRgSpin->value();
         mIfgParams.azimuthLooks = mIfgAzSpin->value();
-        mIfgParams.referenceSource = "Orbit";
         if (mIfgParams.masterQsarPath.isEmpty() || mIfgParams.slaveQsarPath.isEmpty()) {
             QMessageBox::warning(this, QStringLiteral("提示"),
                 QStringLiteral("请先通过\"高级参数\"设置主辅QSAR产品路径"));
