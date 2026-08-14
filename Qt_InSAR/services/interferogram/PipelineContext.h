@@ -16,10 +16,14 @@ struct IfgPipelineContext {
     QString masterEntry;        // master ZIP 内 TIFF entry (用于 SDR)
     int     width  = 0;
     int     height = 0;
-    const QsarBand* burstInfo = nullptr;  // TOPSAR burst metadata (nullable)
+    const QsarBand* burstInfo = nullptr;       // slave burst 元数据 (nullable)
+    const QsarBand* masterBurstInfo = nullptr; // master 逐 burst 方位时间 (deburst t_ref 来源)
 
-    // ── S1 → S2: 干涉图输出 ──
-    QString ifgOutputBase;        // e.g. ".../ifg/IW1_VV"
+    // ── S1 → S2: deburst 输出与临时块交换 ──
+    QString deburstOutputBase;    // e.g. ".../deburst/IW1_VV"
+    QString burstBlockBase;       // 临时 burst 块路径基 ".../deburst/.tmp/IW1_VV"
+    double  azimuthFmRate = 0.0;  // master k_t (Hz/s), 由服务从产品/轨道填充
+    int     azimuthRampCorrectionSign = 0;  // 开发期诊断 (参数/环境变量已解析)
     int     outWidth  = 0;        // actual output dims (post-deburst)
     int     outHeight = 0;
 

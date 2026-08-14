@@ -143,15 +143,19 @@ QDateTime SlcAnnotationReader::parseIso8601(const QString& s)
 {
     if (s.isEmpty()) return QDateTime();
     // Qt5 支持 yyyy-MM-ddTHH:mm:ss.zzz (毫秒)
-    // 微秒格式: yyyy-MM-ddTHH:mm:ss.zzzzzz — Qt5 需要截断到3位 + 手动微秒
+    // 微秒格式: yyyy-MM-ddTHH:mm:ss.zzzzzz — 截断到毫秒 + 手动补微秒
     QDateTime dt = QDateTime::fromString(s.left(23), "yyyy-MM-ddTHH:mm:ss.zzz");
+    if (!dt.isValid())
+        dt = QDateTime::fromString(s.left(19), "yyyy-MM-ddTHH:mm:ss");
     if (dt.isValid()) {
-        // 提取微秒部分 (位置 23+)
+        // 微秒部分 (第 4-6 位小数), 换算成毫秒叠加
+        // 修复: 原实现把微秒×1000 后直接当毫秒加 (误差可达 ±1s, 会破坏
+        // burst 时间差/重叠计算 — 2026-08-14 实测 deburst 重叠全乱)
         int dotIdx = s.indexOf('.');
         if (dotIdx > 0 && s.length() > dotIdx + 4) {
-            int usec = s.mid(dotIdx + 4, 3).toInt() * 1000; // 微秒
+            double usec = s.mid(dotIdx + 4, 3).toInt();          // 微秒
             if (s.length() > dotIdx + 7)
-                usec += s.mid(dotIdx + 7, 3).toInt(); // 纳秒→微秒舍入
+                usec += s.mid(dotIdx + 7, 3).toInt() / 1000.0;   // 纳秒
             dt = dt.addMSecs(usec / 1000.0);
         }
     }

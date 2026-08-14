@@ -25,7 +25,9 @@ static bool writeRow(GDALRasterBandH band, int row, int width, const std::vector
                const_cast<T*>(buf.data()), width, 1, dt, 0, 0) == CE_None;
 }
 
-// 简单像素拼接: IW1 | IW2 | IW3, 每对边缘裁掉 overlapTrim 列
+// 像素拼接: IW1 | IW2 | IW3
+// - 距离向: 每对边缘裁掉 overlapTrim 列 (几何重叠, 全分辨率计算)
+// - 方位向: 按 azimuthOffset 行偏移对齐 (子条带方位起始时间不同)
 template<typename T>
 static bool mergeT(
     const QVector<QString>& iwFiles,
@@ -37,23 +39,25 @@ static bool mergeT(
     int nIW = iwFiles.size();
     if (nIW < 2) return false;
 
-    int mH = iwMetas[0].height;
-    // 计算合并宽度: sum(IW widths) - overlapTrim * (nIW-1)
+    // 合并宽度: sum(IW widths) - overlapTrim * (nIW-1)
     int mW = 0;
+    int mH = 0;
     for (int i = 0; i < nIW; ++i) {
         mW += iwMetas[i].width;
-        mH = std::min(mH, iwMetas[i].height);
+        mH = std::max(mH, iwMetas[i].azimuthOffset + iwMetas[i].height);
     }
     mW -= overlapTrim * (nIW - 1);
 
     QVector<GDALDatasetH> srcDS(nIW);
     QVector<GDALRasterBandH> srcBand(nIW);
     QVector<int> srcW(nIW);
+    QVector<int> srcOff(nIW);
     for (int i = 0; i < nIW; ++i) {
         srcDS[i] = GDALOpen(iwFiles[i].toUtf8().constData(), GA_ReadOnly);
         if (!srcDS[i]) { qWarning() << "[IWMerge] open fail:" << iwFiles[i]; return false; }
         srcBand[i] = GDALGetRasterBand(srcDS[i], 1);
         srcW[i] = iwMetas[i].width;
+        srcOff[i] = iwMetas[i].azimuthOffset;
     }
 
     GDALDriverH drv = GDALGetDriverByName("GTiff");
@@ -75,7 +79,9 @@ static bool mergeT(
         std::fill(outBuf.begin(), outBuf.end(), T{});
         int dstCol = 0;
         for (int iw = 0; iw < nIW; ++iw) {
-            if (!readRow<T>(srcBand[iw], row, srcW[iw], iwBuf)) continue;
+            const int srcRow = row - srcOff[iw];   // 方位对齐: 行偏移
+            if (srcRow < 0 || srcRow >= iwMetas[iw].height) { dstCol += srcW[iw] - (iw < nIW - 1 ? overlapTrim : 0); continue; }
+            if (!readRow<T>(srcBand[iw], srcRow, srcW[iw], iwBuf)) { dstCol += srcW[iw] - (iw < nIW - 1 ? overlapTrim : 0); continue; }
             int copyW = srcW[iw];
             // 对最后一张以外的 IW, 裁剪尾部 overlap
             if (iw < nIW - 1) copyW -= overlapTrim;
@@ -93,23 +99,27 @@ static bool mergeT(
     return true;
 }
 
+// 相邻 IW 重叠像素数 (全分辨率几何, 换算到输出列)
 static int computeOverlapTrim(const QVector<IwMeta>& metas)
 {
     if (metas.size() < 2) return 0;
-    // 从相邻IW的近距/远距计算重叠像素数
     double totalOverlap = 0.0;
     int pairs = 0;
     for (int i = 0; i < metas.size() - 1; ++i) {
-        double leftFar = metas[i].nearRange + metas[i].width * metas[i].rangeSpacing;
+        int fullW = metas[i].fullResWidth > 0
+            ? metas[i].fullResWidth : metas[i].width * std::max(1, metas[i].rangeLooks);
+        double leftFar = metas[i].nearRange + fullW * metas[i].rangeSpacing;
         double rightNear = metas[i + 1].nearRange;
         double overlap = leftFar - rightNear;
         if (overlap > 0) {
             double avgSpacing = (metas[i].rangeSpacing + metas[i + 1].rangeSpacing) / 2.0;
-            if (avgSpacing > 0) totalOverlap += overlap / avgSpacing;
-            ++pairs;
+            if (avgSpacing > 0) { totalOverlap += overlap / avgSpacing; ++pairs; }
         }
     }
-    return pairs > 0 ? static_cast<int>(totalOverlap / pairs + 0.5) : 0;
+    if (pairs <= 0) return 0;
+    int fullRes = static_cast<int>(totalOverlap / pairs + 0.5);
+    int rgLooks = std::max(1, metas[0].rangeLooks);
+    return std::max(1, (fullRes + rgLooks / 2) / rgLooks);
 }
 
 bool mergePhase(const QVector<QString>& iwFiles, const QVector<IwMeta>& iwMetas,

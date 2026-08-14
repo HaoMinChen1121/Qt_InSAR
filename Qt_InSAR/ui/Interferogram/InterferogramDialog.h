@@ -29,6 +29,7 @@ private:
     QSpinBox* mAzimuthLooks;
     QComboBox* mOutputType;
     QCheckBox* mSpectralFilter;
+    QCheckBox* mAzRampCorr;         // deburst 方位时间校正
 
     // Tab 2: 去平地
     QComboBox* mRefSource;

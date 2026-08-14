@@ -18,7 +18,7 @@
 bool TopoPhaseRemover::execute(IfgPipelineContext& ctx)
 {
     QString flatSrc = ctx.flatSourcePath.isEmpty()
-        ? ctx.ifgOutputBase + "_ifg.tif" : ctx.flatSourcePath;
+        ? ctx.deburstOutputBase + "_ifg.tif" : ctx.flatSourcePath;
     QString demPath = ctx.params->demPath;
     QString outBase = ctx.params->outputDir + "/diff/"
                       + ctx.outputBand.subSwath + "_" + ctx.outputBand.polarization;

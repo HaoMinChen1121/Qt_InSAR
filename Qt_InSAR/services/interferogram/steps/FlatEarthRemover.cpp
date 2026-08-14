@@ -16,7 +16,7 @@
 
 bool FlatEarthRemover::execute(IfgPipelineContext& ctx)
 {
-    QString ifgPath = ctx.ifgOutputBase + "_ifg.tif";
+    QString ifgPath = ctx.deburstOutputBase + "_ifg.tif";
     QString outBase = ctx.params->outputDir + "/flat/"
                       + ctx.outputBand.subSwath + "_" + ctx.outputBand.polarization;
 

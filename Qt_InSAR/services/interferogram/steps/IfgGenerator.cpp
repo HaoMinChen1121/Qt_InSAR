@@ -17,36 +17,9 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-static void computeBurstDiscard(int N, int linesPerBurst, double prf,
-    const QVector<QDateTime>& burstTimes,
-    QVector<int>& discardTop, QVector<int>& discardBottom)
-{
-    discardTop.fill(0, N);
-    discardBottom.fill(0, N);
-    if (N < 2) return;
-
-    if (burstTimes.size() >= N) {
-        for (int b = 0; b < N - 1; ++b) {
-            double dt = burstTimes[b].msecsTo(burstTimes[b+1]) / 1000.0;
-            double burstDur = linesPerBurst / prf;
-            double overlapTime = burstDur - dt;
-            if (overlapTime < 0) overlapTime = 0;
-            int overlapLines = (int)(overlapTime * prf + 0.5);
-            int half = overlapLines / 2;
-            discardBottom[b] = half;
-            discardTop[b + 1] = half;
-        }
-    } else {
-        // 无 burst 时间时, 按 ~4% 重叠估算
-        int estOverlap = static_cast<int>(linesPerBurst * 0.04 + 0.5);
-        int half = estOverlap / 2;
-        for (int b = 0; b < N - 1; ++b) {
-            discardBottom[b] = half;
-            discardTop[b + 1] = half;
-        }
-    }
-}
-
+// Step 1: 复干涉图 + 相干性 + 相位 — 多视 + 逐 burst 干涉
+// (TOPSAR: 逐 burst 写 3 波段临时块, 拼接/方位校正在 TopsarDeburst;
+//  非 TOPSAR: 直写 deburst 输出)
 bool IfgGenerator::execute(IfgPipelineContext& ctx)
 {
     qDebug() << "[Ifg] stageInterferogram: master=" << ctx.masterPath.left(80);
@@ -86,48 +59,9 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
              << "slave" << sReader.width() << "x" << sReader.height();
 
     bool isTopsar = ctx.burstInfo && ctx.burstInfo->burstCount > 1;
-    int outH;
-    QVector<int> discardTop, discardBottom, burstOutOffsets;
-
-    if (isTopsar) {
-        int N = ctx.burstInfo->burstCount;
-        int L = ctx.burstInfo->linesPerBurst;
-        double prf = ctx.burstInfo->azimuthFrequency > 0
-            ? ctx.burstInfo->azimuthFrequency
-            : ctx.masterSensorInfo.prf > 0
-                ? ctx.masterSensorInfo.prf : 486.0;
-
-        computeBurstDiscard(N, L, prf, ctx.burstInfo->burstAzimuthTimes,
-            discardTop, discardBottom);
-
-        burstOutOffsets.resize(N);
-        outH = 0;
-        for (int b = 0; b < N; ++b) {
-            burstOutOffsets[b] = outH;
-            int validLines = L - discardTop[b] - discardBottom[b];
-            outH += validLines / azLooks;
-        }
-        qDebug() << "[Ifg] TOPSAR deburst" << N << "bursts L=" << L
-                 << "prf=" << prf << "outH=" << outH;
-    } else {
-        outH = realH / azLooks;
-    }
-
-    if (outH < 1) { ctx.errorMessage = "IfgGenerator: outH < 1"; return false; }
-
-    QString ifgBase = ctx.ifgOutputBase;
-    QDir().mkpath(QFileInfo(ifgBase).absolutePath());
-    QString ifgPath  = ifgBase + "_ifg.tif";
-    QString cohPath  = ifgBase + "_coh.tif";
-    QString phasePath = ifgBase + "_phase.tif";
 
     GDALDriverH driver = GDALGetDriverByName("GTiff");
     double gt[6] = {0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
-    GDALDatasetH hIfg = GDALCreate(driver, ifgPath.toUtf8().constData(), outW, outH, 1, GDT_CFloat32, nullptr);
-    GDALDatasetH hCoh = GDALCreate(driver, cohPath.toUtf8().constData(), outW, outH, 1, GDT_Float32, nullptr);
-    GDALDatasetH hPh  = GDALCreate(driver, phasePath.toUtf8().constData(), outW, outH, 1, GDT_Float32, nullptr);
-    if (!hIfg || !hCoh || !hPh) { ctx.errorMessage = "IfgGenerator: cannot create output"; return false; }
-    GDALSetGeoTransform(hIfg, gt); GDALSetGeoTransform(hCoh, gt); GDALSetGeoTransform(hPh, gt);
 
     QVector<std::complex<float>> rowComplex(outW);
     QVector<float> rowPhase(outW);
@@ -135,19 +69,21 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
     int cohWindow = 5;
 
     if (isTopsar) {
+        // ── TOPSAR: 逐 burst 完整多视 → 临时块 ──
+        // 4 波段 Float32 (单次 GDALCreate, 不依赖 GDALAddBand — 旧版 GDAL 不支持):
+        //   band1=ifg 实部, band2=ifg 虚部, band3=coh, band4=phase
         int N = ctx.burstInfo->burstCount;
         int L = ctx.burstInfo->linesPerBurst;
+        int burstOutH = L / azLooks;   // 完整 burst (重叠裁剪由 TopsarDeburst 完成)
+        if (burstOutH < 1) { ctx.errorMessage = "IfgGenerator: burstOutH < 1"; return false; }
+
+        QVector<float> rowRe(outW);
+        QVector<float> rowIm(outW);
 
         for (int b = 0; b < N; ++b) {
-            if (mCancelled) { GDALClose(hIfg); GDALClose(hCoh); GDALClose(hPh); return false; }
+            if (mCancelled) return false;
 
             int burstRow0 = b * L;
-            int validRow0 = burstRow0 + discardTop[b];
-            int validRow1 = burstRow0 + L - 1 - discardBottom[b];
-            int validRows = validRow1 - validRow0 + 1;
-            int burstOutH = validRows / azLooks;
-            if (burstOutH <= 0) continue;
-
             int readRow0 = burstRow0 - cohWindow;
             int readH = L + cohWindow * 2;
             if (readRow0 < 0) { readH += readRow0; readRow0 = 0; }
@@ -162,12 +98,20 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
             sBurst = sReader.readBandWindow(0, 0, readRow0, realW, readH);
             int actualH = std::min(mBurst.size() / realW, sBurst.size() / realW);
 
-            qDebug() << "[Ifg] burst" << (b+1) << "/" << N
-                     << "validRows=" << validRows << "outRows=" << burstOutH;
+            QString blkPath = ctx.burstBlockBase + QStringLiteral("_b%1.tif").arg(b + 1);
+            GDALDatasetH hBlk = GDALCreate(driver, blkPath.toUtf8().constData(),
+                                           outW, burstOutH, 4, GDT_Float32, nullptr);
+            if (!hBlk) {
+                ctx.errorMessage = QStringLiteral("IfgGenerator: cannot create burst block %1").arg(blkPath);
+                return false;
+            }
+            GDALSetGeoTransform(hBlk, gt);
 
-            for (int outLocal = 0; outLocal < burstOutH; ++outLocal) {
-                int outRow = burstOutOffsets[b] + outLocal;
-                int srcRow = validRow0 + outLocal * azLooks;
+            qDebug() << "[Ifg] burst" << (b+1) << "/" << N
+                     << "blockRows=" << burstOutH;
+
+            for (int j = 0; j < burstOutH; ++j) {
+                int srcRow = burstRow0 + j * azLooks;
                 int rowOff = srcRow - readRow0;
 
                 for (int col = 0; col < outW; ++col) {
@@ -188,7 +132,8 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                     if (nPix > 0) { mAvg /= nPix; sAvg /= nPix; }
 
                     std::complex<double> ifg = mAvg * std::conj(sAvg);
-                    rowComplex[col] = std::complex<float>(ifg.real(), ifg.imag());
+                    rowRe[col] = static_cast<float>(ifg.real());
+                    rowIm[col] = static_cast<float>(ifg.imag());
                     rowPhase[col] = std::atan2(ifg.imag(), ifg.real());
 
                     std::complex<double> crossSum(0, 0);
@@ -211,12 +156,37 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                     rowCoh[col] = static_cast<float>(std::abs(crossSum) / denom);
                 }
 
-                GDALRasterIO(GDALGetRasterBand(hIfg,1), GF_Write, 0, outRow, outW, 1, reinterpret_cast<CFloat32*>(rowComplex.data()), outW, 1, GDT_CFloat32, 0, 0);
-                GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, outRow, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
-                GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, outRow, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
+                GDALRasterIO(GDALGetRasterBand(hBlk, 1), GF_Write, 0, j, outW, 1,
+                    rowRe.data(), outW, 1, GDT_Float32, 0, 0);
+                GDALRasterIO(GDALGetRasterBand(hBlk, 2), GF_Write, 0, j, outW, 1,
+                    rowIm.data(), outW, 1, GDT_Float32, 0, 0);
+                GDALRasterIO(GDALGetRasterBand(hBlk, 3), GF_Write, 0, j, outW, 1,
+                    rowCoh.data(), outW, 1, GDT_Float32, 0, 0);
+                GDALRasterIO(GDALGetRasterBand(hBlk, 4), GF_Write, 0, j, outW, 1,
+                    rowPhase.data(), outW, 1, GDT_Float32, 0, 0);
             }
+            GDALClose(hBlk);
         }
+
+        ctx.outWidth = outW;
+        // ctx.outHeight 由 TopsarDeburst 计算
     } else {
+        // ── 非 TOPSAR: 直写 deburst 输出 ──
+        int outH = realH / azLooks;
+        if (outH < 1) { ctx.errorMessage = "IfgGenerator: outH < 1"; return false; }
+
+        QString base = ctx.deburstOutputBase;
+        QDir().mkpath(QFileInfo(base).absolutePath());
+        QString ifgPath  = base + "_ifg.tif";
+        QString cohPath  = base + "_coh.tif";
+        QString phasePath = base + "_phase.tif";
+
+        GDALDatasetH hIfg = GDALCreate(driver, ifgPath.toUtf8().constData(), outW, outH, 1, GDT_CFloat32, nullptr);
+        GDALDatasetH hCoh = GDALCreate(driver, cohPath.toUtf8().constData(), outW, outH, 1, GDT_Float32, nullptr);
+        GDALDatasetH hPh  = GDALCreate(driver, phasePath.toUtf8().constData(), outW, outH, 1, GDT_Float32, nullptr);
+        if (!hIfg || !hCoh || !hPh) { ctx.errorMessage = "IfgGenerator: cannot create output"; return false; }
+        GDALSetGeoTransform(hIfg, gt); GDALSetGeoTransform(hCoh, gt); GDALSetGeoTransform(hPh, gt);
+
         for (int row = 0; row < outH; ++row) {
             if (mCancelled) { GDALClose(hIfg); GDALClose(hCoh); GDALClose(hPh); return false; }
             int srcRow = row * azLooks;
@@ -286,11 +256,12 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
             GDALRasterIO(GDALGetRasterBand(hPh,1),  GF_Write, 0, row, outW, 1, rowPhase.data(),    outW, 1, GDT_Float32,  0, 0);
             GDALRasterIO(GDALGetRasterBand(hCoh,1),  GF_Write, 0, row, outW, 1, rowCoh.data(),      outW, 1, GDT_Float32,  0, 0);
         }
+
+        GDALClose(hIfg); GDALClose(hCoh); GDALClose(hPh);
+        ctx.outWidth  = outW;
+        ctx.outHeight = outH;
     }
 
-    GDALClose(hIfg); GDALClose(hCoh); GDALClose(hPh);
-    ctx.outWidth  = outW;
-    ctx.outHeight = outH;
     qDebug() << "[Ifg] stageInterferogram SUCCESS";
     return true;
 }

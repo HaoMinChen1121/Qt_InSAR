@@ -101,6 +101,10 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     f1->addRow(tr("输出类型:"), mOutputType);
     mSpectralFilter = new QCheckBox(tr("频谱偏移滤波")); mSpectralFilter->setChecked(true);
     f1->addWidget(mSpectralFilter);
+    mAzRampCorr = new QCheckBox(tr("deburst 方位时间校正"));
+    mAzRampCorr->setChecked(true);
+    mAzRampCorr->setToolTip(tr("去除逐 burst 残余方位斜坡, 保证 burst 拼接处相位连续 (TOPSAR)"));
+    f1->addWidget(mAzRampCorr);
     tabs->addTab(tab1, tr("干涉图"));
 
     // ===== Tab 2: 去平地 =====
@@ -196,6 +200,7 @@ void InterferogramDialog::setParams(const InterferogramParams& p)
     mAzimuthLooks->setValue(p.azimuthLooks);
     mOutputType->setCurrentText(p.outputType);
     mSpectralFilter->setChecked(p.spectralFilter);
+    mAzRampCorr->setChecked(p.enableAzimuthRampCorrection);
     mRefSource->setCurrentText(p.referenceSource);
     mDiffDemPath->setText(p.demPath);
     mDispDirection->setCurrentText(p.displacementDirection);
@@ -218,6 +223,7 @@ InterferogramParams InterferogramDialog::params() const
     p.azimuthLooks = mAzimuthLooks->value();
     p.outputType = mOutputType->currentText();
     p.spectralFilter = mSpectralFilter->isChecked();
+    p.enableAzimuthRampCorrection = mAzRampCorr->isChecked();
     p.referenceSource = mRefSource->currentText();
     p.demPath = mDiffDemPath->text();
     p.displacementDirection = mDispDirection->currentText();

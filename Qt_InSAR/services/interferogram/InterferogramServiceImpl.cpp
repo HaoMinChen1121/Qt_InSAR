@@ -1,6 +1,7 @@
 #include "InterferogramServiceImpl.h"
 #include "PipelineContext.h"
 #include "steps/IfgGenerator.h"
+#include "steps/TopsarDeburst.h"
 #include "steps/FlatEarthRemover.h"
 #include "steps/TopoPhaseRemover.h"
 #include "steps/IWMerger.h"
@@ -18,6 +19,8 @@
 #include <QMap>
 #include <QPair>
 #include <QScopedPointer>
+#include <cmath>
+#include <limits>
 
 InterferogramServiceImpl::InterferogramServiceImpl(QObject* parent)
     : IInterferogramService(parent) {}
@@ -101,10 +104,11 @@ void InterferogramServiceImpl::execute()
     if (outputDir.isEmpty()) outputDir = QFileInfo(mParams.masterQsarPath).absolutePath();
 
     // 准备子目录
-    QString ifgDir  = outputDir + "/ifg";
+    QString deburstDir = outputDir + "/deburst";
     QString flatDir = outputDir + "/flat";
     QString diffDir = outputDir + "/diff";
-    QDir().mkpath(ifgDir);
+    QDir().mkpath(deburstDir);
+    QDir().mkpath(deburstDir + "/.tmp");   // 临时 burst 块 (deburst 后删除)
     QDir().mkpath(flatDir);
     QDir().mkpath(diffDir);
 
@@ -148,7 +152,43 @@ void InterferogramServiceImpl::execute()
         ctx.width      = pairs[i].master.width;
         ctx.height     = pairs[i].master.height;
         ctx.burstInfo  = &pairs[i].slave;
-        ctx.ifgOutputBase = ifgDir + "/" + pairName;
+        ctx.masterBurstInfo = &pairs[i].master;   // deburst 方位校正 t_ref 来源
+        ctx.deburstOutputBase = deburstDir + "/" + pairName;
+        ctx.burstBlockBase    = deburstDir + "/.tmp/" + pairName;
+        ctx.azimuthRampCorrectionSign = mParams.azimuthRampCorrectionSign;
+
+        // master k_t (方位调频率): 逐 band annotation 值, 缺失时轨道估算
+        ctx.azimuthFmRate = 0.0;
+        if (masterProduct) {
+            for (const auto& b : masterProduct->bands()) {
+                if (b.subSwath == sw && b.polarization == pol) {
+                    ctx.azimuthFmRate = b.azimuthFmRate;
+                    if (std::abs(ctx.azimuthFmRate) < 1e-9) {
+                        // 回退: kt ≈ −2·Vr²/(λ·R0)
+                        const auto& ov = masterProduct->orbitStateVectors();
+                        double v2 = 0; int nv = 0;
+                        for (const auto& o : ov) {
+                            v2 += o.vx * o.vx + o.vy * o.vy + o.vz * o.vz;
+                            ++nv;
+                        }
+                        if (nv > 0) {
+                            v2 /= nv;
+                            double lambda = mParams.wavelength > 0
+                                ? mParams.wavelength : 0.05546576;
+                            double r0 = b.nearRange
+                                + b.rasterSize.width() / 2.0 * b.rangeSpacing;
+                            if (lambda > 0 && r0 > 0)
+                                ctx.azimuthFmRate = -2.0 * v2 / (lambda * r0);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        if (std::abs(ctx.azimuthFmRate) < 1e-9)
+            qWarning() << "[Ifg] master k_t unavailable for" << pairName
+                       << "(方位校正将跳过; master 为 .qsar 时属预期)";
+
         ctx.outputBand.subSwath = sw;
         ctx.outputBand.polarization = pol;
         ctx.outputBand.width  = mParams.rangeLooks > 0 ? pairs[i].master.width / mParams.rangeLooks : pairs[i].master.width;
@@ -157,6 +197,8 @@ void InterferogramServiceImpl::execute()
         // ── 构建步骤链 ──
         QVector<IIfgStep*> steps;
         steps << new IfgGenerator;
+        if (pairs[i].slave.burstCount > 1)
+            steps << new TopsarDeburst;
         if (mParams.enableFlatEarth)
             steps << new FlatEarthRemover;
         if (mParams.enableDifferential && !mParams.demPath.isEmpty())
@@ -183,17 +225,17 @@ void InterferogramServiceImpl::execute()
 
         // 写入 QSAR 波段信息
         QsarBand qb = ctx.outputBand;
-        qb.file = QStringLiteral("ifg/%1_ifg.tif").arg(pairName);
+        qb.file = QStringLiteral("deburst/%1_ifg.tif").arg(pairName);
         qb.ifgFile  = qb.file;
-        qb.cohFile  = QStringLiteral("ifg/%1_coh.tif").arg(pairName);
-        qb.phaseFile = QStringLiteral("ifg/%1_phase.tif").arg(pairName);
+        qb.cohFile  = QStringLiteral("deburst/%1_coh.tif").arg(pairName);
+        qb.phaseFile = QStringLiteral("deburst/%1_phase.tif").arg(pairName);
         qb.layerType = "ifg";
         qb.defaultVisible = false;  // 复数干涉图不自动加载
 
         // 更新实际输出尺寸
         {
             GdalSlcReader dimRdr;
-            if (dimRdr.open(ifgDir + "/" + pairName + "_ifg.tif")) {
+            if (dimRdr.open(deburstDir + "/" + pairName + "_ifg.tif")) {
                 qb.width = dimRdr.width();
                 qb.height = dimRdr.height();
                 dimRdr.close();
@@ -209,7 +251,7 @@ void InterferogramServiceImpl::execute()
         // 相位图层 (可见)
         QsarBand qbPhase;
         qbPhase.subSwath = sw; qbPhase.polarization = pol;
-        qbPhase.file = QStringLiteral("ifg/%1_phase.tif").arg(pairName);
+        qbPhase.file = QStringLiteral("deburst/%1_phase.tif").arg(pairName);
         qbPhase.phaseFile = qbPhase.file;
         qbPhase.layerType = "phase";
         qbPhase.defaultVisible = true;
@@ -217,7 +259,7 @@ void InterferogramServiceImpl::execute()
         // 相干图层 (可见)
         QsarBand qbCoh;
         qbCoh.subSwath = sw; qbCoh.polarization = pol;
-        qbCoh.file = QStringLiteral("ifg/%1_coh.tif").arg(pairName);
+        qbCoh.file = QStringLiteral("deburst/%1_coh.tif").arg(pairName);
         qbCoh.cohFile = qbCoh.file;
         qbCoh.layerType = "coherence";
         qbCoh.defaultVisible = true;
@@ -237,7 +279,7 @@ void InterferogramServiceImpl::execute()
             QString pol = pairs[i].master.polarization;
             QString name = QStringLiteral("%1_%2").arg(sw).arg(pol);
             // 从已生成的 ifg 文件获取尺寸
-            QString ifgPath = ifgDir + "/" + name + "_ifg.tif";
+            QString ifgPath = deburstDir + "/" + name + "_ifg.tif";
             GdalSlcReader dimRdr;
             IwOut io; io.swath = sw;
             if (dimRdr.open(ifgPath)) { io.w = dimRdr.width(); io.h = dimRdr.height(); dimRdr.close(); }
@@ -254,8 +296,9 @@ void InterferogramServiceImpl::execute()
 
             QVector<QString> phaseFiles, cohFiles, ifgFiles;
             QVector<IWMerger::IwMeta> metas;
+            QDateTime tRef;   // 首个子条带的首 burst 方位时间 (方位对齐参考)
             for (auto& iw : iwList) {
-                QString base = ifgDir + "/" + iw.first;
+                QString base = deburstDir + "/" + iw.first;
                 phaseFiles.append(base + "_phase.tif");
                 cohFiles.append(base + "_coh.tif");
                 ifgFiles.append(base + "_ifg.tif");
@@ -263,18 +306,41 @@ void InterferogramServiceImpl::execute()
                 m.swath = iw.second.swath;
                 m.width = iw.second.w;
                 m.height = iw.second.h;
-                // 从 master 产品获取 per-swath range 参数
+                m.rangeLooks = mParams.rangeLooks;
+                // 从 master 产品获取 per-swath range 参数 + 方位时间
                 m.nearRange = 0; m.rangeSpacing = 0.0;
                 if (masterProduct) {
                     for (const auto& b : masterProduct->bands()) {
                         if (b.subSwath == iw.second.swath) {
                             m.nearRange = b.nearRange;
                             m.rangeSpacing = b.rangeSpacing > 0 ? b.rangeSpacing : 0.0;
+                            m.fullResWidth = b.rasterSize.width();
+                            // 子条带间方位对齐: 用首 burst 方位时间差
+                            if (!b.burstAzimuthTimes.isEmpty()) {
+                                if (tRef.isNull())
+                                    tRef = b.burstAzimuthTimes.first();
+                                double prf = b.azimuthFrequency > 0
+                                    ? b.azimuthFrequency : mParams.prf;
+                                double dt = tRef.msecsTo(
+                                    b.burstAzimuthTimes.first()) / 1000.0;
+                                int azLooks = mParams.azimuthLooks > 0
+                                    ? mParams.azimuthLooks : 1;
+                                m.azimuthOffset = static_cast<int>(
+                                    std::lround(dt * prf / azLooks));
+                            }
                             break;
                         }
                     }
                 }
                 metas.append(m);
+            }
+            // 偏移归一化 ≥ 0
+            {
+                int minOff = std::numeric_limits<int>::max();
+                for (const auto& m : metas)
+                    minOff = std::min(minOff, m.azimuthOffset);
+                for (auto& m : metas)
+                    m.azimuthOffset -= minOff;
             }
             QString mergeBase = outputDir + "/merge/S1_" + pol;
             emit progressChanged(95, QStringLiteral("IW Merge %1...").arg(pol));

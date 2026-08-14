@@ -16,6 +16,10 @@ struct InterferogramParams
     int       azimuthLooks = 4;           // 方位向多视比
     QString   outputType = "Complex";     // "Complex" / "Phase" / "Coherence"
     bool      spectralFilter = true;      // 频谱偏移滤波
+    bool      enableAzimuthRampCorrection = true;  // deburst 方位时间校正开关
+    int       azimuthRampCorrectionSign  = -1;     // 开发期诊断: {0=不校正, ±1=符号};
+                                                   // Stage 1 A/B/C 验证后固化, 不进 UI,
+                                                   // 可被环境变量 INSAR_DEBURST_SIGN 覆盖
 
     // 去平地效应
     QString   referenceSource = "Orbit";  // "Orbit" / "Ellipsoid"
