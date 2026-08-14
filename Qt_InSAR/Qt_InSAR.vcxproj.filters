@@ -138,12 +138,16 @@
   <ItemGroup>
     <ClCompile Include="services\interferogram\steps\IfgGenerator.cpp"><Filter>Services\Interferogram\Steps</Filter></ClCompile>
     <ClCompile Include="services\interferogram\steps\TopsarDeburst.cpp"><Filter>Services\Interferogram\Steps</Filter></ClCompile>
+    <ClCompile Include="services\interferogram\steps\GeomTable.cpp"><Filter>Services\Interferogram\Steps</Filter></ClCompile>
+    <ClCompile Include="services\interferogram\dem\DemMapper.cpp"><Filter>Services\Interferogram\Steps</Filter></ClCompile>
     <ClCompile Include="services\interferogram\steps\IWMerger.cpp"><Filter>Services\Interferogram\Steps</Filter></ClCompile>
     <ClCompile Include="services\interferogram\steps\FlatEarthRemover.cpp"><Filter>Services\Interferogram\Steps</Filter></ClCompile>
     <ClCompile Include="services\interferogram\steps\TopoPhaseRemover.cpp"><Filter>Services\Interferogram\Steps</Filter></ClCompile>
     <ClInclude Include="services\interferogram\steps\IIfgStep.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>
     <ClInclude Include="services\interferogram\steps\IfgGenerator.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>
     <ClInclude Include="services\interferogram\steps\TopsarDeburst.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>
+    <ClInclude Include="services\interferogram\steps\GeomTable.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>
+    <ClInclude Include="services\interferogram\dem\DemMapper.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>
     <ClInclude Include="services\interferogram\steps\IWMerger.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>
     <ClInclude Include="services\interferogram\steps\FlatEarthRemover.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>
     <ClInclude Include="services\interferogram\steps\TopoPhaseRemover.h"><Filter>Services\Interferogram\Steps</Filter></ClInclude>

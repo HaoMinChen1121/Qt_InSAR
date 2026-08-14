@@ -20,13 +20,17 @@ struct IwMeta {
 
 // 将同一极化的 3 个 IW 相位/相干/复数文件合并为单幅影像
 // iwFiles: 按 IW1→IW2→IW3 顺序的输入文件路径
-// iwMetas: 对应的 range 几何参数
-// outputBase: 输出路径前缀 (不含扩展名)
+// cohFiles: 对应相干性文件 (相位对齐估计权重; mergePhase/mergeComplex 用, 可为空)
+// iwMetas: 对应的 range 几何 + 方位偏移参数
+// 输出: 距离向重叠裁剪 + 方位向偏移对齐 + 裁剪到公共方位范围;
+//       phase/complex 附带子条带相位一致性对齐 (常数+线性, 鲁棒估计)
 // 返回 true 表示成功
 bool mergePhase(
     const QVector<QString>& iwFiles,
+    const QVector<QString>& cohFiles,
     const QVector<IwMeta>&  iwMetas,
-    const QString& outputPath);
+    const QString& outputPath,
+    bool alignEnabled = true);                  // phaseAlign=false 时跳过相位对齐
 
 bool mergeCoherence(
     const QVector<QString>& iwFiles,
@@ -35,8 +39,11 @@ bool mergeCoherence(
 
 bool mergeComplex(
     const QVector<QString>& iwFiles,
+    const QVector<QString>& cohFiles,
+    const QVector<QString>& alignPhaseFiles,   // 对齐估计相位源 (用相位文件, 非复数文件)
     const QVector<IwMeta>&  iwMetas,
-    const QString& outputPath);
+    const QString& outputPath,
+    bool alignEnabled = true);
 
 } // namespace IWMerger
 

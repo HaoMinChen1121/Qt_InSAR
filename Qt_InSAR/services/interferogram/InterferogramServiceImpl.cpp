@@ -5,6 +5,7 @@
 #include "steps/FlatEarthRemover.h"
 #include "steps/TopoPhaseRemover.h"
 #include "steps/IWMerger.h"
+#include "steps/GeomTable.h"
 #include "dataaccess/impl/QsarIO.h"
 #include "dataaccess/SarProductFactory.h"
 #include "algorithms/BaselineEstimator.h"
@@ -21,6 +22,40 @@
 #include <QScopedPointer>
 #include <cmath>
 #include <limits>
+#include <vector>
+
+namespace {
+
+// 从合并产品按列切片生成逐 IW 兼容输出 (legacyPerIwOutputs, 设计 §10)
+bool sliceColumns(const QString& srcPath, const QString& dstPath,
+                  int col0, int nCols)
+{
+    if (srcPath.isEmpty() || nCols <= 0) return false;
+    GDALDatasetH src = GDALOpen(srcPath.toUtf8().constData(), GA_ReadOnly);
+    if (!src) return false;
+    GDALRasterBandH sb = GDALGetRasterBand(src, 1);
+    const int h = GDALGetRasterYSize(src);
+    const GDALDataType dt = GDALGetRasterDataType(sb);
+
+    GDALDriverH drv = GDALGetDriverByName("GTiff");
+    GDALDatasetH dst = GDALCreate(drv, dstPath.toUtf8().constData(), nCols, h, 1, dt, nullptr);
+    if (!dst) { GDALClose(src); return false; }
+    double gt[6] = {0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+    GDALSetGeoTransform(dst, gt);
+
+    const int pxlSize = GDALGetDataTypeSize(dt) / 8;
+    std::vector<char> buf(static_cast<size_t>(nCols) * pxlSize);
+    for (int r = 0; r < h; ++r) {
+        GDALRasterIO(sb, GF_Read, col0, r, nCols, 1, buf.data(), nCols, 1, dt, 0, 0);
+        GDALRasterIO(GDALGetRasterBand(dst, 1), GF_Write, 0, r, nCols, 1, buf.data(), nCols, 1, dt, 0, 0);
+    }
+    GDALClose(dst);
+    GDALClose(src);
+    qDebug() << "[Ifg] legacy slice" << col0 << "+" << nCols << "->" << dstPath;
+    return true;
+}
+
+} // namespace
 
 InterferogramServiceImpl::InterferogramServiceImpl(QObject* parent)
     : IInterferogramService(parent) {}
@@ -194,15 +229,11 @@ void InterferogramServiceImpl::execute()
         ctx.outputBand.width  = mParams.rangeLooks > 0 ? pairs[i].master.width / mParams.rangeLooks : pairs[i].master.width;
         ctx.outputBand.height = mParams.azimuthLooks > 0 ? pairs[i].master.height / mParams.azimuthLooks : pairs[i].master.height;
 
-        // ── 构建步骤链 ──
+        // ── 构建步骤链 (Stage 2: 逐对只做干涉+deburst; flat/topo 移到合并产品) ──
         QVector<IIfgStep*> steps;
         steps << new IfgGenerator;
         if (pairs[i].slave.burstCount > 1)
             steps << new TopsarDeburst;
-        if (mParams.enableFlatEarth)
-            steps << new FlatEarthRemover;
-        if (mParams.enableDifferential && !mParams.demPath.isEmpty())
-            steps << new TopoPhaseRemover;
 
         bool pairOk = true;
         for (int si = 0; si < steps.size(); ++si) {
@@ -242,27 +273,22 @@ void InterferogramServiceImpl::execute()
             }
         }
 
-        if (mParams.enableFlatEarth && !qb.flatFile.isEmpty() && !qsar.stages.contains("flat"))
-            qsar.stages << "flat";
-        if (mParams.enableDifferential && !qb.diffFile.isEmpty() && !qsar.stages.contains("diff"))
-            qsar.stages << "diff";
-
         qsar.bands.append(qb);
-        // 相位图层 (可见)
+        // 相位图层 (中间体, 默认不加载 — 可见产品为合并后的 merge 图层)
         QsarBand qbPhase;
         qbPhase.subSwath = sw; qbPhase.polarization = pol;
         qbPhase.file = QStringLiteral("deburst/%1_phase.tif").arg(pairName);
         qbPhase.phaseFile = qbPhase.file;
         qbPhase.layerType = "phase";
-        qbPhase.defaultVisible = true;
+        qbPhase.defaultVisible = false;
         qsar.bands.append(qbPhase);
-        // 相干图层 (可见)
+        // 相干图层 (中间体, 默认不加载)
         QsarBand qbCoh;
         qbCoh.subSwath = sw; qbCoh.polarization = pol;
         qbCoh.file = QStringLiteral("deburst/%1_coh.tif").arg(pairName);
         qbCoh.cohFile = qbCoh.file;
         qbCoh.layerType = "coherence";
-        qbCoh.defaultVisible = true;
+        qbCoh.defaultVisible = false;
         qsar.bands.append(qbCoh);
         ++succeeded;
         emit progressChanged((i + 1) * 100 / pairs.size(), QStringLiteral("完成 %1/%2").arg(i+1).arg(pairs.size()));
@@ -344,16 +370,163 @@ void InterferogramServiceImpl::execute()
             }
             QString mergeBase = outputDir + "/merge/S1_" + pol;
             emit progressChanged(95, QStringLiteral("IW Merge %1...").arg(pol));
-            IWMerger::mergePhase(phaseFiles, metas, mergeBase + "_phase.tif");
+            IWMerger::mergePhase(phaseFiles, cohFiles, metas, mergeBase + "_phase.tif",
+                                 mParams.phaseAlign);
             IWMerger::mergeCoherence(cohFiles, metas, mergeBase + "_coh.tif");
-            IWMerger::mergeComplex(ifgFiles, metas, mergeBase + "_ifg.tif");
-            // 新增 merge 图层到 qsar
+            IWMerger::mergeComplex(ifgFiles, cohFiles, phaseFiles, metas,
+                                   mergeBase + "_ifg.tif", mParams.phaseAlign);
+
+            // ── Stage 2: 几何表 (逐列 R/θ) + 合并产品上去平地/差分 ──
+            GeomTable geomTable;
+            {
+                GdalSlcReader dimRdr;
+                if (dimRdr.open(mergeBase + "_ifg.tif")) {
+                    geomTable.width = dimRdr.width();
+                    dimRdr.close();
+                }
+            }
+            {
+                int trim = 0;   // 与 IWMerger 相同的重叠裁剪 (输出列)
+                for (int i = 0; i < metas.size() - 1; ++i) {
+                    int fullW = metas[i].fullResWidth > 0
+                        ? metas[i].fullResWidth
+                        : metas[i].width * std::max(1, metas[i].rangeLooks);
+                    double leftFar = metas[i].nearRange + fullW * metas[i].rangeSpacing;
+                    double rightNear = metas[i + 1].nearRange;
+                    double overlap = leftFar - rightNear;
+                    if (overlap > 0) {
+                        double avgSp = (metas[i].rangeSpacing + metas[i + 1].rangeSpacing) / 2.0;
+                        if (avgSp > 0) {
+                            int fullRes = static_cast<int>(overlap / avgSp + 0.5);
+                            int rg = std::max(1, metas[i].rangeLooks);
+                            trim = std::max(1, (fullRes + rg / 2) / rg);
+                        }
+                    }
+                    if (trim <= 0) trim = 50;
+                }
+                int cumCol = 0;
+                for (int i = 0; i < metas.size(); ++i) {
+                    SwathGeom g;
+                    g.name = metas[i].swath;
+                    g.startCol = cumCol;
+                    g.width = metas[i].width - (i < metas.size() - 1 ? trim : 0);
+                    g.nearRange = metas[i].nearRange;
+                    g.rangeSpacing = metas[i].rangeSpacing
+                        * std::max(1, metas[i].rangeLooks);   // 输出列间距
+                    cumCol += g.width;
+                    geomTable.swaths.append(g);
+                }
+            }
+            geomTable.save(mergeBase + "_geom.json");
+
+            IfgPipelineContext fctx;
+            fctx.params = &mParams;
+            if (masterProduct)
+                fctx.masterSensorInfo = masterProduct->sensorInfo();
+            fctx.mergeOutputBase = mergeBase;
+            fctx.geomTablePath   = mergeBase + "_geom.json";
+            fctx.flatOutputBase  = flatDir + "/S1_" + pol;
+            fctx.diffOutputBase  = diffDir + "/S1_" + pol;
+            fctx.outputBand.subSwath = "IW";
+            fctx.outputBand.polarization = pol;
+
+            bool mergedOk = true;
+            if (mParams.enableFlatEarth) {
+                FlatEarthRemover flatStep;
+                if (!flatStep.execute(fctx)) {
+                    qWarning() << "[Ifg] FlatEarth (merged) failed:" << fctx.errorMessage;
+                    mergedOk = false;
+                } else if (!qsar.stages.contains("flat")) {
+                    qsar.stages << "flat";
+                }
+            }
+            if (mergedOk && mParams.enableDifferential && !mParams.demPath.isEmpty()) {
+                TopoPhaseRemover topoStep;
+                if (!topoStep.execute(fctx)) {
+                    qWarning() << "[Ifg] TopoPhase (merged) failed:" << fctx.errorMessage;
+                    mergedOk = false;
+                } else if (!qsar.stages.contains("diff")) {
+                    qsar.stages << "diff";
+                }
+            }
+
+            // legacy 兼容输出: 从合并产品按列切片生成逐 IW flat/diff
+            if (mergedOk && mParams.legacyPerIwOutputs) {
+                QDir().mkpath(outputDir + "/legacy_iw");
+                int cumCol = 0;
+                for (int i = 0; i < metas.size(); ++i) {
+                    const int wCols = geomTable.swaths[i].width;
+                    const QString iwName = QStringLiteral("%1_%2")
+                        .arg(metas[i].swath).arg(pol);
+                    const QString dstBase = outputDir + "/legacy_iw/" + iwName;
+                    if (!fctx.outputBand.flatFile.isEmpty()) {
+                        sliceColumns(fctx.flatSourcePath,
+                            dstBase + "_flat.tif", cumCol, wCols);
+                        sliceColumns(fctx.outputBand.flatPhaseFile.isEmpty()
+                            ? QString() : flatDir + "/S1_" + pol + "_flat_phase.tif",
+                            dstBase + "_flat_phase.tif", cumCol, wCols);
+                    }
+                    if (!fctx.outputBand.diffFile.isEmpty()) {
+                        sliceColumns(diffDir + "/S1_" + pol + "_diff.tif",
+                            dstBase + "_diff.tif", cumCol, wCols);
+                        sliceColumns(diffDir + "/S1_" + pol + "_diff_phase.tif",
+                            dstBase + "_diff_phase.tif", cumCol, wCols);
+                    }
+                    cumCol += wCols;
+                }
+            }
+
+            // ── 合并产品 QSAR 波段 (可见: phase + coh; 中间体隐藏) ──
             QsarBand qbM;
             qbM.subSwath = "IW"; qbM.polarization = pol;
             qbM.file = QStringLiteral("merge/S1_%1_phase.tif").arg(pol);
+            qbM.phaseFile = qbM.file;
+            qbM.ifgFile = QStringLiteral("merge/S1_%1_ifg.tif").arg(pol);
+            qbM.cohFile = QStringLiteral("merge/S1_%1_coh.tif").arg(pol);
+            qbM.flatFile = fctx.outputBand.flatFile;
+            qbM.flatPhaseFile = fctx.outputBand.flatPhaseFile;
+            qbM.diffFile = fctx.outputBand.diffFile;
+            qbM.diffPhaseFile = fctx.outputBand.diffPhaseFile;
             qbM.layerType = "phase";
             qbM.defaultVisible = true;
+            {
+                GdalSlcReader dimRdr;
+                if (dimRdr.open(mergeBase + "_ifg.tif")) {
+                    qbM.width = dimRdr.width();
+                    qbM.height = dimRdr.height();
+                    dimRdr.close();
+                }
+            }
             qsar.bands.append(qbM);
+            // 相干图层 (可见)
+            QsarBand qbMCoh;
+            qbMCoh.subSwath = "IW"; qbMCoh.polarization = pol;
+            qbMCoh.file = QStringLiteral("merge/S1_%1_coh.tif").arg(pol);
+            qbMCoh.cohFile = qbMCoh.file;
+            qbMCoh.layerType = "coherence";
+            qbMCoh.defaultVisible = true;
+            qsar.bands.append(qbMCoh);
+            // flat/diff 中间体条目 (隐藏)
+            if (!fctx.outputBand.flatPhaseFile.isEmpty()) {
+                QsarBand qbF;
+                qbF.subSwath = "IW"; qbF.polarization = pol;
+                qbF.file = fctx.outputBand.flatPhaseFile;
+                qbF.flatPhaseFile = qbF.file;
+                qbF.flatFile = fctx.outputBand.flatFile;
+                qbF.layerType = "flat_phase";
+                qbF.defaultVisible = false;
+                qsar.bands.append(qbF);
+            }
+            if (!fctx.outputBand.diffPhaseFile.isEmpty()) {
+                QsarBand qbD;
+                qbD.subSwath = "IW"; qbD.polarization = pol;
+                qbD.file = fctx.outputBand.diffPhaseFile;
+                qbD.diffPhaseFile = qbD.file;
+                qbD.diffFile = fctx.outputBand.diffFile;
+                qbD.layerType = "diff_phase";
+                qbD.defaultVisible = false;
+                qsar.bands.append(qbD);
+            }
         }
     }
 

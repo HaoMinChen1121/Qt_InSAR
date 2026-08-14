@@ -20,6 +20,8 @@ struct InterferogramParams
     int       azimuthRampCorrectionSign  = -1;     // 开发期诊断: {0=不校正, ±1=符号};
                                                    // Stage 1 A/B/C 验证后固化, 不进 UI,
                                                    // 可被环境变量 INSAR_DEBURST_SIGN 覆盖
+    bool      phaseAlign              = true;      // IW 拼接相位一致性对齐 (常数+线性)
+    bool      legacyPerIwOutputs      = false;     // 兼容输出开关: 从合并产品切片生成逐 IW flat/diff
 
     // 去平地效应
     QString   referenceSource = "Orbit";  // "Orbit" / "Ellipsoid"

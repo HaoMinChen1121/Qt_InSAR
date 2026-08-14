@@ -105,6 +105,10 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     mAzRampCorr->setChecked(true);
     mAzRampCorr->setToolTip(tr("去除逐 burst 残余方位斜坡, 保证 burst 拼接处相位连续 (TOPSAR)"));
     f1->addWidget(mAzRampCorr);
+    mPhaseAlign = new QCheckBox(tr("IW 拼接相位一致性对齐"));
+    mPhaseAlign->setChecked(true);
+    mPhaseAlign->setToolTip(tr("合并产品中子条带重叠区鲁棒估计常数+线性相位差并校正, 消除边界相位台阶"));
+    f1->addWidget(mPhaseAlign);
     tabs->addTab(tab1, tr("干涉图"));
 
     // ===== Tab 2: 去平地 =====
@@ -176,6 +180,10 @@ InterferogramDialog::InterferogramDialog(QWidget* parent) : QDialog(parent)
     });
     mOutputPrefix = new QLineEdit("interferogram");
     f4->addRow(tr("文件前缀:"), mOutputPrefix);
+    mLegacyPerIw = new QCheckBox(tr("保留逐子条带中间输出 (兼容旧流程)"));
+    mLegacyPerIw->setChecked(false);
+    mLegacyPerIw->setToolTip(tr("从合并产品按列切片生成 legacy_iw/ 下的逐 IW flat/diff (边缘缺重叠列)"));
+    f4->addWidget(mLegacyPerIw);
     tabs->addTab(tab4, tr("输出"));
 
     mainLayout->addWidget(tabs);
@@ -201,12 +209,14 @@ void InterferogramDialog::setParams(const InterferogramParams& p)
     mOutputType->setCurrentText(p.outputType);
     mSpectralFilter->setChecked(p.spectralFilter);
     mAzRampCorr->setChecked(p.enableAzimuthRampCorrection);
+    mPhaseAlign->setChecked(p.phaseAlign);
     mRefSource->setCurrentText(p.referenceSource);
     mDiffDemPath->setText(p.demPath);
     mDispDirection->setCurrentText(p.displacementDirection);
     mAtmCorr->setChecked(p.atmosphericCorrection);
     mOutputDir->setText(p.outputDir);
     mOutputPrefix->setText(p.outputPrefix);
+    mLegacyPerIw->setChecked(p.legacyPerIwOutputs);
 
     // 入射角显示由 updateIncAngle 回调处理 (editingFinished / browse)
     if (p.masterQsarPath.isEmpty())
@@ -224,6 +234,7 @@ InterferogramParams InterferogramDialog::params() const
     p.outputType = mOutputType->currentText();
     p.spectralFilter = mSpectralFilter->isChecked();
     p.enableAzimuthRampCorrection = mAzRampCorr->isChecked();
+    p.phaseAlign = mPhaseAlign->isChecked();
     p.referenceSource = mRefSource->currentText();
     p.demPath = mDiffDemPath->text();
     p.displacementDirection = mDispDirection->currentText();
@@ -236,6 +247,7 @@ InterferogramParams InterferogramDialog::params() const
     p.prf            = mCachedPrf;
     p.outputDir = mOutputDir->text();
     p.outputPrefix = mOutputPrefix->text();
+    p.legacyPerIwOutputs = mLegacyPerIw->isChecked();
     return p;
 }
 

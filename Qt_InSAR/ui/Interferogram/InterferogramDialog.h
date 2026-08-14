@@ -30,6 +30,7 @@ private:
     QComboBox* mOutputType;
     QCheckBox* mSpectralFilter;
     QCheckBox* mAzRampCorr;         // deburst 方位时间校正
+    QCheckBox* mPhaseAlign;         // IW 拼接相位一致性对齐
 
     // Tab 2: 去平地
     QComboBox* mRefSource;
@@ -55,6 +56,7 @@ private:
     // Tab 4: 输出
     QLineEdit* mOutputDir;
     QLineEdit* mOutputPrefix;
+    QCheckBox* mLegacyPerIw;        // 保留逐子条带中间输出 (兼容旧流程)
 };
 
 #endif // INTERFEROGRAMDIALOG_H
