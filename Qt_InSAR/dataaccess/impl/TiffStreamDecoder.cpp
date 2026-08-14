@@ -1,6 +1,11 @@
 #include "TiffStreamDecoder.h"
 #include <qgsrasterinterface.h>   // QgsRasterBlockFeedback
 #include <QDebug>
+#include <QFile>
+#include <QFileInfo>
+#include <QDir>
+#include <QCryptographicHash>
+#include <QMutexLocker>
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -192,6 +197,9 @@ int TiffStreamDecoder::decodeRows(int maxRow,
         }
         convertRow(mRawRow.data(), mRowF.data());
 
+        // 行持久化到磁盘 L2 (后续随机访问不再依赖 inflate 游标)
+        writeL2Row(r, mRowF.constData());
+
         // 顺带累积统计 (排除 NODATA=0, Welford)
         {
             const float* p = mRowF.constData();
@@ -261,6 +269,8 @@ bool TiffStreamDecoder::assembleFromCache(int x0, int y0, int w, int h,
             int cx = col % kTileSize;
             auto tile = mCache->get(mCacheKey, tx, ty);
             if (!tile) return false;
+            // 部分 tile (取消/中途停止的解码) 行数不足, 视为未命中
+            if (ry >= tile->height) return false;
             outRow[j] = tile->data[static_cast<qsizetype>(ry) * tile->width + cx];
         }
     }
@@ -290,6 +300,95 @@ bool TiffStreamDecoder::assembleFromDecim(int x0, int y0, int w, int h,
     return true;
 }
 
+// ── 磁盘 L2 行缓存 ──
+
+QString TiffStreamDecoder::l2PathFor(const QString& cacheKey)
+{
+    QByteArray hash = QCryptographicHash::hash(
+        cacheKey.toUtf8(), QCryptographicHash::Md5).toHex();
+    return QDir::tempPath() + QStringLiteral("/insar_l2/")
+         + QString::fromLatin1(hash) + QStringLiteral(".f32");
+}
+
+bool TiffStreamDecoder::ensureL2()
+{
+    if (mL2Closed || !qEnvironmentVariableIsEmpty("INSAR_L2_DISABLE"))
+        return false;
+    if (mL2File) return true;
+    mL2Path = l2PathFor(mCacheKey);
+    QFileInfo fi(mL2Path);
+    if (!fi.dir().exists() && !QDir().mkpath(fi.dir().absolutePath())) {
+        qWarning() << "[Decoder] L2 dir create failed:" << fi.dir().absolutePath();
+        return false;
+    }
+    // ReadWrite 不截断: 残留的旧缓存文件可在重解码时原位覆盖复用
+    auto f = std::make_unique<QFile>(mL2Path);
+    if (!f->open(QIODevice::ReadWrite)) {
+        qWarning() << "[Decoder] L2 open failed:" << mL2Path;
+        return false;
+    }
+    mL2File = std::move(f);
+    mL2Covered.resize(mTiff->height);
+    return true;
+}
+
+void TiffStreamDecoder::writeL2Row(int row, const float* rowF)
+{
+    QMutexLocker lock(&mL2Mutex);
+    if (!ensureL2() || row < 0 || row >= mTiff->height) return;
+    const qint64 rowBytes = static_cast<qint64>(mTiff->width) * 4;
+    const qint64 off = static_cast<qint64>(row) * rowBytes;
+    if (!mL2File->seek(off)) return;
+    if (mL2File->write(reinterpret_cast<const char*>(rowF), rowBytes) == rowBytes)
+        mL2Covered[row] = 1;
+}
+
+bool TiffStreamDecoder::assembleFromL2(int x0, int y0, int w, int h,
+                                       int yStride, int xStride,
+                                       float* dst)
+{
+    QMutexLocker lock(&mL2Mutex);
+    if (!ensureL2()) return false;
+    const int width = mTiff->width;
+    const int nOutRows = (h + yStride - 1) / yStride;
+    const int nOutCols = (w + xStride - 1) / xStride;
+
+    if (mL2Covered.size() != mTiff->height) return false;
+    for (int i = 0; i < nOutRows; ++i) {
+        int row = y0 + i * yStride;
+        if (row >= mTiff->height || !mL2Covered[row]) return false;
+    }
+
+    const qint64 rowBytes = static_cast<qint64>(width) * 4;
+    QVector<float> rowF(width);
+    for (int i = 0; i < nOutRows; ++i) {
+        int row = y0 + i * yStride;
+        if (!mL2File->seek(static_cast<qint64>(row) * rowBytes)) return false;
+        if (mL2File->read(reinterpret_cast<char*>(rowF.data()), rowBytes)
+            != rowBytes) return false;
+        float* outRow = dst + static_cast<qsizetype>(i) * nOutCols;
+        for (int j = 0; j < nOutCols; ++j) {
+            int col = x0 + j * xStride;
+            outRow[j] = (col < width) ? rowF[col] : 0.0f;
+        }
+    }
+    return true;
+}
+
+void TiffStreamDecoder::closeL2()
+{
+    QMutexLocker lock(&mL2Mutex);
+    mL2Closed = true;
+    if (mL2File) {
+        mL2File->close();
+        mL2File.reset();
+    }
+    if (!mL2Path.isEmpty()) {
+        QFile::remove(mL2Path);
+        mL2Path.clear();
+    }
+}
+
 // ── 对外接口 ──
 int TiffStreamDecoder::readWindow(int x0, int y0, int w, int h,
                                   int yStride, int xStride,
@@ -315,6 +414,12 @@ int TiffStreamDecoder::readWindow(int x0, int y0, int w, int h,
 
     // 快速路径 2: tile 缓存
     if (assembleFromCache(x0, y0, w, h, yStride, xStride, dst))
+        return nOutRows;
+
+    // 快速路径 3: 磁盘 L2 行缓存
+    // (首次完整解码后, 任意缩放/平移的未命中由随机文件读服务,
+    //  不再触发回卷重新 inflate)
+    if (assembleFromL2(x0, y0, w, h, yStride, xStride, dst))
         return nOutRows;
 
     // 需要抽稀概览 → 惰性分配

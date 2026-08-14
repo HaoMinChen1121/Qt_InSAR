@@ -7,6 +7,7 @@
 #include <QString>
 #include <QMutex>
 #include <QVector>
+#include <QFile>
 #include <memory>
 #include <cstdint>
 
@@ -44,6 +45,9 @@ public:
     bool sampledPresetStats(double& min, double& max,
                             double& mean, double& stdDev) const;
 
+    // 关闭并删除磁盘 L2 行缓存 (产品销毁时调用)
+    void closeL2();
+
 private:
     // 从 tile 缓存拼装 (全部命中才成功)
     bool assembleFromCache(int x0, int y0, int w, int h,
@@ -51,6 +55,15 @@ private:
     // 从抽稀概览缓存拼装 (仅当全图抽稀已收集)
     bool assembleFromDecim(int x0, int y0, int w, int h,
                            int yStride, int xStride, float* dst) const;
+    // 从磁盘 L2 行缓存拼装 (全部行已解码入库才成功)
+    bool assembleFromL2(int x0, int y0, int w, int h,
+                        int yStride, int xStride, float* dst);
+    // 惰性创建 L2 文件 (调用前须持有 mL2Mutex; mClosed 后不再创建)
+    bool ensureL2();
+    // 解码行写入 L2 (内部加锁)
+    void writeL2Row(int row, const float* rowF);
+    // L2 临时文件路径 (zipPath|entry 的 MD5 命名, 跨会话可复用)
+    static QString l2PathFor(const QString& cacheKey);
     // 顺序 inflate 到 maxRow (含), 途中输出 wanted 行
     // 调用前必须持有 mCursorMutex
     int decodeRows(int maxRow,
@@ -90,6 +103,15 @@ private:
     static constexpr int kDecim = 8;
     QVector<float> mDecimRows;
     QVector<uint8_t> mDecimPresent; // 位图
+
+    // ── 磁盘 L2 行缓存: 解码行持久化, 支持随机访问 ──
+    // 行 r 位于文件偏移 r*width*4; mL2Covered 标记已入库行
+    // (QFile 非线程安全: 所有文件操作 + 覆盖位图由 mL2Mutex 串行化)
+    QMutex mL2Mutex;
+    std::unique_ptr<QFile> mL2File;
+    QString mL2Path;
+    QVector<uint8_t> mL2Covered;
+    bool mL2Closed = false;
 
     // 统计累积 (解码时顺带计算, Welford; 游标重启时清零)
     uint64_t mAccCount = 0;

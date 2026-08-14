@@ -4,20 +4,78 @@
 #include <QDebug>
 #include <cmath>
 #include <algorithm>
+#include <utility>
 
 namespace insarbg {
 QThreadPool* pool()
 {
     static QThreadPool* p = []() {
         auto* pool = new QThreadPool;
-        pool->setMaxThreadCount(2);
+        // 预热拆为每波段一个任务后需要更多并行槽
+        pool->setMaxThreadCount(6);
         return pool;
     }();
     return p;
 }
 } // namespace insarbg
 
+namespace {
+
+// 预热顺序: 条带成对 (co-pol 在前):
+//   iw1-vv → iw1-vh → iw2-vv → iw2-vh → iw3-vv → iw3-vh
+// (EW 同理按子条带编号; GRD 无编号子条带视为 0)
+bool warmUpEntryLess(const QString& a, const QString& b)
+{
+    auto key = [](const QString& s) {
+        const QString low = s.toLower();
+        int swath = 0;
+        for (const QString& pre : { QStringLiteral("-iw"), QStringLiteral("-ew") }) {
+            int p = low.indexOf(pre);
+            if (p >= 0 && p + pre.size() < low.size()
+                && low[p + pre.size()].isDigit()) {
+                swath = low[p + pre.size()].digitValue();
+                break;
+            }
+        }
+        int pol = 1;   // cross-pol (vh/hv) 在后
+        if (low.contains(QStringLiteral("-vv")) || low.contains(QStringLiteral("-hh")))
+            pol = 0;
+        return std::pair<int, int>(swath, pol);
+    };
+    return key(a) < key(b);
+}
+
+// 单波段预热: 分块完整解码 (填充 L2/抽稀/tile/统计),
+// 每块释放游标, 画布渲染可随时插入;
+// 已解码行由 L2 服务, 与渲染并行时不会发生回卷
+void warmUpEntry(const std::shared_ptr<SentinelZipProduct>& self,
+                 const QString& entry)
+{
+    std::shared_ptr<const TiffHeaderInfo> tiff = self->bandTiffInfo(entry);
+    if (!tiff) return;
+    std::shared_ptr<TiffStreamDecoder> dec = self->bandDecoder(entry);
+    if (!dec) return;
+    const int chunk = 2048;
+    QVector<float> buf(static_cast<qsizetype>(chunk / 8 + 2)
+                       * ((tiff->width + 7) / 8 + 2));
+    for (int y = 0; y < tiff->height; y += chunk) {
+        int hh = std::min(chunk, tiff->height - y);
+        dec->readWindow(0, y, tiff->width, hh, 8, 8, buf.data(), nullptr);
+    }
+    qDebug() << "[ZipProduct] warm-up done" << entry;
+}
+
+} // namespace
+
 // ── SentinelZipProduct ──
+
+SentinelZipProduct::~SentinelZipProduct()
+{
+    // 各 band 解码器销毁前删除其磁盘 L2 缓存文件
+    QMutexLocker lock(&mMutex);
+    for (auto it = mDecoderCache.constBegin(); it != mDecoderCache.constEnd(); ++it)
+        it.value()->closeL2();
+}
 
 std::shared_ptr<SentinelZipProduct> SentinelZipProduct::open(const QString& zipPath)
 {
@@ -37,37 +95,17 @@ std::shared_ptr<SentinelZipProduct> SentinelZipProduct::open(const QString& zipP
     p->mTileCache = std::make_shared<TileCache>(budget);
     p->discoverMeasurementEntries();
 
-    // 后台预热: 单个任务串行完整解码各波段 (填充 tile/抽稀/统计),
+    // 后台预热: 每波段一个任务并行解码 (填充 L2/tile/抽稀/统计),
+    // 条带成对排序 (同一子条带的两极化先后就绪),
     // 使用专用线程池, 不与 QGIS 渲染争夺全局线程池
     {
-        std::shared_ptr<SentinelZipProduct> self(p);
-        insarbg::pool()->start(insarbg::makeRunnable([self]() {
-            QStringList entries = self->mMeasurementEntries;
-            // VV 优先 (顶层可见波段先获得缓存/统计)
-            std::sort(entries.begin(), entries.end(),
-                [](const QString& a, const QString& b) {
-                    bool av = a.contains(QStringLiteral("-vv"), Qt::CaseInsensitive);
-                    bool bv = b.contains(QStringLiteral("-vv"), Qt::CaseInsensitive);
-                    if (av != bv) return av;
-                    return a < b;
-                });
-            for (const QString& e : entries) {
-                std::shared_ptr<const TiffHeaderInfo> tiff = self->bandTiffInfo(e);
-                if (!tiff) continue;
-                std::shared_ptr<TiffStreamDecoder> dec = self->bandDecoder(e);
-                if (!dec) continue;
-                // 分块解码: 每块释放游标, 画布渲染可随时插入
-                const int chunk = 2048;
-                QVector<float> buf(static_cast<qsizetype>(chunk / 8 + 2)
-                                   * ((tiff->width + 7) / 8 + 2));
-                for (int y = 0; y < tiff->height; y += chunk) {
-                    int hh = std::min(chunk, tiff->height - y);
-                    dec->readWindow(0, y, tiff->width, hh,
-                                    8, 8, buf.data(), nullptr);
-                }
-                qDebug() << "[ZipProduct] warm-up done" << e;
-            }
-        }));
+        QStringList entries = p->mMeasurementEntries;
+        std::sort(entries.begin(), entries.end(), warmUpEntryLess);
+        for (const QString& e : entries) {
+            std::shared_ptr<SentinelZipProduct> self(p);
+            insarbg::pool()->start(insarbg::makeRunnable(
+                [self, e]() { warmUpEntry(self, e); }));
+        }
     }
     return p;
 }

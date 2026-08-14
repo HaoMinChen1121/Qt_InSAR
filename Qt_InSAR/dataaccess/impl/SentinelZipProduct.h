@@ -38,6 +38,7 @@ FunctorRunnable<F>* makeRunnable(F f)
 // (持久 ZIP 句柄 + 每 band 的 TIFF 元数据/解码器惰性缓存)
 class SentinelZipProduct {
 public:
+    ~SentinelZipProduct();   // 清理各 band 的磁盘 L2 缓存文件
     static std::shared_ptr<SentinelZipProduct> open(const QString& zipPath);
 
     std::shared_ptr<ZipStore> zipStore() const { return mStore; }
