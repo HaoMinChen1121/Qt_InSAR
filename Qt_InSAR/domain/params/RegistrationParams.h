@@ -60,6 +60,12 @@ struct RegistrationParams
     int       sincWindowSize = 8;   // 33→17 taps, 计算量减半
     double    sincBeta = 2.5;
 
+    // ── 地形校正配准 (2026-08-16 相位质量根因) ──
+    QString   demPath;               // 地形校正用 DEM (可 GeoTIFF); 空 = 不平地校正
+    int       terrainOffsetSign = -1;// 地形距离偏移符号: Δr = sign·h·|B⊥|/(R·sin²θ)/ρr
+                                     // 推导: B⊥>0(θs>θm) 时地形项为负; 可用环境变量
+                                     // INSAR_TERRAIN_SIGN 覆盖做经验判定
+
     // ── 输出 ──
     QString   outputDir;
     QString   outputPrefix = "registered";

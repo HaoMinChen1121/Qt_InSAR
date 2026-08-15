@@ -47,6 +47,7 @@
     <ClCompile Include="algorithms\SincInterpolator.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClInclude Include="algorithms\BaselineEstimator.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\GoldsteinFilter.h"><Filter>Algorithms</Filter></ClInclude>
+    <ClInclude Include="algorithms\RangeSpectralFilter.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\ComplexSoA.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\Correlation.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\DerampCore.h"><Filter>Algorithms</Filter></ClInclude>

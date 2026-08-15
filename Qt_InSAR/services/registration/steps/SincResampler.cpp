@@ -18,6 +18,8 @@
 #include <QtConcurrent>
 #include <QFuture>
 #include <gdal_priv.h>
+#include <cmath>
+#include <algorithm>
 #include <algorithm>
 #include <cmath>
 
@@ -129,7 +131,10 @@ struct RowCoords {
 };
 
 static RowCoords computeRowCoords(int gRow, int mW, int mH, int sH,
-    const RangePolynomial& rP, const AzimuthPolynomial& aP, int readR)
+    const RangePolynomial& rP, const AzimuthPolynomial& aP, int readR,
+    const std::vector<float>* dem, int demW, int demH,
+    double demNear, double demFar, double demSpacing,
+    double demBperp, int demSign)
 {
     RowCoords rc;
     rc.sx.resize(mW);
@@ -151,13 +156,36 @@ static RowCoords computeRowCoords(int gRow, int mW, int mH, int sH,
     if (rc.sY0 < 0) { rc.sYH += rc.sY0; rc.sY0 = 0; }
     if (rc.sY0 + rc.sYH > sH) rc.sYH = sH - rc.sY0;
 
+    // 地形校正距离偏移 (2026-08-16): Δr_terrain = sign·h·|B⊥|/(R·sin²θ)/ρr
+    // 地形高度 h 使两景的距离偏移差 ~7 px @1500m — 平地多项式无法建模,
+    // 山区逐像素失配是全分辨率去相关的根因 (2D 亚像素相干面全平验证)
+    const bool hasTerrain = dem && demW > 0 && demH > 0 && demBperp > 0
+        && demFar > demNear && demSpacing > 0;
+    const int demRow0 = hasTerrain
+        ? qBound(0, (int)(aLoc * demH + 0.5), demH - 1) : 0;
+
     for (int c = 0; c < mW; ++c) {
         double rN = (double)c / mW;
         double colOff = rP.coeffs[0] + rP.coeffs[1]*rN + rP.coeffs[2]*aLoc
                       + rP.coeffs[3]*rN*aLoc + rP.coeffs[4]*rN*rN + rP.coeffs[5]*aLoc*aLoc;
+        double terrainPx = 0.0;
+        if (hasTerrain) {
+            const double R = demNear + c * demSpacing;
+            const double frac = (R - demNear) / (demFar - demNear);
+            const int demCol = qBound(0, (int)(frac * demW + 0.5), demW - 1);
+            const double h = (*dem)[static_cast<size_t>(demRow0) * demW + demCol];
+            if (h > -1000.0) {
+                constexpr double Hp = 693000.0, Re = 6378137.0;
+                const double cosT = (R * R + 2.0 * Hp * Re + Hp * Hp)
+                    / (2.0 * R * (Hp + Re));
+                const double sinT = std::sqrt(std::max(0.0, 1.0 - cosT * cosT));
+                terrainPx = demSign * h * demBperp
+                    / (R * sinT * sinT * demSpacing);
+            }
+        }
         // 与 resampleNonTopsar 及粗配准测量构造一致:
         // master(c) ≈ slave(c + rangeOff) → sx = c + colOff
-        rc.sx[c] = c + colOff;
+        rc.sx[c] = c + colOff + terrainPx;
         rc.sy[c] = (gRow + rowOffs[c]) - rc.sY0;
     }
     return rc;
@@ -175,6 +203,12 @@ struct ResampleConfig {
     int sW, burstH, burstRow0, sH, mW, mH;
     int sincW; double beta;
     QVector<QVector<float>>* sincLUT;
+    // 地形校正 (共享 DEM 只读)
+    const std::vector<float>* dem = nullptr;
+    int demW = 0, demH = 0;
+    double demNear = 0, demFar = 0, demSpacing = 0;
+    double demBperp = 0;
+    int demSign = 1;
 };
 
 static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
@@ -186,7 +220,10 @@ static QVector<QPair<int, QVector<std::complex<float>>>> processResampleBatch(
 
     for (const auto& w : batch) {
         auto rc = computeRowCoords(w.gRowSrc, cfg.mW, cfg.mH, cfg.sH,
-            w.rangePoly, w.aziPoly, cfg.sincW);  // readR = sincW
+            w.rangePoly, w.aziPoly, cfg.sincW,
+            cfg.dem, cfg.demW, cfg.demH,
+            cfg.demNear, cfg.demFar, cfg.demSpacing,
+            cfg.demBperp, cfg.demSign);  // readR = sincW
 
         QVector<std::complex<float>> rowBuf(cfg.mW);
         if (rc.sYH <= 0) {
@@ -386,7 +423,10 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
                 if (conc > 0.2 && conc < 1.5)
                     qDebug() << "[Step9] burst" << (b + 1)
                              << "measured kt=" << ktMeas << "(conc=" << conc << ")";
-                sar::applyDeramp_SoA(soaBurst, sW, winH, winRow0, slaveBurstIdx, prf, ktUse);
+                sar::applyDeramp_SoA(soaBurst, sW, winH, winRow0, slaveBurstIdx, prf, ktUse,
+                                     ctx.slaveBand ? ctx.slaveBand->nearRange : 0.0,
+                                     ctx.slaveBand ? ctx.slaveBand->rangeSpacing : 0.0,
+                                     kt);
             }
             derampUs = rt.nsecsElapsed() / 1000;
             fullBurst.clear();
@@ -421,6 +461,13 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         rcfg.mW = mW; rcfg.mH = mH;
         rcfg.sincW = sincW; rcfg.beta = beta;
         rcfg.sincLUT = &sincLUT;
+        // 地形校正配准 (ctx 共享 DEM)
+        rcfg.dem = ctx.demData;
+        rcfg.demW = ctx.demW; rcfg.demH = ctx.demH;
+        rcfg.demNear = ctx.demNearRange; rcfg.demFar = ctx.demFarRange;
+        rcfg.demSpacing = ctx.demRangeSpacing;
+        rcfg.demBperp = ctx.demBperp;
+        rcfg.demSign = ctx.demSign;
 
         // ── Sinc插值并行 (纯SoA, 零拷贝) ──
         QElapsedTimer st; st.start();
@@ -434,6 +481,47 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
         std::sort(allRows.begin(), allRows.end(),
             [](const auto& a, const auto& b) { return a.first < b.first; });
         qint64 sincUs = st.nsecsElapsed() / 1000;
+
+        // ── 诊断: 重采样保真度自检 (INSAR_IDENTITY_RESAMPLE=1, 仅 burst 0) ──
+        // 比较 sinc 输出 vs deramped 窗口内最近整数位置的原始值:
+        //   相干性 ~0.8+ → 重采样器保真 (亚像元取整误差上限 sinc(0.5)²≈0.41);
+        //   相干性 ~0.2-0.3 → 重采样/deramp 链损坏相位 (2026-08-16 白噪声根因定位)
+        if (b == 0 && qEnvironmentVariableIntValue("INSAR_IDENTITY_RESAMPLE") == 1) {
+            double sRe = 0, sIm = 0, mA = 0, mB = 0;
+            long cnt = 0;
+            const int stepC = 16;
+            const int winH = burstView.size / sW;
+            for (const auto& row : allRows) {
+                const int outRow = row.first;
+                const int k = outRow - burstRow0;
+                const double an = static_cast<double>(outRow) / mH;
+                for (int c = 0; c < mW; c += stepC) {
+                    const double rn = static_cast<double>(c) / mW;
+                    const auto& rP = br.rangePoly.coeffs;
+                    const auto& aP = br.aziPoly.coeffs;
+                    const double rOff = rP[0] + rP[1]*rn + rP[2]*an
+                        + rP[3]*rn*an + rP[4]*rn*rn + rP[5]*an*an;
+                    const double aOff = aP[0] + aP[1]*an + aP[2]*rn;
+                    const int srcRow = static_cast<int>(std::lround(
+                        burstRow0 + k + aOff - winRow0));
+                    const int srcCol = c + static_cast<int>(std::lround(rOff));
+                    if (srcRow < 0 || srcCol < 0 || srcRow >= winH || srcCol >= sW) continue;
+                    const long idx = static_cast<long>(srcRow) * sW + srcCol;
+                    const std::complex<float> ref(burstView.re[idx], burstView.im[idx]);
+                    const std::complex<float> out = row.second[c];
+                    sRe += static_cast<double>(out.real())*ref.real() + static_cast<double>(out.imag())*ref.imag();
+                    sIm += static_cast<double>(out.imag())*ref.real() - static_cast<double>(out.real())*ref.imag();
+                    mA += static_cast<double>(out.real())*out.real() + static_cast<double>(out.imag())*out.imag();
+                    mB += static_cast<double>(ref.real())*ref.real() + static_cast<double>(ref.imag())*ref.imag();
+                    ++cnt;
+                }
+            }
+            const double coh = cnt > 0
+                ? std::sqrt(sRe*sRe + sIm*sIm) / std::sqrt(std::max(1e-30, mA * mB)) : 0.0;
+            qWarning().nospace() << "[Step9 DIAG] identity-check coh="
+                << QString::number(coh, 'f', 4) << " samples=" << cnt
+                << " (sinc output vs deramped nearest-integer window; >=0.8=resampler OK)";
+        }
 
         // ── 写出 ──
         st.start();

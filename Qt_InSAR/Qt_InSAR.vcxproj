@@ -264,6 +264,7 @@
     <ClInclude Include="services\registration\steps\CoarseCorrelator.h" />
     <ClInclude Include="algorithms\BaselineEstimator.h" />
     <ClInclude Include="algorithms\GoldsteinFilter.h" />
+    <ClInclude Include="algorithms\RangeSpectralFilter.h" />
     <ClInclude Include="services\registration\steps\DataReader.h" />
     <ClInclude Include="services\registration\steps\TOPSARDeramp.h" />
     <ClInclude Include="services\registration\steps\EsdCorrector.h" />

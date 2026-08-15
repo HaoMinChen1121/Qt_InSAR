@@ -1,6 +1,7 @@
 #include "IfgGenerator.h"
 #include "../PipelineContext.h"
 #include "algorithms/DerampCore.h"
+#include "algorithms/RangeSpectralFilter.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/SentinelDataReader.h"
 #include "dataaccess/ISarProduct.h"
@@ -82,6 +83,10 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
         QVector<float> rowRe(outW);
         QVector<float> rowIm(outW);
         QVector<std::complex<float>> burstIfg;   // 整 burst 干涉图 (斜坡估计后统一写)
+        // 多视窗相位浓度诊断: |Σ m·s*|/Σ|m·s*| — 窗内相位是否相干
+        // (残余 chirp/地形相位在 8×8 窗内变化会摧毁复平均 → 相位噪声底)
+        std::complex<double> winSum(0, 0);
+        double winMagSum = 0.0;
         for (int b = 0; b < N; ++b) {
             if (mCancelled) return false;
 
@@ -99,6 +104,45 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                 mBurst = mReader.readBandWindow(0, 0, readRow0, realW, readH);
             sBurst = sReader.readBandWindow(0, 0, readRow0, realW, readH);
             int actualH = std::min(mBurst.size() / realW, sBurst.size() / realW);
+
+            // ── 距离向公共频带滤波 (基线频谱去相关消除, 2026-08-16) ──
+            // B⊥=3310m 时主辅距离频谱平移 Δf = f0·|B⊥|/(R·tanθ) ≈ 29 MHz,
+            // 与 56.5 MHz 带宽重叠仅 49% → 平移不变的相干损失 (2D 亚像素
+            // 搜索实测相干面全平 0.23 的根因)。两侧各保留公共频带,
+            // 外缘余弦渐变。
+            {
+                const double bw = ctx.masterSensorInfo.rangeSamplingRate > 0
+                    ? ctx.masterSensorInfo.rangeSamplingRate * 0.878
+                    : 56.5e6;   // S1 IW: 56.5 MHz 带宽 @ 64.345 MHz 采样
+                const double Bp = ctx.params->baselinePerp;
+                const double lambda = ctx.masterSensorInfo.wavelength > 0
+                    ? ctx.masterSensorInfo.wavelength : 0.05546576;
+                const double f0 = 299792458.0 / lambda;
+                const double Rmid = ctx.masterNearRange > 0
+                    ? ctx.masterNearRange + (realW / 2.0) * ctx.masterRangeSpacing
+                    : 880000.0;
+                constexpr double H = 693000.0, Re = 6378137.0;
+                const double cosT = (Rmid * Rmid + 2.0 * H * Re + H * H)
+                    / (2.0 * Rmid * (H + Re));
+                const double sinT = std::sqrt(std::max(0.0, 1.0 - cosT * cosT));
+                const double tanT = sinT / std::max(1e-9, cosT);
+                const double deltaF = f0 * std::abs(Bp) / (Rmid * tanT);
+                sar::RangeSpectralFilter rsf;
+                if (rsf.init(realW, bw, deltaF)) {
+                    for (int r = 0; r < actualH; ++r) {
+                        rsf.apply(mBurst.data() + static_cast<size_t>(r) * realW);
+                        rsf.apply(sBurst.data() + static_cast<size_t>(r) * realW);
+                    }
+                    if (b == 0)
+                        qDebug() << "[Ifg] range common-band filter: Bp="
+                                 << QString::number(Bp, 'f', 1) << "m deltaF="
+                                 << QString::number(deltaF / 1e6, 'f', 2)
+                                 << "MHz (bw=" << QString::number(bw / 1e6, 'f', 1)
+                                 << "MHz)";
+                } else if (b == 0) {
+                    qDebug() << "[Ifg] range common-band filter skipped";
+                }
+            }
 
             // ── 主影像方位 deramp (与 DerampCore::applyDeramp_SoA 同约定) ──
             // 原始 TOPS 相位 = exp(−jπ·kt·η²) (kt=annotation fmRate, 负),
@@ -134,17 +178,92 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                 }
             }
             if (std::abs(ktDeramp) > 1e-9 && prfDeramp > 0) {
+                // 距离相关调频率 (两段模型, 2026-08-15 两轮修正):
+                //   kt_eff(R) = A/R + B (A=轨道项, B=转向项距离无关);
+                //   kt(c) = ktDeramp + ctx.azimuthFmRate·(Rmid/R(c) − 1)
+                //   (ktDeramp=实测列平均=A/Rmid+B, annotation=A/Rmid 近似)。
+                //   简单 1/R 缩放会把转向项 B 也缩放 → 边缘残余 ±454 rad。
+                //   16 列分块: 块内 kt 变化 <0.02%, 残余相位 <0.2 rad
+                const bool hasGeom = ctx.masterNearRange > 0.0
+                    && ctx.masterRangeSpacing > 0.0;
+                const double Rmid = hasGeom
+                    ? ctx.masterNearRange + (realW / 2.0) * ctx.masterRangeSpacing
+                    : 0.0;
+                constexpr int kColBlock = 16;
                 for (int r = 0; r < actualH; ++r) {
                     const double eta = (readRow0 + r - mBurstRow0 - mL / 2.0) / prfDeramp;
-                    const double dp = M_PI * ktDeramp * eta * eta;   // = +π·kt·η²
-                    const float dCos = static_cast<float>(std::cos(dp));
-                    const float dSin = static_cast<float>(std::sin(dp));
+                    const double base = M_PI * eta * eta;   // 乘 ktEff 得 +π·kt·η²
                     std::complex<float>* row = mBurst.data() + static_cast<size_t>(r) * realW;
-                    for (int c = 0; c < realW; ++c) {
-                        const std::complex<float> v = row[c];
-                        row[c] = { v.real() * dCos - v.imag() * dSin,
-                                   v.real() * dSin + v.imag() * dCos };
+                    for (int c0 = 0; c0 < realW; c0 += kColBlock) {
+                        const int n = c0 + kColBlock < realW ? kColBlock : realW - c0;
+                        double ktEff = ktDeramp;
+                        if (hasGeom) {
+                            const double Rc = ctx.masterNearRange
+                                + (c0 + n * 0.5) * ctx.masterRangeSpacing;
+                            const double f = Rmid / Rc;
+                            ktEff = (ctx.azimuthFmRate != 0.0)
+                                ? ktDeramp + ctx.azimuthFmRate * (f - 1.0)
+                                : ktDeramp * f;
+                        }
+                        const double dp = base * ktEff;
+                        const float dCos = static_cast<float>(std::cos(dp));
+                        const float dSin = static_cast<float>(std::sin(dp));
+                        for (int c = c0; c < c0 + n; ++c) {
+                            const std::complex<float> v = row[c];
+                            row[c] = { v.real() * dCos - v.imag() * dSin,
+                                       v.real() * dSin + v.imag() * dCos };
+                        }
                     }
+                }
+            }
+
+            // ── 解析差分多普勒旋转 (多视前! 2026-08-16 关键顺序修正) ──
+            // ifg 的线性方位相位 2π·Δf_DC(c)·η 在多视 8×8 窗内变化 ~3 rad
+            // (Δf~30Hz, 窗 0.0164s) → 摧毁复平均 (窗浓度实测 0.249)。
+            // 旋转必须在多视平均之前作用于全分辨率数据 —
+            // 多视后再旋转已无法恢复被平均摧毁的相位。
+            {
+                constexpr double kC0 = 299792458.0;
+                const bool hasMasterDc = b < ctx.masterDcPoly.size()
+                    && !ctx.masterDcPoly[b].isEmpty();
+                const bool hasSlaveDc = b < ctx.slaveDcPoly.size()
+                    && !ctx.slaveDcPoly[b].isEmpty();
+                const bool hasGeom = ctx.masterNearRange > 0.0
+                    && ctx.masterRangeSpacing > 0.0;
+                auto evalPoly = [](const QVector<double>& p, double dt) {
+                    double v = 0.0;
+                    for (int k = p.size() - 1; k >= 0; --k) v = v * dt + p[k];
+                    return v;
+                };
+                if (hasMasterDc && hasSlaveDc && hasGeom && prfDeramp > 0) {
+                    const double t0m = b < ctx.masterDcT0.size() ? ctx.masterDcT0[b] : 0.0;
+                    const double t0s = b < ctx.slaveDcT0.size() ? ctx.slaveDcT0[b] : 0.0;
+                    constexpr int kColBlock = 16;
+                    for (int r = 0; r < actualH; ++r) {
+                        const double eta = (readRow0 + r - mBurstRow0 - mL / 2.0) / prfDeramp;
+                        std::complex<float>* row = mBurst.data() + static_cast<size_t>(r) * realW;
+                        for (int c0 = 0; c0 < realW; c0 += kColBlock) {
+                            const int n = c0 + kColBlock < realW ? kColBlock : realW - c0;
+                            const double R = ctx.masterNearRange
+                                + (c0 + n * 0.5) * ctx.masterRangeSpacing;
+                            const double tau = 2.0 * R / kC0;
+                            const double df = evalPoly(ctx.masterDcPoly[b], tau - t0m)
+                                            - evalPoly(ctx.slaveDcPoly[b], tau - t0s);
+                            const double ph = -2.0 * M_PI * df * eta;
+                            const float dCos = static_cast<float>(std::cos(ph));
+                            const float dSin = static_cast<float>(std::sin(ph));
+                            for (int c = c0; c < c0 + n; ++c) {
+                                const std::complex<float> v = row[c];
+                                row[c] = { v.real() * dCos - v.imag() * dSin,
+                                           v.real() * dSin + v.imag() * dCos };
+                            }
+                        }
+                    }
+                    if (b == 0)
+                        qDebug() << "[Ifg] analytic diff-Doppler rotation applied pre-multilook";
+                } else if (b == 0) {
+                    qWarning() << "[Ifg] analytic diff-Doppler skipped (DC data missing,"
+                               << "master=" << hasMasterDc << "slave=" << hasSlaveDc << ")";
                 }
             }
 
@@ -188,6 +307,26 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                         std::complex<float>(static_cast<float>(ifg.real()),
                                             static_cast<float>(ifg.imag()));
 
+                    // 多视窗相位浓度 (诊断, 在 8×8 窗内累计)
+                    {
+                        std::complex<double> wSum(0, 0);
+                        double wMag = 0;
+                        for (int ar = 0; ar < azLooks; ++ar) {
+                            for (int ac = 0; ac < rgLooks; ++ac) {
+                                int idx = (rowOff + ar) * realW + (srcCol + ac);
+                                if (idx >= 0 && idx < actualH * realW) {
+                                    auto mv = mBurst[idx]; auto sv = sBurst[idx];
+                                    wSum += std::complex<double>(mv.real(), mv.imag())
+                                        * std::complex<double>(sv.real(), -sv.imag());
+                                    wMag += std::sqrt((mv.real()*mv.real() + mv.imag()*mv.imag())
+                                        * (sv.real()*sv.real() + sv.imag()*sv.imag()));
+                                }
+                            }
+                        }
+                        winSum += std::complex<double>(std::abs(wSum), 0.0);
+                        winMagSum += wMag;
+                    }
+
                     std::complex<double> crossSum(0, 0);
                     double magM = 0, magS = 0;
                     for (int wr = -cohWindow/2; wr <= cohWindow/2; ++wr) {
@@ -215,67 +354,7 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                     rowCoh.data(), outW, 1, GDT_Float32, 0, 0);
             }
 
-            // ── 差分多普勒斜坡消除 (数据驱动) ──
-            // ifg 相位含 2π(f_DC_m − f_DC_s)·η 残余: 每景零多普勒导引的几何
-            // 差分 (实测 ~92Hz = 1.19 rad/全分辨率行) — deramp 只去二次 chirp,
-            // 线性多普勒项残留 → 多视盒内相位旋转 → 幅度周期调制 + 相干摧毁。
-            // 逐行圆平均相位推进 → unwrap → 线性拟合 → 旋转 exp(−jβ·row)
-            {
-                QVector<double> adv(burstOutH - 1);
-                for (int j = 0; j < burstOutH - 1; ++j) {
-                    std::complex<double> s(0, 0);
-                    const auto* r0p = burstIfg.data() + static_cast<size_t>(j) * outW;
-                    const auto* r1p = r0p + outW;
-                    for (int c = 0; c < outW; ++c) {
-                        s += std::complex<double>(
-                            static_cast<double>(r1p[c].real()) * r0p[c].real()
-                                + static_cast<double>(r1p[c].imag()) * r0p[c].imag(),
-                            static_cast<double>(r1p[c].imag()) * r0p[c].real()
-                                - static_cast<double>(r1p[c].real()) * r0p[c].imag());
-                    }
-                    adv[j] = std::atan2(s.imag(), s.real());
-                }
-                // unwrap
-                for (int j = 1; j < adv.size(); ++j) {
-                    while (adv[j] - adv[j - 1] > M_PI) adv[j] -= 2.0 * M_PI;
-                    while (adv[j] - adv[j - 1] < -M_PI) adv[j] += 2.0 * M_PI;
-                }
-                // 推进序列线性拟合 adv[j] ≈ a + b·j
-                // 相位校正 φ_j = Σ adv = a·j + b·j(j−1)/2 —
-                // 含二次项: annotation azimuthFmRate 是沿轨道变化的 11 组多项式,
-                // 单一常数 kt 的 deramp 残留 ~30-80 Hz/s 二次 chirp (实测推进率
-                // 线性漂移 +2.5→−6.8 rad/2行), 只去线性斜坡不够
-                double sx = 0, sy = 0, sxx = 0, sxy = 0;
-                const int nA = adv.size();
-                for (int j = 0; j < nA; ++j) {
-                    sx += j; sy += adv[j]; sxx += static_cast<double>(j) * j;
-                    sxy += static_cast<double>(j) * adv[j];
-                }
-                const double a = (sy * sxx - sx * sxy) / (nA * sxx - sx * sx);
-                const double bb = (nA * sxy - sx * sy) / (nA * sxx - sx * sx);
-                // 旋转每行 exp(−jφ_j) (burst 内 0-based 行)
-                for (int j = 0; j < burstOutH; ++j) {
-                    const double ph = -(a * j + bb * j * (j - 1) * 0.5);
-                    const float dCos = static_cast<float>(std::cos(ph));
-                    const float dSin = static_cast<float>(std::sin(ph));
-                    auto* row = burstIfg.data() + static_cast<size_t>(j) * outW;
-                    for (int c = 0; c < outW; ++c) {
-                        const std::complex<float> v = row[c];
-                        row[c] = { v.real() * dCos - v.imag() * dSin,
-                                   v.real() * dSin + v.imag() * dCos };
-                    }
-                }
-                qDebug() << "[Ifg] burst" << (b+1)
-                         << "phase ramp a=" << QString::number(a, 'f', 4)
-                         << "rad/row b=" << QString::number(bb, 'f', 4)
-                         << "rad/row^2 (a_Hz="
-                         << QString::number(a * prfDeramp / (2.0 * M_PI), 'f', 2)
-                         << " Hz, b_Hz/s="
-                         << QString::number(bb * prfDeramp * prfDeramp / (2.0 * M_PI * azLooks), 'f', 2)
-                         << ")";
-            }
-
-            // 写 band1/2/4 (旋转后)
+            // 写 band1/2/4 (解析旋转已在多视前应用)
             for (int j = 0; j < burstOutH; ++j) {
                 const auto* row = burstIfg.data() + static_cast<size_t>(j) * outW;
                 for (int c = 0; c < outW; ++c) {
@@ -292,6 +371,12 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
             }
             GDALClose(hBlk);
         }
+
+        // 多视窗相位浓度汇总 (诊断: 1.0=窗内相位相干, 低值=chirp/地形残余
+        // 在 8×8 窗内变化摧毁复平均 → 相位噪声底)
+        qDebug() << "[Ifg] multilook window phase concentration ="
+                 << QString::number(winMagSum > 0 ? std::abs(winSum) / winMagSum : 0.0, 'f', 3)
+                 << "(1.0=coherent, low=window phase variation)";
 
         ctx.outWidth = outW;
         // ctx.outHeight 由 TopsarDeburst 计算

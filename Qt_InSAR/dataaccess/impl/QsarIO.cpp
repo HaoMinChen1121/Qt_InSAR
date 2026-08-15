@@ -189,6 +189,12 @@ bool QsarIO::write(const QString& filePath, const QsarProduct& product)
                 bo["startLine"] = b.startLine;
                 bo["azimuthTime"] = b.azimuthTime;
                 bo["esdCorrection"] = b.esdCorrection;
+                if (!b.dcPoly.isEmpty()) {
+                    QJsonArray dc;
+                    for (double v : b.dcPoly) dc.append(v);
+                    bo["dcPoly"] = dc;
+                    bo["dcT0"] = b.dcT0;
+                }
                 bs.append(bo);
             }
             so["bursts"] = bs;
@@ -463,6 +469,9 @@ QsarProduct QsarIO::read(const QString& filePath)
                     t.startLine = bo["startLine"].toInt();
                     t.azimuthTime = bo["azimuthTime"].toString();
                     t.esdCorrection = bo["esdCorrection"].toDouble();
+                    for (const auto& dv : bo["dcPoly"].toArray())
+                        t.dcPoly.append(dv.toDouble());
+                    t.dcT0 = bo["dcT0"].toDouble();
                     s.bursts.append(t);
                 }
                 m.tops.swaths.append(s);

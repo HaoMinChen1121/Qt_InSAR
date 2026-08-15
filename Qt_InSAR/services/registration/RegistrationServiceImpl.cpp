@@ -9,7 +9,9 @@
 #include "dataaccess/SarProductFactory.h"
 #include "algorithms/BaselineEstimator.h"
 #include "dataaccess/impl/GdalSlcReader.h"
+#include "dataaccess/impl/GdalDemReader.h"
 #include "dataaccess/impl/QsarIO.h"
+#include "dataaccess/annotation/SlcAnnotation.h"
 #include "domain/QsarProduct.h"
 
 #include <gdal_priv.h>
@@ -23,6 +25,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <cmath>
+#include <limits>
 
 RegistrationServiceImpl::RegistrationServiceImpl(QObject* parent)
     : IRegistrationService(parent) {}
@@ -71,6 +74,38 @@ void RegistrationServiceImpl::execute() {
             .arg(mParams.masterDisplayName, mParams.slaveDisplayName)
             .arg(baseline.perpBaseline, 0, 'f', 1)
             .arg(baseline.parBaseline, 0, 'f', 1);
+    }
+
+    // ── 地形校正配准: DEM 全量加载 (2026-08-16 相位质量根因修复) ──
+    // 地形引起的距离偏移差 h·Δ(1/tanθ) ≈ h·0.0114 (~7 px @1500m) 未被
+    // 平地多项式配准建模 → 山区逐像素失配 → 全分辨率去相关
+    mTerrainDem.clear();
+    mTerrainDemW = mTerrainDemH = 0;
+    {
+        QString demPath = mParams.demPath;
+        if (qEnvironmentVariableIsSet("INSAR_TERRAIN_DEM"))
+            demPath = qEnvironmentVariable("INSAR_TERRAIN_DEM");
+        mTerrainSign = mParams.terrainOffsetSign;
+        if (qEnvironmentVariableIsSet("INSAR_TERRAIN_SIGN"))
+            mTerrainSign = qEnvironmentVariableIntValue("INSAR_TERRAIN_SIGN");
+        if (!demPath.isEmpty()) {
+            GdalDemReader dem;
+            if (dem.open(demPath)) {
+                const QVector<float> elev = dem.readElevation();
+                if (!elev.isEmpty()) {
+                    mTerrainDem.assign(elev.begin(), elev.end());
+                    mTerrainDemW = dem.width();
+                    mTerrainDemH = dem.height();
+                    qDebug() << "[Reg] terrain-corrected coreg: DEM" << demPath
+                             << mTerrainDemW << "x" << mTerrainDemH
+                             << "sign=" << mTerrainSign
+                             << "Bperp=" << std::abs(baseline.perpBaseline);
+                }
+                dem.close();
+            } else {
+                qWarning() << "[Reg] terrain DEM open failed:" << demPath;
+            }
+        }
     }
 
     const auto& mBands = master->bands();
@@ -137,6 +172,22 @@ void RegistrationServiceImpl::execute() {
         ctx.pairIndex  = i;
         ctx.totalPairs = pairs.size();
         ctx.outputPath = outPath;
+
+        // 地形校正配准: 共享 DEM + 逐 pair 几何映射 (slave 斜距范围)
+        if (!mTerrainDem.empty()) {
+            ctx.demData = &mTerrainDem;
+            ctx.demW = mTerrainDemW;
+            ctx.demH = mTerrainDemH;
+            const double sNear = pairs[i].s.nearRange > 0 ? pairs[i].s.nearRange
+                : slave->sensorInfo().nearRange;
+            const double sSpacing = pairs[i].s.rangeSpacing > 0 ? pairs[i].s.rangeSpacing
+                : slave->sensorInfo().rangeSpacing;
+            ctx.demNearRange = sNear;
+            ctx.demFarRange = sNear + pairs[i].s.rasterSize.width() * sSpacing;
+            ctx.demRangeSpacing = sSpacing;
+            ctx.demBperp = std::abs(baseline.perpBaseline);
+            ctx.demSign = mTerrainSign;
+        }
 
         // 运行管道 (步骤链由策略构建; 阶段4: 所有策略返回相同的 11 步)
         QVector<IRegStep*> steps = buildPipelineSteps(strat);
@@ -291,6 +342,30 @@ void RegistrationServiceImpl::execute() {
                 }
                 break;
             }
+            // 辅影像多普勒质心多项式 (annotation dataDcPoly, 按 burst 方位时间最近匹配)
+            // 注意: tops bursts 存的是主影像 burst 时间 (qsar 约定), 而 dcEstimate
+            // 是辅影像的时间 — 两景相隔 12 天, 必须用辅影像自己的 burst 时间匹配!
+            if (!sw->bursts.isEmpty() && sw->bursts[0].dcPoly.isEmpty()) {
+                const QString key = sw->name + "/" + pairs[i].m.polarization;
+                const SlcAnnotation san = slave->allAnnotations().value(key);
+                const auto& sTimes = pairs[i].s.burstAzimuthTimes;
+                if (!san.dopplerEstimates.isEmpty() && !sTimes.isEmpty()) {
+                    for (int b = 0; b < sw->bursts.size() && b < sTimes.size(); ++b) {
+                        if (!sTimes[b].isValid()) continue;
+                        const DopplerEstimate* best = nullptr;
+                        qint64 bestDt = std::numeric_limits<qint64>::max();
+                        for (const auto& de : san.dopplerEstimates) {
+                            if (!de.azimuthTime.isValid()) continue;
+                            const qint64 dt = qAbs(de.azimuthTime.msecsTo(sTimes[b]));
+                            if (dt < bestDt) { bestDt = dt; best = &de; }
+                        }
+                        if (best && bestDt < 5000 && !best->dataDcPoly.isEmpty()) {
+                            sw->bursts[b].dcPoly = best->dataDcPoly;
+                            sw->bursts[b].dcT0 = best->t0;
+                        }
+                    }
+                }
+            }
         }
 
         // 处理历史 (结构化)
@@ -349,12 +424,22 @@ void RegistrationServiceImpl::execute() {
                     po["polarization"] = pairs[i].m.polarization;
                     po["meanCorrelation"] = q.meanCorrelation;
                     po["offsetRmse"] = q.offsetRmse;
+                    po["rangeRmse"] = q.rangeRmse;
+                    po["aziRmse"] = q.aziRmse;
+                    po["polyRangeRmse"] = q.polyRangeRmse;
+                    po["polyAziRmse"] = q.polyAziRmse;
                     po["esdMaxResidual"] = q.esdMaxResidual;
                     po["validRatio"] = (q.totalPoints > 0)
                         ? static_cast<double>(q.validPoints) / q.totalPoints : 0.0;
                     QJsonArray rmseArr;
                     for (double v : q.perBurstRmse) rmseArr.append(v);
                     po["perBurstRmse"] = rmseArr;
+                    QJsonArray rRArr;
+                    for (double v : q.perBurstRangeRmse) rRArr.append(v);
+                    po["perBurstRangeRmse"] = rRArr;
+                    QJsonArray rAArr;
+                    for (double v : q.perBurstAziRmse) rAArr.append(v);
+                    po["perBurstAziRmse"] = rAArr;
                     QJsonArray esdArr;
                     for (double v : q.esdPhaseDeltas) esdArr.append(v);
                     po["esdPhaseDeltas"] = esdArr;

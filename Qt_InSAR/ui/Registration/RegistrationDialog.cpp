@@ -137,6 +137,14 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
     mSincBeta->setSingleStep(0.5);
     mSincBeta->setValue(2.5);
     form3->addRow(tr("Kaiser \xce\xb2:"), mSincBeta);
+    // 地形校正 DEM (地形引起的距离偏移修正, 山区配准精度关键)
+    mDemPath = new QLineEdit;
+    mDemPath->setPlaceholderText(tr("可选 — 地形校正配准用 DEM (GeoTIFF)"));
+    QPushButton* demBrowse = new QPushButton(tr("浏览..."));
+    QHBoxLayout* demLayout = new QHBoxLayout;
+    demLayout->addWidget(mDemPath, 1);
+    demLayout->addWidget(demBrowse);
+    form3->addRow(tr("地形校正DEM:"), demLayout);
     tabs->addTab(tab3, tr("重采样"));
 
     // ===== Tab 4: 输出 =====
@@ -180,6 +188,11 @@ RegistrationDialog::RegistrationDialog(QWidget* parent) : QDialog(parent)
     connect(dirBrowse, &QPushButton::clicked, this, [this]() {
         QString d = QFileDialog::getExistingDirectory(this, tr("选择输出目录"));
         if (!d.isEmpty()) mOutputDir->setText(d);
+    });
+    connect(demBrowse, &QPushButton::clicked, this, [this]() {
+        QString f = QFileDialog::getOpenFileName(this, tr("选择地形校正 DEM"),
+            QString(), tr("GeoTIFF (*.tif *.tiff);;所有文件 (*.*)"));
+        if (!f.isEmpty()) mDemPath->setText(f);
     });
 }
 
@@ -245,6 +258,7 @@ void RegistrationDialog::setParams(const RegistrationParams& p)
 
     mMasterPath->setText(p.masterPath);
     mSlavePath->setText(p.slavePath);
+    mDemPath->setText(p.demPath);
 
     auto metaText = [&p](bool isMaster) -> QString {
         const QString& displayName = isMaster ? p.masterDisplayName : p.slaveDisplayName;
@@ -295,6 +309,7 @@ RegistrationParams RegistrationDialog::params() const
 
     p.masterPath = mMasterPath->text();
     p.slavePath = mSlavePath->text();
+    p.demPath = mDemPath->text().trimmed();
 
     // 引擎覆盖
     int engData = mCoarseEngineCombo->currentData().toInt();

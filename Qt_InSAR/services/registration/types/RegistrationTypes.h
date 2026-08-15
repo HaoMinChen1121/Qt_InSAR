@@ -71,12 +71,18 @@ struct SlcDataBundle {
 
 // ── 质量报告 ──
 struct QualityReport {
-    double offsetRmse       = 0.0;   // 偏移残差RMSE (目标 <0.05)
+    double offsetRmse       = 0.0;   // 偏移残差RMSE (2D 合并, 目标 <0.05)
+    double rangeRmse        = 0.0;   // 距离向残差RMSE (px, 单独诊断)
+    double aziRmse          = 0.0;   // 方位向残差RMSE (px, 单独诊断)
+    double polyRangeRmse    = 0.0;   // 距离多项式拟合RMSE (Step6, ESD前)
+    double polyAziRmse      = 0.0;   // 方位多项式拟合RMSE (Step6, ESD前)
     double meanCorrelation  = 0.0;   // 平均相关系数 (>0.8良好, 0.5-0.8可接受)
     double esdMaxResidual   = 0.0;   // ESD最大残差相位
     int    validPoints      = 0;
     int    totalPoints      = 0;
-    QVector<double> perBurstRmse;
+    QVector<double> perBurstRmse;       // 2D 合并
+    QVector<double> perBurstRangeRmse;  // 距离向 (诊断 burst 级结构)
+    QVector<double> perBurstAziRmse;    // 方位向
     QVector<double> esdPhaseDeltas;
 };
 

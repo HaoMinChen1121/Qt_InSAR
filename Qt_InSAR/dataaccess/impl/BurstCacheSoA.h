@@ -22,8 +22,11 @@ public:
     // src 指向 row0 的第一个像素: int16 交织对 {re, im, re, im, ...}
     void loadFromRawStrips(const void* src, int w, int h);
 
-    // 原地 TOPS deramp
-    void applyDeramp(double prf, double kt, int burstRow0, int burstIdx);
+    // 原地 TOPS deramp (nearRange/rangeSpacing 供距离相关 kt, <=0 退化为常数 kt;
+    // ktAnnotation = 轨道项 annotation 值, 供两段模型 kt+ktAnn·(Rmid/Rc−1))
+    void applyDeramp(double prf, double kt, int burstRow0, int burstIdx,
+                     double nearRange = 0.0, double rangeSpacing = 0.0,
+                     double ktAnnotation = 0.0);
 
     // 零拷贝视图 (给 SincResampler SoA 路径)
     sar::ComplexSoAView soaView() const;

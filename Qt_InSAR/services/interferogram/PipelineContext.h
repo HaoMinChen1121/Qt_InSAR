@@ -23,6 +23,13 @@ struct IfgPipelineContext {
     QString deburstOutputBase;    // e.g. ".../deburst/IW1_VV"
     QString burstBlockBase;       // 临时 burst 块路径基 ".../deburst/.tmp/IW1_VV"
     double  azimuthFmRate = 0.0;  // master k_t (Hz/s), 由服务从产品/轨道填充
+    double  masterNearRange = 0.0;    // 距离相关 deramp 几何 (master 波段描述符)
+    double  masterRangeSpacing = 0.0; // <=0 时回退常数 kt deramp
+    // 解析差分多普勒旋转 (annotation dataDcPoly, 每 burst 一组系数 + t0)
+    QVector<QVector<double>> masterDcPoly;
+    QVector<double>          masterDcT0;
+    QVector<QVector<double>> slaveDcPoly;
+    QVector<double>          slaveDcT0;
     int     azimuthRampCorrectionSign = 0;  // 开发期诊断 (参数/环境变量已解析)
     int     outWidth  = 0;        // actual output dims (post-deburst)
     int     outHeight = 0;

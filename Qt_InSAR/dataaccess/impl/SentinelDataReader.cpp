@@ -355,6 +355,8 @@ bool SentinelDataReader::open(const QString& zipPath, const QString& entryName,
     mFmRate        = band.azimuthFmRate;
     mSteeringRate  = band.azimuthSteeringRate;
     mPrf           = band.azimuthFrequency;
+    mNearRange     = band.nearRange;
+    mRangeSpacing  = band.rangeSpacing;
 
     if (mBurstCount <= 0) return true;
 
@@ -414,7 +416,8 @@ void SentinelDataReader::derampBurst(int burstIdx, double prf, double kt)
     if (burstIdx < 0 || burstIdx >= static_cast<int>(mCaches.size())) return;
     if (!mCaches[burstIdx].isLoaded()) return;
     int row0 = burstIdx * mLinesPerBurst;
-    mCaches[burstIdx].applyDeramp(prf, kt, row0, burstIdx);
+    mCaches[burstIdx].applyDeramp(prf, kt, row0, burstIdx,
+                                  mNearRange, mRangeSpacing, mFmRate);
 }
 
 bool SentinelDataReader::readWindow(int x0, int y0, int w, int h, std::complex<float>* dst)

@@ -72,6 +72,15 @@ struct PipelineContext {
     // ── Step 9: 输出 ──
     QString outputPath;
 
+    // ── 地形校正配准 (DEM 共享指针, 服务持有; 逐 pair 填几何映射) ──
+    const std::vector<float>* demData = nullptr;  // 全量 DEM (线程安全只读)
+    int     demW = 0, demH = 0;
+    double  demNearRange = 0.0;   // slave 斜距范围 (DEM 列映射)
+    double  demFarRange = 0.0;
+    double  demRangeSpacing = 0.0;
+    double  demBperp = 0.0;       // |B⊥|
+    int     demSign = 1;
+
     // ── Step 10: 质量 ──
     QualityReport qualityReport;
 

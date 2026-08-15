@@ -60,6 +60,7 @@ private:
     QComboBox* mResamplingMethod;
     QSpinBox* mSincWindow;
     QDoubleSpinBox* mSincBeta;
+    QLineEdit* mDemPath;            // 地形校正 DEM (可选)
 
     // Tab 4: 输出
     QLineEdit* mOutputDir;

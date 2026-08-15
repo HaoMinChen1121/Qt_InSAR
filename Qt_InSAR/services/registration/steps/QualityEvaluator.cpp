@@ -11,8 +11,8 @@ bool QualityEvaluator::execute(PipelineContext& ctx) {
     int N = ctx.data.burstCount, L = ctx.data.linesPerBurst;
     bool useBurstPoly = ctx.esdApplied && N > 1 && !ctx.burstResults.isEmpty();
 
-    // ── 偏移RMSE ──
-    double sumSq = 0; int cnt = 0;
+    // ── 偏移RMSE (2D 合并 + 距离/方位分离诊断) ──
+    double sumSq = 0, sumSqR = 0, sumSqA = 0; int cnt = 0;
     for (const auto& pt : ctx.offsetPoints) {
         if (pt.correlation <= 0) continue;
         double rn = (double)pt.col / w, an = (double)pt.row / h;
@@ -35,10 +35,17 @@ bool QualityEvaluator::execute(PipelineContext& ctx) {
                   + ctx.aziPoly.coeffs[2]*rn;
         }
         double resR = pt.rangeOff - predR, resA = pt.aziOff - predA;
-        sumSq += resR*resR + resA*resA; ++cnt;
+        sumSq += resR*resR + resA*resA;
+        sumSqR += resR*resR; sumSqA += resA*resA;
+        ++cnt;
     }
     r.validPoints = cnt;
     r.offsetRmse = cnt > 0 ? std::sqrt(sumSq / cnt) : 0;
+    r.rangeRmse  = cnt > 0 ? std::sqrt(sumSqR / cnt) : 0;
+    r.aziRmse    = cnt > 0 ? std::sqrt(sumSqA / cnt) : 0;
+    // 多项式拟合质量 (Step6, ESD 前)
+    r.polyRangeRmse = ctx.rangePoly.rmse;
+    r.polyAziRmse   = ctx.aziPoly.rmse;
 
     // ── 平均相关系数 (仅NCC路线有效, FFT路线用多项式RMSE) ──
     // FFT 路线的 pt.correlation 是未归一化的相关峰幅度 (可达 1e8),
@@ -63,9 +70,9 @@ bool QualityEvaluator::execute(PipelineContext& ctx) {
         }
     }
 
-    // ── Per-burst RMSE ──
+    // ── Per-burst RMSE (2D + 距离/方位分离) ──
     for (int b = 0; b < N; ++b) {
-        double ss = 0; int nc = 0;
+        double ss = 0, ssR = 0, ssA = 0; int nc = 0;
         int startRow = ctx.data.burstStartLines.isEmpty()
             ? b * L : ctx.data.burstStartLines[b];
         int endRow = startRow + L;
@@ -86,9 +93,12 @@ bool QualityEvaluator::execute(PipelineContext& ctx) {
                 pA = ctx.aziPoly.coeffs[0] + ctx.aziPoly.coeffs[1]*an
                    + ctx.aziPoly.coeffs[2]*rn;
             }
-            ss += (pt.rangeOff-pR)*(pt.rangeOff-pR) + (pt.aziOff-pA)*(pt.aziOff-pA); ++nc;
+            const double dr = pt.rangeOff - pR, da = pt.aziOff - pA;
+            ss += dr*dr + da*da; ssR += dr*dr; ssA += da*da; ++nc;
         }
         r.perBurstRmse.append(nc > 0 ? std::sqrt(ss / nc) : 0);
+        r.perBurstRangeRmse.append(nc > 0 ? std::sqrt(ssR / nc) : 0);
+        r.perBurstAziRmse.append(nc > 0 ? std::sqrt(ssA / nc) : 0);
     }
 
     // ── 质量等级 ──

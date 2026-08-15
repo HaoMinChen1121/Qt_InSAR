@@ -129,6 +129,10 @@ struct QsarTopsBurst {
     int     startLine    = 0;
     QString azimuthTime;            // ISO
     double  esdCorrection = 0.0;    // ESD 方位修正 (像元), 配准阶段写入
+    // 多普勒质心多项式 (dataDcPoly, 配准阶段从辅影像 annotation 落盘):
+    // f_DC(τ) = Σ dcPoly[k]·(τ − dcT0)^k, τ 为双程斜距时间 (s)
+    QVector<double> dcPoly;
+    double  dcT0 = 0.0;
 };
 struct QsarTopsSwath {
     QString name;

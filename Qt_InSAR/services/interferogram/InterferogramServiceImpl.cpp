@@ -9,6 +9,7 @@
 #include "steps/PhaseVisualizer.h"
 #include "dataaccess/impl/QsarIO.h"
 #include "dataaccess/SarProductFactory.h"
+#include "dataaccess/annotation/SlcAnnotation.h"
 #include "algorithms/BaselineEstimator.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 
@@ -309,10 +310,14 @@ void InterferogramServiceImpl::execute()
 
         // master k_t (方位调频率): 逐 band annotation 值, 缺失时轨道估算
         ctx.azimuthFmRate = 0.0;
+        ctx.masterNearRange = 0.0;
+        ctx.masterRangeSpacing = 0.0;
         if (masterProduct) {
             for (const auto& b : masterProduct->bands()) {
                 if (b.subSwath == sw && b.polarization == pol) {
                     ctx.azimuthFmRate = b.azimuthFmRate;
+                    ctx.masterNearRange = b.nearRange;
+                    ctx.masterRangeSpacing = b.rangeSpacing;
                     if (std::abs(ctx.azimuthFmRate) < 1e-9) {
                         // 回退: kt ≈ −2·Vr²/(λ·R0)
                         const auto& ov = masterProduct->orbitStateVectors();
@@ -338,6 +343,42 @@ void InterferogramServiceImpl::execute()
         if (std::abs(ctx.azimuthFmRate) < 1e-9)
             qWarning() << "[Ifg] master k_t unavailable for" << pairName
                        << "(方位校正将跳过; master 为 .qsar 时属预期)";
+
+        // ── 解析差分多普勒 (annotation dataDcPoly): master 从原始产品 annotation,
+        //    slave 从 registered qsar metadata.tops (配准阶段落盘) ──
+        {
+            if (masterProduct) {
+                const SlcAnnotation man =
+                    masterProduct->allAnnotations().value(sw + "/" + pol);
+                if (!man.dopplerEstimates.isEmpty()) {
+                    const auto& mTimes = pairs[i].master.burstAzimuthTimes;
+                    for (int b = 0; b < mTimes.size(); ++b) {
+                        const DopplerEstimate* best = nullptr;
+                        qint64 bestDt = std::numeric_limits<qint64>::max();
+                        for (const auto& de : man.dopplerEstimates) {
+                            if (!de.azimuthTime.isValid()) continue;
+                            const qint64 dt = qAbs(de.azimuthTime.msecsTo(mTimes[b]));
+                            if (dt < bestDt) { bestDt = dt; best = &de; }
+                        }
+                        if (best && bestDt < 5000 && !best->dataDcPoly.isEmpty()) {
+                            ctx.masterDcPoly.append(best->dataDcPoly);
+                            ctx.masterDcT0.append(best->t0);
+                        } else {
+                            ctx.masterDcPoly.append(QVector<double>());
+                            ctx.masterDcT0.append(0.0);
+                        }
+                    }
+                }
+            }
+            for (const auto& s : slaveQsar.metadata.tops.swaths) {
+                if (s.name != sw) continue;
+                for (const auto& tb : s.bursts) {
+                    ctx.slaveDcPoly.append(tb.dcPoly);
+                    ctx.slaveDcT0.append(tb.dcT0);
+                }
+                break;
+            }
+        }
 
         ctx.outputBand.subSwath = sw;
         ctx.outputBand.polarization = pol;

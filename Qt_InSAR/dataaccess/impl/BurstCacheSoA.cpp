@@ -45,10 +45,13 @@ void BurstCacheSoA::loadFromRawStrips(const void* src, int w, int h)
     mLoaded = true;
 }
 
-void BurstCacheSoA::applyDeramp(double prf, double kt, int burstRow0, int burstIdx)
+void BurstCacheSoA::applyDeramp(double prf, double kt, int burstRow0, int burstIdx,
+                                double nearRange, double rangeSpacing,
+                                double ktAnnotation)
 {
     if (!mLoaded) return;
-    sar::applyDeramp_SoA(mData, mWidth, mHeight, burstRow0, burstIdx, prf, kt);
+    sar::applyDeramp_SoA(mData, mWidth, mHeight, burstRow0, burstIdx, prf, kt,
+                         nearRange, rangeSpacing, ktAnnotation);
 }
 
 sar::ComplexSoAView BurstCacheSoA::soaView() const

@@ -31,9 +31,7 @@ public:
     sar::ComplexSoAView burstSoaView(int idx);
 
     // TOPS deramp: 由 pipeline step 调用，不在 open() 时自动执行
-    void derampBurst(int burstIdx, double prf, double kt);
-
-    // 窗口/行/块读取
+    void derampBurst(int burstIdx, double prf, double kt);    // 窗口/行/块读取
     bool readWindow(int x0, int y0, int w, int h, std::complex<float>* dst);
 
     void* datasetHandle() const { return mVsiDataset; }
@@ -48,6 +46,8 @@ private:
     double mFmRate = 0.0;
     double mSteeringRate = 0.0;
     double mPrf = 0.0;
+    double mNearRange = 0.0;      // 距离相关 deramp 几何 (band 描述符)
+    double mRangeSpacing = 0.0;
 
     QVector<int> mBurstStartLines;
     std::vector<BurstCacheSoA> mCaches;

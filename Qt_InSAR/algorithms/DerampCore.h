@@ -21,25 +21,52 @@ namespace sar {
 //    → 抵消因子必须为 exp(+jπ·kt·η²), 即 dp = +π·kt·η²
 //  此前 dp = −π·kt·η² 与原始 chirp 同号 → 加倍 chirp 而非消除,
 //  导致配准输出的辅影像带 2×chirp, 干涉图相干性被摧毁 (coh≈噪声底 0.2)
+//
+//  距离相关调频率 (2026-08-15 相位质量根因排查, 两轮修正):
+//    TOPS 有效调频率 = 轨道项 + 天线转向项: kt_eff(R) = A/R + B,
+//    A = −2v²/λ (annotation azimuthFmRate ≈ A/Rmid), B 距离无关。
+//    常数 kt deramp 残留 π·Δkt(c)·η² ≈ ±432 rad (burst 边缘) 摧毁相位;
+//    而简单 1/R 缩放 kt(c)=kt·Rmid/R(c) 错误地把转向项 B 也缩放,
+//    条带边缘残留 B·(Rmid/Rc−1) ≈ ±61 Hz/s → ±454 rad (2026-08-15 实测)。
+//    正确模型: kt(c) = kt + ktAnnotation·(Rmid/R(c) − 1)
+//    (kt = 实测列平均 = A/Rmid+B; ktAnnotation = 轨道项 ≈ A/Rmid)。
+//    ktAnnotation=0 时回退 1/R 缩放; nearRange/rangeSpacing<=0 时常数 kt。
+//    16 列分块: 块内 kt 变化 <0.02%, 残余相位 <0.2 rad。
 // ═══════════════════════════════════════════════════
 inline void applyDeramp_SoA(ComplexSoA& data, int sW, int L,
                              int burstRow0, int burstIdx,
-                             double prf, double kt)
+                             double prf, double kt,
+                             double nearRange = 0.0, double rangeSpacing = 0.0,
+                             double ktAnnotation = 0.0)
 {
+    constexpr int kColBlock = 16;
+    const bool hasGeom = nearRange > 0.0 && rangeSpacing > 0.0;
+    const double Rmid = hasGeom ? nearRange + (sW / 2.0) * rangeSpacing : 0.0;
     for (int r = 0; r < L; ++r) {
         int slaveRow = burstRow0 + r;
         int sbIdx = slaveRow / L;
         if (sbIdx < 0) sbIdx = 0;
         if (sbIdx > burstIdx + 1) sbIdx = burstIdx + 1;
-        double eta_S = (slaveRow - sbIdx * L - L / 2.0) / prf;
-        double dp = M_PI * kt * eta_S * eta_S;
-        float dCos = static_cast<float>(std::cos(dp));
-        float dSin = static_cast<float>(std::sin(dp));
-
+        const double eta_S = (slaveRow - sbIdx * L - L / 2.0) / prf;
+        const double base = M_PI * eta_S * eta_S;
         int rowOff = r * sW;
-        cplxRotate(data.re + rowOff, data.im + rowOff,
-                   data.re + rowOff, data.im + rowOff,
-                   sW, dCos, dSin);
+        for (int c0 = 0; c0 < sW; c0 += kColBlock) {
+            const int n = c0 + kColBlock < sW ? kColBlock : sW - c0;
+            double ktEff = kt;
+            if (hasGeom) {
+                const double Rc = nearRange + (c0 + n * 0.5) * rangeSpacing;
+                const double f = Rmid / Rc;
+                ktEff = (ktAnnotation != 0.0)
+                    ? kt + ktAnnotation * (f - 1.0)
+                    : kt * f;
+            }
+            const double dp = base * ktEff;
+            const float dCos = static_cast<float>(std::cos(dp));
+            const float dSin = static_cast<float>(std::sin(dp));
+            cplxRotate(data.re + rowOff + c0, data.im + rowOff + c0,
+                       data.re + rowOff + c0, data.im + rowOff + c0,
+                       n, dCos, dSin);
+        }
     }
 }
 
@@ -68,8 +95,7 @@ inline double measureFmRateFromDiffs(const double* dRe, const double* dIm,
     // 故返回 −k 即 applyDeramp_SoA 应传入的 kt。
     // 实测 kt 可正可负且与 annotation 相差 ~750 Hz/s (2026-08-15:
     // 峰值 +1450 → kt=−1450, 而 annotation=−2195.78), 扫描范围须覆盖 ±4000
-    double best = 0.0, bestScore = -1.0;
-    for (double k = -4000.0; k <= 4000.0; k += 25.0) {
+    auto scoreAt = [&](double k) {
         double sr = 0, si = 0;
         for (int r = 0; r < h; ++r) {
             const double ph = 2.0 * M_PI * k * (r + 0.5 - centerRow) / (prf * prf);
@@ -77,8 +103,29 @@ inline double measureFmRateFromDiffs(const double* dRe, const double* dIm,
             sr += dRe[r] * c + dIm[r] * s;
             si += dIm[r] * c - dRe[r] * s;
         }
-        const double score = std::sqrt(sr * sr + si * si) / sumMag;
+        return std::sqrt(sr * sr + si * si) / sumMag;
+    };
+    double best = 0.0, bestScore = -1.0;
+    for (double k = -4000.0; k <= 4000.0; k += 25.0) {
+        const double score = scoreAt(k);
         if (score > bestScore) { bestScore = score; best = k; }
+    }
+    // ── 精扫 + 抛物线插值 (2026-08-16: 25 Hz/s 粗步长的 ±12.5 Hz/s 误差
+    // 造成残余差分 chirp 在 8×8 多视窗内 ~3.6 rad 相位变化 — 摧毁复平均,
+    // 窗浓度实测 0.24 的根因; 精化到 ~1 Hz/s 后窗内变化 <0.15 rad) ──
+    for (double k = best - 25.0; k <= best + 25.0 + 1e-9; k += 2.0) {
+        const double score = scoreAt(k);
+        if (score > bestScore) { bestScore = score; best = k; }
+    }
+    {
+        const double s0 = scoreAt(best);
+        const double sm = scoreAt(best - 2.0);
+        const double sp = scoreAt(best + 2.0);
+        const double denom = sm - 2.0 * s0 + sp;
+        if (std::abs(denom) > 1e-12) {
+            const double off = (sm - sp) / denom;
+            if (std::abs(off) <= 2.0) best += off;
+        }
     }
     if (concentration) *concentration = bestScore;
     return -best;
