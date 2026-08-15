@@ -52,6 +52,9 @@ Makefile.Release
 # Claude settings
 .claude/
 
+# ASF HyP3 -> MintPy tooling (local only, separate project)
+hyp3_mintpy/
+
 # Documentation (local only)
 docs/
 
