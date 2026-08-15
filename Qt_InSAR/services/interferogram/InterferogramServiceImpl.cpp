@@ -369,6 +369,48 @@ void InterferogramServiceImpl::execute()
                 for (auto& m : metas)
                     m.azimuthOffset -= minOff;
             }
+            // ── 缝方位残余偏移估计 (数据驱动) ──
+            // 首 burst 时间差计算的固定偏移有残余误差 (拼接处纹理纵向错位),
+            // 用重叠区相位列平均剖面圆相关实测校正
+            {
+                int trim = 0;   // 与 IWMerger 相同的重叠裁剪 (输出列)
+                for (int i = 0; i < metas.size() - 1; ++i) {
+                    int fullW = metas[i].fullResWidth > 0
+                        ? metas[i].fullResWidth
+                        : metas[i].width * std::max(1, metas[i].rangeLooks);
+                    double leftFar = metas[i].nearRange + fullW * metas[i].rangeSpacing;
+                    double rightNear = metas[i + 1].nearRange;
+                    double overlap = leftFar - rightNear;
+                    if (overlap > 0) {
+                        double avgSp = (metas[i].rangeSpacing + metas[i + 1].rangeSpacing) / 2.0;
+                        if (avgSp > 0) {
+                            int fullRes = static_cast<int>(overlap / avgSp + 0.5);
+                            int rg = std::max(1, metas[i].rangeLooks);
+                            trim = std::max(1, (fullRes + rg / 2) / rg);
+                        }
+                    }
+                    if (trim <= 0) trim = 50;
+                }
+                for (int i = 0; i < metas.size() - 1; ++i) {
+                    int shift = 0; double peak = 0;
+                    if (IWMerger::estimateSeamAzimuthShift(
+                            ifgFiles[i], ifgFiles[i + 1],
+                            metas[i].width, metas[i].height,
+                            metas[i + 1].width, metas[i + 1].height,
+                            trim, 12, &shift, &peak)) {
+                        if (std::abs(shift) <= 8 && peak > 0.3) {
+                            metas[i + 1].azimuthOffset += shift;
+                            qDebug() << "[IWMerge] seam" << i << "->" << (i + 1)
+                                     << "azimuth shift =" << shift << "rows (ampCorr="
+                                     << QString::number(peak, 'f', 3) << ")";
+                        } else {
+                            qDebug() << "[IWMerge] seam" << i << "->" << (i + 1)
+                                     << "azimuth shift rejected (shift=" << shift
+                                     << " ampCorr=" << QString::number(peak, 'f', 3) << ")";
+                        }
+                    }
+                }
+            }
             QString mergeBase = outputDir + "/merge/S1_" + pol;
             emit progressChanged(95, QStringLiteral("IW Merge %1...").arg(pol));
             IWMerger::mergePhase(phaseFiles, cohFiles, metas, mergeBase + "_phase.tif",

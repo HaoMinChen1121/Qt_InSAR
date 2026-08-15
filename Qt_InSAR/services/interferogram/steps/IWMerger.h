@@ -45,6 +45,15 @@ bool mergeComplex(
     const QString& outputPath,
     bool alignEnabled = true);
 
+// 缝方位残余偏移估计 (输出行单位): 重叠区幅度纹理列平均剖面 Pearson 相关
+// phA: 左子条带复数干涉图文件, phB: 右子条带复数干涉图文件 (deburst 输出)
+// wA/hA/wB/hB: 两个子条带的尺寸 (多视后); overlapCols: 重叠列数 (多视后)
+// maxShiftRows: 搜索范围 (±行); 返回 B 相对 A 的峰值行偏移与相关值
+bool estimateSeamAzimuthShift(const QString& phA, const QString& phB,
+                              int wA, int hA, int wB, int hB,
+                              int overlapCols, int maxShiftRows,
+                              int* shiftRows, double* peakValue);
+
 } // namespace IWMerger
 
 #endif // IWMERGER_H

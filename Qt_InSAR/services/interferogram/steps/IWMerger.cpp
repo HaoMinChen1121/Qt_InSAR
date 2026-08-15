@@ -1,4 +1,5 @@
 #include "IWMerger.h"
+#include "domain/SarComplexTypes.h"
 #include <gdal_priv.h>
 #include <QDebug>
 #include <QFileInfo>
@@ -418,6 +419,90 @@ bool mergeComplex(const QVector<QString>& iwFiles, const QVector<QString>& cohFi
         return mergeT<std::complex<float>>(iwFiles, iwMetas, outputPath, GDT_CFloat32, trim);
     return mergeAlignedT<std::complex<float>>(iwFiles, cohFiles, alignPhaseFiles,
         iwMetas, outputPath, GDT_CFloat32, trim);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  缝方位残余偏移估计 (数据驱动, 输出行单位)
+//  重叠区(同地面)幅度纹理列平均剖面 → Pearson 相关 → 峰值行偏移
+//  2026-08-15: merge 方位偏移用首 burst 时间差计算的固定值有残余误差,
+//  拼接处纹理纵向错位。相位相关在低相干下无分辨力 (峰平坦、总在边界),
+//  改用幅度纹理 — 场景结构沿方位持久, 相关峰尖锐。
+// ═══════════════════════════════════════════════════════════
+bool estimateSeamAzimuthShift(const QString& phA, const QString& phB,
+                              int wA, int hA, int wB, int hB,
+                              int overlapCols, int maxShiftRows,
+                              int* shiftRows, double* peakValue)
+{
+    if (shiftRows) *shiftRows = 0;
+    if (peakValue) *peakValue = 0.0;
+    if (overlapCols <= 0 || hA <= 0 || hB <= 0) return false;
+
+    GDALDatasetH dA = GDALOpen(phA.toUtf8().constData(), GA_ReadOnly);
+    GDALDatasetH dB = GDALOpen(phB.toUtf8().constData(), GA_ReadOnly);
+    if (!dA || !dB) {
+        if (dA) GDALClose(dA);
+        if (dB) GDALClose(dB);
+        return false;
+    }
+    GDALRasterBandH bA = GDALGetRasterBand(dA, 1);
+    GDALRasterBandH bB = GDALGetRasterBand(dB, 1);
+    const int ov = std::min(overlapCols, std::min(wA, wB));
+
+    // 重叠列: A 的最后 ov 列, B 的最前 ov 列 (同地面)
+    const int cA0 = wA - ov, cB0 = 0;
+
+    // 列平均幅度剖面 (log 幅度纹理; 场景结构沿方位持久, 相关峰尖锐)
+    std::vector<CFloat32> rowBuf(static_cast<size_t>(ov));
+    std::vector<double> ampA(static_cast<size_t>(hA)), ampB(static_cast<size_t>(hB));
+    for (int r = 0; r < hA; ++r) {
+        GDALRasterIO(bA, GF_Read, cA0, r, ov, 1, rowBuf.data(), ov, 1, GDT_CFloat32, 0, 0);
+        double s = 0;
+        for (int c = 0; c < ov; ++c)
+            s += std::sqrt(static_cast<double>(rowBuf[c].re) * rowBuf[c].re
+                         + static_cast<double>(rowBuf[c].im) * rowBuf[c].im);
+        ampA[r] = std::log10(std::max(1.0, s / ov));
+    }
+    for (int r = 0; r < hB; ++r) {
+        GDALRasterIO(bB, GF_Read, cB0, r, ov, 1, rowBuf.data(), ov, 1, GDT_CFloat32, 0, 0);
+        double s = 0;
+        for (int c = 0; c < ov; ++c)
+            s += std::sqrt(static_cast<double>(rowBuf[c].re) * rowBuf[c].re
+                         + static_cast<double>(rowBuf[c].im) * rowBuf[c].im);
+        ampB[r] = std::log10(std::max(1.0, s / ov));
+    }
+    GDALClose(dA); GDALClose(dB);
+
+    // Pearson 互相关: C[d] = Σ(aA−ā)(aB−ā') / (n·σA·σB)
+    double mA = 0, mB = 0;
+    for (double v : ampA) mA += v;
+    for (double v : ampB) mB += v;
+    mA /= hA; mB /= hB;
+    double vA = 0, vB = 0;
+    for (double v : ampA) vA += (v - mA) * (v - mA);
+    for (double v : ampB) vB += (v - mB) * (v - mB);
+    vA = std::sqrt(vA / hA); vB = std::sqrt(vB / hB);
+    if (vA < 1e-9 || vB < 1e-9) return false;
+
+    double bestV = -2.0; int bestD = 0;
+    double secondV = -2.0; int secondD = 0;
+    for (int d = -maxShiftRows; d <= maxShiftRows; ++d) {
+        int rA0 = std::max(0, -d), rB0 = std::max(0, d);
+        const int n = std::min(hA - rA0, hB - rB0);
+        if (n < 64) continue;
+        double s = 0;
+        for (int k = 0; k < n; ++k)
+            s += (ampA[rA0 + k] - mA) * (ampB[rB0 + k] - mB);
+        const double v = s / (n * vA * vB);
+        if (v > bestV) { secondV = bestV; secondD = bestD; bestV = v; bestD = d; }
+        else if (v > secondV) { secondV = v; secondD = d; }
+    }
+    if (shiftRows) *shiftRows = bestD;
+    if (peakValue) *peakValue = bestV;
+    qDebug() << "[IWMerge] seamShift scan(amp): best d=" << bestD << "(corr="
+             << QString::number(bestV, 'f', 3) << ") second d=" << secondD
+             << "(corr=" << QString::number(secondV, 'f', 3) << ") range=±"
+             << maxShiftRows;
+    return true;
 }
 
 } // namespace IWMerger
