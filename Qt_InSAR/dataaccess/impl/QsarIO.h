@@ -11,6 +11,9 @@ public:
 
     static QString lastError() { return mLastError; }
 
+    // 处理历史 softwareVersion 字段用的版本常量
+    static const char* kSoftwareVersion;
+
 private:
     static QString mLastError;
 };

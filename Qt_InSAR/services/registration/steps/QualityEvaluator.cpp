@@ -41,9 +41,13 @@ bool QualityEvaluator::execute(PipelineContext& ctx) {
     r.offsetRmse = cnt > 0 ? std::sqrt(sumSq / cnt) : 0;
 
     // ── 平均相关系数 (仅NCC路线有效, FFT路线用多项式RMSE) ──
+    // FFT 路线的 pt.correlation 是未归一化的相关峰幅度 (可达 1e8),
+    // 直接平均会产生无意义的质量摘要值 — 按路线门控
     int vc = 0; double sumCorr = 0;
-    for (const auto& pt : ctx.offsetPoints) {
-        if (pt.correlation > 0) { sumCorr += pt.correlation; ++vc; }
+    if (ctx.strategy && ctx.strategy->coarseCorr == CorrelationMethod::NCC) {
+        for (const auto& pt : ctx.offsetPoints) {
+            if (pt.correlation > 0) { sumCorr += pt.correlation; ++vc; }
+        }
     }
     r.meanCorrelation = vc > 0 ? sumCorr / vc : 0;
 

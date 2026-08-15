@@ -3,6 +3,8 @@
 
 #include "services/IFilterService.h"
 
+class ProductManager;
+
 class FilterServiceImpl : public IFilterService
 {
     Q_OBJECT
@@ -15,9 +17,13 @@ public:
     void cancel() override;
     bool isRunning() const override;
 
+    // Product 驱动: 输入经 ProductManager 按 productId 解析
+    void setProductManager(ProductManager* pm) { mProductManager = pm; }
+
 private:
     FilterParams mParams;
     bool mRunning = false;
+    ProductManager* mProductManager = nullptr;
 };
 
 #endif // FILTERSERVICEIMPL_H

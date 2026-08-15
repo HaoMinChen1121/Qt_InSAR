@@ -9,6 +9,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFile>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <algorithm>
 #include <cmath>
 
@@ -426,6 +429,29 @@ bool TopsarDeburst::execute(IfgPipelineContext& ctx)
             << " mean|dPhi|=" << (std::abs(m) * 180.0 / M_PI) << "deg"
             << " meanStd=" << (s * 180.0 / M_PI) << "deg"
             << " meanCoh=" << c;
+    }
+
+    // burst 缝质量统计落盘 (quality 报告消费; 不再只打日志)
+    if (!seamPhaseMean.isEmpty()) {
+        QJsonArray seams;
+        for (int i = 0; i < seamPhaseMean.size(); ++i) {
+            QJsonObject so;
+            so["index"] = i;
+            so["meanDpRad"] = seamPhaseMean[i];
+            so["stdDpRad"] = seamPhaseStd[i];
+            so["meanCoh"] = seamCohMean[i];
+            seams.append(so);
+        }
+        QJsonObject root;
+        root["productType"] = QStringLiteral("BurstSeamQuality");
+        root["mode"] = (mode == Mode::Empirical ? "empirical"
+                        : mode == Mode::Annotation ? "annotation" : "off");
+        root["burstSeams"] = seams;
+        QFile f(base + "_seam.json");
+        if (f.open(QIODevice::WriteOnly)) {
+            f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+            f.close();
+        }
     }
 
     ctx.outWidth  = outW;

@@ -262,7 +262,8 @@ static bool mergeAlignedT(
     const QVector<IwMeta>&  iwMetas,
     const QString& outputPath,
     GDALDataType dataType,
-    int overlapTrim)
+    int overlapTrim,
+    QVector<SeamAlignStat>* seamStats)
 {
     int nIW = iwFiles.size();
     if (nIW < 2) return false;
@@ -306,6 +307,15 @@ static bool mergeAlignedT(
             alignBand[i + 1], cohBand[i + 1], iwMetas[i + 1].width, iwMetas[i + 1].height, iwMetas[i + 1].azimuthOffset,
             overlapTrim);
         const double colBase = iwMetas[i].width - overlapTrim;   // A 侧重叠起始列
+        if (seamStats) {
+            SeamAlignStat st;
+            st.ok = est.ok;
+            st.phaseJumpRad = est.a;
+            st.slopeRadPerCol = est.b;
+            st.meanCoh = est.meanCoh;
+            st.r2 = est.r2;
+            seamStats->append(st);
+        }
         if (est.ok) {
             // 链式: corr_{i+1}(c) = corr_i(colBase + c) + Δφ(c)
             aCorr[i + 1] = aCorr[i] + bCorr[i] * colBase + est.a;
@@ -392,13 +402,15 @@ std::complex<float> rotatePixel<std::complex<float>>(std::complex<float> v, doub
 // ── 对外接口 ──
 
 bool mergePhase(const QVector<QString>& iwFiles, const QVector<QString>& cohFiles,
-    const QVector<IwMeta>& iwMetas, const QString& outputPath, bool alignEnabled)
+    const QVector<IwMeta>& iwMetas, const QString& outputPath, bool alignEnabled,
+    QVector<SeamAlignStat>* seamStats)
 {
     int trim = computeOverlapTrim(iwMetas);
     if (trim <= 0) trim = 50;
     if (!alignEnabled)
         return mergeT<float>(iwFiles, iwMetas, outputPath, GDT_Float32, trim);
-    return mergeAlignedT<float>(iwFiles, cohFiles, iwFiles, iwMetas, outputPath, GDT_Float32, trim);
+    return mergeAlignedT<float>(iwFiles, cohFiles, iwFiles, iwMetas, outputPath,
+                                GDT_Float32, trim, seamStats);
 }
 
 bool mergeCoherence(const QVector<QString>& iwFiles,
@@ -418,7 +430,7 @@ bool mergeComplex(const QVector<QString>& iwFiles, const QVector<QString>& cohFi
     if (!alignEnabled)
         return mergeT<std::complex<float>>(iwFiles, iwMetas, outputPath, GDT_CFloat32, trim);
     return mergeAlignedT<std::complex<float>>(iwFiles, cohFiles, alignPhaseFiles,
-        iwMetas, outputPath, GDT_CFloat32, trim);
+        iwMetas, outputPath, GDT_CFloat32, trim, nullptr);
 }
 
 // ═══════════════════════════════════════════════════════════

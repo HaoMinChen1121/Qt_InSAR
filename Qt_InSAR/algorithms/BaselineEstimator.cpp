@@ -43,6 +43,7 @@ BaselineResult computeBaseline(
     const QList<OrbitStateVector>& masterOrbit,
     const QList<OrbitStateVector>& slaveOrbit,
     const QDateTime& masterTime,
+    const QDateTime& slaveTime,
     double nearRange,
     double farRange)
 {
@@ -51,24 +52,25 @@ BaselineResult computeBaseline(
     if (masterOrbit.size() < 2 || slaveOrbit.size() < 2)
         return result;
 
-    // 以主影像采集时间为参考, 计算轨道中点时间
-    double t0 = masterOrbit.first().relativeTime;
-    double t1 = masterOrbit.last().relativeTime;
-    double midTime = (t0 + t1) * 0.5;
+    // 时间基线 (天) — 绝对采集时间差
+    if (masterTime.isValid() && slaveTime.isValid())
+        result.temporalBaseline = std::abs(masterTime.msecsTo(slaveTime)) / 86400000.0;
 
-    // 时间基线 (天)
-    if (masterTime.isValid()) {
-        // 用主影像第一轨时间估算采集时间
-        QDateTime refTime = masterTime;
-        double slaveMidTime = (slaveOrbit.first().relativeTime + slaveOrbit.last().relativeTime) * 0.5;
-        result.temporalBaseline = std::abs(midTime - slaveMidTime) / 86400.0;
-    }
+    // 场景中点: 两轨道各自插值到"自身轨道跨度中点" (同一沿轨相位)
+    // 注意不能用同一绝对 UTC 时刻 — 两景相隔 12 天, 辅轨道跨度根本不覆盖
+    // 主景中点时刻; 主辅同相位采样 (各 +span/2) 才是干涉基线定义
+    // (2026-08-15 实测: 同相位 |B|≈3310m 稳定, 与 ASF 归一化基线
+    //  -7.0947 mrad × R·sinθ 交叉验证一致)
+    const double mT0 = masterOrbit.first().relativeTime;
+    const double mT1 = masterOrbit.last().relativeTime;
+    const double mMid = (mT0 + mT1) * 0.5;
+    const double sMid = (slaveOrbit.first().relativeTime + slaveOrbit.last().relativeTime) * 0.5;
 
-    // 插值主辅位置到中点时间
+    // 插值主辅位置到各自场景中点 (同一沿轨相位)
     double mx, my, mz, mvx, mvy, mvz;
     double sx, sy, sz, svx, svy, svz;
-    interpolateOrbit(masterOrbit, midTime, mx, my, mz, mvx, mvy, mvz);
-    interpolateOrbit(slaveOrbit, midTime, sx, sy, sz, svx, svy, svz);
+    interpolateOrbit(masterOrbit, mMid, mx, my, mz, mvx, mvy, mvz);
+    interpolateOrbit(slaveOrbit, sMid, sx, sy, sz, svx, svy, svz);
 
     // 基线向量 (master → slave)
     double bx = sx - mx;

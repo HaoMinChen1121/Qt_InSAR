@@ -5,6 +5,7 @@
     <Filter Include="Domain"><UniqueIdentifier>{B2C3D4E5-F6A7-8901-BCDE-F12345678901}</UniqueIdentifier></Filter>
     <Filter Include="Domain\Params"><UniqueIdentifier>{C3D4E5F6-A7B8-9012-CDEF-123456789012}</UniqueIdentifier></Filter>
     <Filter Include="Domain\Registration"><UniqueIdentifier>{D4E5F6A7-B8C9-0123-DEF1-234567890123}</UniqueIdentifier></Filter>
+    <Filter Include="Domain\Product"><UniqueIdentifier>{D4E5F6A7-B8C9-0123-DEF1-234567890124}</UniqueIdentifier></Filter>
     <Filter Include="Algorithms"><UniqueIdentifier>{A0B1C2D3-E4F5-6789-ABCD-EF0123456789}</UniqueIdentifier></Filter>
     <Filter Include="DataAccess"><UniqueIdentifier>{D4E5F6A7-B8C9-0123-DEFA-234567890123}</UniqueIdentifier></Filter>
     <Filter Include="DataAccess\Impl"><UniqueIdentifier>{E5F6A7B8-C9D0-1234-EFAB-345678901234}</UniqueIdentifier></Filter>
@@ -57,6 +58,9 @@
   <ItemGroup>
     <ClInclude Include="domain\OrbitInfo.h"><Filter>Domain</Filter></ClInclude>
     <ClInclude Include="domain\QsarProduct.h"><Filter>Domain</Filter></ClInclude>
+    <ClInclude Include="domain\product\InterferogramProduct.h"><Filter>Domain\Product</Filter></ClInclude>
+    <ClInclude Include="domain\product\ProductManager.h"><Filter>Domain\Product</Filter></ClInclude>
+    <ClInclude Include="domain\product\RegisteredSLCProduct.h"><Filter>Domain\Product</Filter></ClInclude>
     <ClInclude Include="domain\SarComplexTypes.h"><Filter>Domain</Filter></ClInclude>
     <ClInclude Include="domain\SarProductType.h"><Filter>Domain</Filter></ClInclude>
     <ClInclude Include="domain\SarSensorInfo.h"><Filter>Domain</Filter></ClInclude>

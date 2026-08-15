@@ -238,6 +238,9 @@
     <ClInclude Include="algorithms\SincInterpolator.h" />
     <ClInclude Include="domain\OrbitInfo.h" />
     <ClInclude Include="domain\QsarProduct.h" />
+    <ClInclude Include="domain\product\InterferogramProduct.h" />
+    <ClInclude Include="domain\product\ProductManager.h" />
+    <ClInclude Include="domain\product\RegisteredSLCProduct.h" />
     <ClInclude Include="domain\SarComplexTypes.h" />
     <ClInclude Include="domain\SarProductType.h" />
     <ClInclude Include="domain\SarSensorInfo.h" />

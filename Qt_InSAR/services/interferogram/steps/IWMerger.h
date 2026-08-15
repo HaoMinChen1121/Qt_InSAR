@@ -18,19 +18,30 @@ struct IwMeta {
     int       azimuthOffset = 0; // 相对首个子条带的输出行偏移 (子条带间方位对齐)
 };
 
+// 缝相位对齐统计 (quality 报告用): 每条 IW 缝的相位跳变与可信度
+struct SeamAlignStat {
+    bool   ok = false;
+    double phaseJumpRad = 0;     // 常数项 (rad) = IW 间相位跳变
+    double slopeRadPerCol = 0;   // 线性项 (rad/列)
+    double meanCoh = 0;          // 重叠区平均相干性
+    double r2 = 0;               // 线性拟合决定系数
+};
+
 // 将同一极化的 3 个 IW 相位/相干/复数文件合并为单幅影像
 // iwFiles: 按 IW1→IW2→IW3 顺序的输入文件路径
 // cohFiles: 对应相干性文件 (相位对齐估计权重; mergePhase/mergeComplex 用, 可为空)
 // iwMetas: 对应的 range 几何 + 方位偏移参数
 // 输出: 距离向重叠裁剪 + 方位向偏移对齐 + 裁剪到公共方位范围;
 //       phase/complex 附带子条带相位一致性对齐 (常数+线性, 鲁棒估计)
+// seamStats: 可选, 每条缝的对齐统计 (quality 报告用)
 // 返回 true 表示成功
 bool mergePhase(
     const QVector<QString>& iwFiles,
     const QVector<QString>& cohFiles,
     const QVector<IwMeta>&  iwMetas,
     const QString& outputPath,
-    bool alignEnabled = true);                  // phaseAlign=false 时跳过相位对齐
+    bool alignEnabled = true,                  // phaseAlign=false 时跳过相位对齐
+    QVector<SeamAlignStat>* seamStats = nullptr);
 
 bool mergeCoherence(
     const QVector<QString>& iwFiles,

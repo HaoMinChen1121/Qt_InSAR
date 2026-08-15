@@ -5,6 +5,10 @@
 
 struct FilterParams
 {
+    // 输入产品 (Product 驱动: 经 ProductManager 解析, 不再传文件路径)
+    QString   inputProductId;              // 干涉产品 qsar 路径
+    QString   polarization = "VV";         // 待滤波极化
+
     // 滤波方法
     QString   method = "Goldstein";        // "Goldstein" / "Baran"
 

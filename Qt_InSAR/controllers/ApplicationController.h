@@ -11,6 +11,7 @@
 #include "domain/OrbitInfo.h"
 #include "domain/params/RegistrationParams.h"
 #include "domain/params/InterferogramParams.h"
+#include "domain/product/ProductManager.h"
 #include "dataaccess/ISarProduct.h"
 #include "dataaccess/annotation/SlcAnnotation.h"
 
@@ -57,6 +58,9 @@ public:
     QMap<QString, ProductSourceInfo> loadedProducts() const { return mProductRegistry; }
     QMenu* buildProductMenu(bool isMaster);
 
+    // Product 驱动注册表 (qsar 产品 → 类型化包装)
+    ProductManager* productManager() { return &mProductManager; }
+
 private:
     void createServices();
     void wireConnections();
@@ -82,6 +86,9 @@ private:
 
     // 产品注册表: productPath → ProductSourceInfo
     QMap<QString, ProductSourceInfo> mProductRegistry;
+
+    // qsar 产品注册表 (Product 驱动, schema v2.0)
+    ProductManager mProductManager;
 
     // 待关联: 波段路径 → 产品路径 (等待 QGIS 分配 layer ID)
     QMap<QString, QString> mPendingProductRegistry;

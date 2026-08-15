@@ -21,6 +21,10 @@
 #include <QMap>
 #include <QPair>
 #include <QScopedPointer>
+#include <QFile>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -56,6 +60,30 @@ bool sliceColumns(const QString& srcPath, const QString& dstPath,
     return true;
 }
 
+// 相干图统计: 均值 (coh>0.01) + 有效像素占比 (quality 报告用)
+bool coherenceStats(const QString& path, double* meanCoh, double* validRatio)
+{
+    GDALDatasetH h = GDALOpen(path.toUtf8().constData(), GA_ReadOnly);
+    if (!h) return false;
+    GDALRasterBandH b = GDALGetRasterBand(h, 1);
+    const int w = GDALGetRasterXSize(h), hh = GDALGetRasterYSize(h);
+    std::vector<float> buf(static_cast<size_t>(w));
+    double sum = 0; long long n = 0, v = 0;
+    for (int r = 0; r < hh; ++r) {
+        GDALRasterIO(b, GF_Read, 0, r, w, 1, buf.data(), w, 1, GDT_Float32, 0, 0);
+        for (int c = 0; c < w; ++c) {
+            const float x = buf[c];
+            if (x > 0.01f) { sum += x; ++n; }
+            if (x > 0.005f) ++v;
+        }
+    }
+    GDALClose(h);
+    if (meanCoh) *meanCoh = n > 0 ? sum / n : 0.0;
+    if (validRatio) *validRatio = (w > 0 && hh > 0)
+        ? static_cast<double>(v) / (static_cast<long long>(w) * hh) : 0.0;
+    return true;
+}
+
 } // namespace
 
 InterferogramServiceImpl::InterferogramServiceImpl(QObject* parent)
@@ -84,6 +112,16 @@ void InterferogramServiceImpl::execute()
     if (slaveQsar.bands.isEmpty()) {
         emit errorOccurred(QStringLiteral("辅影像QSAR无波段数据"));
         emit finished(false, QString()); mRunning = false; return;
+    }
+
+    // ── 从 registered 产品消费 metadata (schema v2.0) ──
+    // 基线由配准阶段计算并落盘 (单一事实源); 用户显式指定非零值时优先
+    const ProductMetadata& slaveMeta = slaveQsar.metadata;
+    if (slaveMeta.baseline.valid) {
+        if (mParams.baselinePerp == 0.0)
+            mParams.baselinePerp = slaveMeta.baseline.perpendicular;
+        if (mParams.baselinePar == 0.0)
+            mParams.baselinePar = slaveMeta.baseline.parallel;
     }
 
     QsarProduct masterQsar;
@@ -155,6 +193,82 @@ void InterferogramServiceImpl::execute()
     qsar.sourceSlave  = mParams.slaveProductDisplay;
     qsar.outputPrefix = mParams.outputPrefix;
     qsar.stages << "ifg";
+
+    // ═══ Product Metadata (schema v2.0, 产品自描述) ═══
+    ProductMetadata& meta = qsar.metadata;
+    meta.pair.masterId = mParams.masterProductDisplay;
+    meta.pair.slaveId  = mParams.slaveProductDisplay;
+    meta.pair.slaveTime = slaveMeta.pair.slaveTime;
+    if (masterProduct)
+        meta.pair.masterTime = masterProduct->sensorInfo().acquisitionStart.toString(Qt::ISODate);
+    else if (!masterQsar.bands.isEmpty())
+        meta.pair.masterTime = masterQsar.metadata.pair.masterTime;
+
+    // 轨道: 直接继承 registered 产品 (不再回找 XML)
+    meta.orbitMaster = slaveMeta.orbitMaster;
+    meta.orbitSlave  = slaveMeta.orbitSlave;
+    if (meta.orbitMaster.direction.isEmpty() && masterProduct)
+        meta.orbitMaster.direction = masterProduct->sensorInfo().orbitDirection;
+
+    // baseline: 消费配准阶段结果 + 补时间基线
+    if (slaveMeta.baseline.valid) {
+        meta.baseline.valid = true;
+        meta.baseline.perpendicular = slaveMeta.baseline.perpendicular;
+        meta.baseline.parallel = slaveMeta.baseline.parallel;
+        meta.baseline.temporal = slaveMeta.baseline.temporal;
+        // 兜底: 旧版 computeBaseline 的时间基线有 bug (恒 0), 从 pair 时间重算
+        if (meta.baseline.temporal <= 0
+            && !meta.pair.masterTime.isEmpty() && !meta.pair.slaveTime.isEmpty()) {
+            const QDateTime t0 = QDateTime::fromString(meta.pair.masterTime, Qt::ISODate);
+            const QDateTime t1 = QDateTime::fromString(meta.pair.slaveTime, Qt::ISODate);
+            if (t0.isValid() && t1.isValid())
+                meta.baseline.temporal = qAbs(t0.msecsTo(t1)) / 86400000.0;
+        }
+    } else {
+        meta.baseline.valid = (mParams.baselinePerp != 0.0 || mParams.baselinePar != 0.0);
+        meta.baseline.perpendicular = mParams.baselinePerp;
+        meta.baseline.parallel = mParams.baselinePar;
+        if (!meta.pair.masterTime.isEmpty() && !meta.pair.slaveTime.isEmpty()) {
+            const QDateTime t0 = QDateTime::fromString(meta.pair.masterTime, Qt::ISODate);
+            const QDateTime t1 = QDateTime::fromString(meta.pair.slaveTime, Qt::ISODate);
+            if (t0.isValid() && t1.isValid())
+                meta.baseline.temporal = qAbs(t0.msecsTo(t1)) / 86400000.0;
+        }
+    }
+
+    // 处理参数快照 (多视/像元间距 — 下游解缠窗口/形变直接取用)
+    meta.processing.hasInterferogram = true;
+    meta.processing.interferogram.rangeLooks = mParams.rangeLooks;
+    meta.processing.interferogram.azimuthLooks = mParams.azimuthLooks;
+    meta.processing.interferogram.wavelength = mParams.wavelength;
+    meta.processing.interferogram.inputRangeSpacing = mParams.rangeSpacing;
+    if (!slaveMeta.orbitMaster.stateVectors.isEmpty() && mParams.prf > 0) {
+        double v2 = 0;
+        for (const auto& o : slaveMeta.orbitMaster.stateVectors)
+            v2 += o.vx * o.vx + o.vy * o.vy + o.vz * o.vz;
+        v2 /= slaveMeta.orbitMaster.stateVectors.size();
+        meta.processing.interferogram.inputAzimuthSpacing = std::sqrt(v2) / mParams.prf;
+    }
+    meta.processing.interferogram.outputRangeSpacing =
+        mParams.rangeSpacing * std::max(1, mParams.rangeLooks);
+    meta.processing.interferogram.outputAzimuthSpacing =
+        meta.processing.interferogram.inputAzimuthSpacing * std::max(1, mParams.azimuthLooks);
+
+    // 处理历史
+    {
+        QsarStageRecord rec;
+        rec.name = QStringLiteral("interferogram");
+        rec.time = QDateTime::currentDateTime().toString(Qt::ISODate);
+        rec.softwareVersion = QsarIO::kSoftwareVersion;
+        rec.params = QVariantMap{
+            {QStringLiteral("rangeLooks"), mParams.rangeLooks},
+            {QStringLiteral("azimuthLooks"), mParams.azimuthLooks},
+            {QStringLiteral("differential"), mParams.differential},
+            {QStringLiteral("phaseAlign"), mParams.phaseAlign},
+            {QStringLiteral("enableFlatEarth"), mParams.enableFlatEarth}
+        };
+        qsar.history.append(rec);
+    }
 
     int succeeded = 0;
     for (int i = 0; i < pairs.size(); ++i) {
@@ -296,6 +410,14 @@ void InterferogramServiceImpl::execute()
     }
 
     // ═══ IW Merge: 同极化 IW1+IW2+IW3 拼接为宽幅产品 ═══
+    // 质量聚合 (逐极化 → 产品级摘要 + quality/quality.json 详细报告)
+    double aggMeanCoh = 0, aggValidRatio = 0;
+    int aggPolCount = 0;
+    QJsonObject qualityRoot;
+    qualityRoot["productType"] = QStringLiteral("Quality");
+    qualityRoot["created"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+    QJsonArray polQualArr;
+
     if (succeeded > 0) {
         QDir().mkpath(outputDir + "/merge");
         // 收集 per-IW 输出路径和尺寸, 按极化分组
@@ -413,11 +535,54 @@ void InterferogramServiceImpl::execute()
             }
             QString mergeBase = outputDir + "/merge/S1_" + pol;
             emit progressChanged(95, QStringLiteral("IW Merge %1...").arg(pol));
+            QVector<IWMerger::SeamAlignStat> seamStats;
             IWMerger::mergePhase(phaseFiles, cohFiles, metas, mergeBase + "_phase.tif",
-                                 mParams.phaseAlign);
+                                 mParams.phaseAlign, &seamStats);
             IWMerger::mergeCoherence(cohFiles, metas, mergeBase + "_coh.tif");
             IWMerger::mergeComplex(ifgFiles, cohFiles, phaseFiles, metas,
                                    mergeBase + "_ifg.tif", mParams.phaseAlign);
+
+            // ── 质量统计 (逐极化 → quality.json) ──
+            {
+                double meanCoh = 0, validRatio = 0;
+                QJsonObject polQ;
+                polQ["polarization"] = pol;
+                if (coherenceStats(mergeBase + "_coh.tif", &meanCoh, &validRatio)) {
+                    polQ["meanCoherence"] = meanCoh;
+                    polQ["validRatio"] = validRatio;
+                    aggMeanCoh += meanCoh;
+                    aggValidRatio += validRatio;
+                    ++aggPolCount;
+                }
+                QJsonArray iwSeams;
+                for (int s = 0; s < seamStats.size() && s + 1 < metas.size(); ++s) {
+                    QJsonObject so;
+                    so["left"] = metas[s].swath;
+                    so["right"] = metas[s + 1].swath;
+                    so["phaseJumpRad"] = seamStats[s].phaseJumpRad;
+                    so["slopeRadPerCol"] = seamStats[s].slopeRadPerCol;
+                    so["meanCoh"] = seamStats[s].meanCoh;
+                    so["r2"] = seamStats[s].r2;
+                    so["ok"] = seamStats[s].ok;
+                    iwSeams.append(so);
+                }
+                polQ["iwSeams"] = iwSeams;
+                QJsonArray burstSeams;
+                for (auto& iw : iwList) {
+                    const QString seamPath = deburstDir + "/" + iw.first + "_seam.json";
+                    QFile sf(seamPath);
+                    if (sf.open(QIODevice::ReadOnly)) {
+                        QJsonDocument d = QJsonDocument::fromJson(sf.readAll());
+                        sf.close();
+                        QJsonObject so;
+                        so["subSwath"] = iw.second.swath;
+                        so["burstSeams"] = d.object()[QStringLiteral("burstSeams")].toArray();
+                        burstSeams.append(so);
+                    }
+                }
+                polQ["burstSeams"] = burstSeams;
+                polQualArr.append(polQ);
+            }
 
             // ── Stage 2: 几何表 (逐列 R/θ) + 合并产品上去平地/差分 ──
             GeomTable geomTable;
@@ -466,6 +631,37 @@ void InterferogramServiceImpl::execute()
                 }
             }
             geomTable.save(mergeBase + "_geom.json");
+
+            // ── 几何摘要 (qsar 只存摘要, 完整表在 geom json) ──
+            if (meta.geometry.model.isEmpty() && !geomTable.swaths.isEmpty()) {
+                meta.geometry.model = QStringLiteral("geom_table");
+                meta.geometry.file = QStringLiteral("merge/S1_%1_geom.json").arg(pol);
+                meta.geometry.nearRange = geomTable.swaths.first().nearRange;
+                const auto& last = geomTable.swaths.last();
+                meta.geometry.farRange = last.nearRange + last.width * last.rangeSpacing;
+                double incMin = 1e9, incMax = -1e9;
+                for (int c = 0; c < geomTable.width; c += qMax(1, geomTable.width / 200)) {
+                    double R = 0, th = 0;
+                    if (geomTable.colGeometry(c, &R, &th)) {
+                        incMin = std::min(incMin, th);
+                        incMax = std::max(incMax, th);
+                    }
+                }
+                if (incMax >= incMin) {
+                    meta.geometry.incMin = incMin;
+                    meta.geometry.incMax = incMax;
+                }
+                // 模糊高: H_amb = λ·R·sinθ / (2·|B⊥|) (中点列, 与 GeomTable 几何模型一致)
+                if (meta.baseline.valid && std::abs(meta.baseline.perpendicular) > 1e-6) {
+                    double R = 0, th = 0;
+                    if (geomTable.colGeometry(geomTable.width / 2, &R, &th)
+                        && meta.processing.interferogram.wavelength > 0) {
+                        meta.baseline.ambiguityHeight =
+                            meta.processing.interferogram.wavelength * R * std::sin(th)
+                            / (2.0 * std::abs(meta.baseline.perpendicular));
+                    }
+                }
+            }
 
             IfgPipelineContext fctx;
             fctx.params = &mParams;
@@ -606,6 +802,27 @@ void InterferogramServiceImpl::execute()
                 qbDC.defaultVisible = false;
                 qsar.bands.append(qbDC);
             }
+        }
+    }
+
+    // ═══ 质量聚合: 产品级摘要 + quality/quality.json 详细报告 ═══
+    if (aggPolCount > 0) {
+        meta.quality.meanCoherence = aggMeanCoh / aggPolCount;
+        meta.quality.validRatio = aggValidRatio / aggPolCount;
+        meta.quality.unwrapReady = meta.quality.meanCoherence >= 0.3
+            && meta.quality.validRatio >= 0.5;
+        meta.quality.detailFile = QStringLiteral("quality/quality.json");
+        QDir().mkpath(outputDir + "/quality");
+        qualityRoot["polarizations"] = polQualArr;
+        qualityRoot["summary"] = QJsonObject{
+            {QStringLiteral("meanCoherence"), meta.quality.meanCoherence},
+            {QStringLiteral("validRatio"), meta.quality.validRatio},
+            {QStringLiteral("unwrapReady"), meta.quality.unwrapReady}
+        };
+        QFile qf(outputDir + "/quality/quality.json");
+        if (qf.open(QIODevice::WriteOnly)) {
+            qf.write(QJsonDocument(qualityRoot).toJson(QJsonDocument::Indented));
+            qf.close();
         }
     }
 

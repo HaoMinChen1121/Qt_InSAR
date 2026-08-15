@@ -18,6 +18,11 @@
 #include <QFileInfo>
 #include <QDateTime>
 #include <QApplication>
+#include <QFile>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <cmath>
 
 RegistrationServiceImpl::RegistrationServiceImpl(QObject* parent)
     : IRegistrationService(parent) {}
@@ -53,6 +58,7 @@ void RegistrationServiceImpl::execute() {
             master->orbitStateVectors(),
             slave->orbitStateVectors(),
             mSi.acquisitionStart,
+            slave->sensorInfo().acquisitionStart,
             mSi.nearRange,
             mSi.farRange);
         if (baseline.valid) {
@@ -91,6 +97,9 @@ void RegistrationServiceImpl::execute() {
 
     int succeeded = 0; QString lastOut;
     QString lastCoarseMethod = QStringLiteral("FFT");
+    QVector<QualityReport> pairQuality;                 // 逐成功 pair 质量 (metadata.quality 汇总)
+    QVector<QVector<BurstRegResult>> pairBurstResults;  // 逐成功 pair ESD 结果 (metadata.tops)
+    QVector<int> okPairIdx;                             // 成功 pair 在 pairs 中的索引
     for (int i = 0; i < pairs.size(); ++i) {
         if (mCancelled) break;
         emit progressChanged(i * 100 / pairs.size(),
@@ -172,6 +181,9 @@ void RegistrationServiceImpl::execute() {
 
         if (ok) {
             ++succeeded; lastOut = outPath;
+            okPairIdx.append(i);
+            pairQuality.append(ctx.qualityReport);
+            pairBurstResults.append(ctx.burstResults);
             qDebug() << QStringLiteral("[Reg] %1 OK rmse=%2 corr=%3")
                 .arg(pairName).arg(ctx.qualityReport.offsetRmse, 0, 'f', 4)
                 .arg(ctx.qualityReport.meanCorrelation, 0, 'f', 4);
@@ -189,6 +201,118 @@ void RegistrationServiceImpl::execute() {
         qsar.coarseMethod = lastCoarseMethod;
         qsar.resamplingMethod = mParams.resamplingMethod;
         qsar.outputPrefix = mParams.outputPrefix;
+
+        // ═══ Product Metadata (schema v2.0, 产品自描述) ═══
+        ProductMetadata& meta = qsar.metadata;
+
+        // pair 语义: 谁和谁配准、何时采集
+        meta.pair.masterId = mParams.masterDisplayName;
+        meta.pair.slaveId  = mParams.slaveDisplayName;
+        meta.pair.masterTime = mSi.acquisitionStart.toString(Qt::ISODate);
+        meta.pair.slaveTime  = slave->sensorInfo().acquisitionStart.toString(Qt::ISODate);
+
+        // 轨道 (master/slave 各一份, 产品级; 下游基线/地理编码不再回找 XML)
+        auto fillOrbit = [](QsarOrbitMeta& om, const QList<OrbitStateVector>& svs,
+                            const QString& dir) {
+            om.source = QStringLiteral("annotation");
+            om.direction = dir;
+            if (!svs.isEmpty())
+                om.referenceTime = svs.first().utcTime.toString(Qt::ISODate);
+            om.stateVectors = svs.toVector();
+        };
+        fillOrbit(meta.orbitMaster, master->orbitStateVectors(), mSi.orbitDirection);
+        fillOrbit(meta.orbitSlave, slave->orbitStateVectors(),
+                  slave->sensorInfo().orbitDirection);
+
+        // baseline (pair 级, 由两轨道在此计算 — 单一事实源)
+        if (baseline.valid) {
+            meta.baseline.valid = true;
+            meta.baseline.perpendicular = baseline.perpBaseline;
+            meta.baseline.parallel = baseline.parBaseline;
+            meta.baseline.temporal = baseline.temporalBaseline;
+        }
+
+        // 配准参数快照 (可追溯性)
+        meta.processing.hasRegistration = true;
+        meta.processing.registration.coarseMethod = lastCoarseMethod;
+        meta.processing.registration.coarseWindowSize = mParams.coarseWindowSize;
+        meta.processing.registration.coarseSearchWindow = mParams.coarseSearchWindow;
+        meta.processing.registration.fineWindowSize = mParams.fineWindowSize;
+        meta.processing.registration.polynomialDegree = mParams.polynomialDegree;
+        meta.processing.registration.correlationThreshold = mParams.correlationThreshold;
+        meta.processing.registration.resamplingMethod = mParams.resamplingMethod;
+        meta.processing.registration.sincWindowSize = mParams.sincWindowSize;
+
+        // 质量: qsar 摘要 + 详细报告外置
+        if (!pairQuality.isEmpty()) {
+            double sumCorr = 0, sumRmse = 0, sumValid = 0;
+            for (const auto& q : pairQuality) {
+                sumCorr += q.meanCorrelation;
+                sumRmse += q.offsetRmse;
+                sumValid += (q.totalPoints > 0)
+                    ? static_cast<double>(q.validPoints) / q.totalPoints : 0.0;
+            }
+            meta.quality.meanCorrelation = sumCorr / pairQuality.size();
+            meta.quality.offsetRmse = sumRmse / pairQuality.size();
+            meta.quality.validRatio = sumValid / pairQuality.size();
+            meta.quality.detailFile = QStringLiteral("registration_quality.json");
+        }
+
+        // TOPS 元数据 (canonical): 每子条带 burst 结构 + ESD 修正量
+        for (int i = 0; i < pairs.size(); ++i) {
+            QsarTopsSwath* sw = nullptr;
+            for (auto& s : meta.tops.swaths)
+                if (s.name == pairs[i].m.subSwath) { sw = &s; break; }
+            if (!sw) {
+                QsarTopsSwath ns;
+                ns.name = pairs[i].m.subSwath;
+                ns.burstCount = pairs[i].m.burstCount;
+                ns.linesPerBurst = pairs[i].m.linesPerBurst;
+                ns.azimuthFrequency = pairs[i].m.azimuthFrequency;
+                for (int b = 0; b < pairs[i].m.burstStartLines.size(); ++b) {
+                    QsarTopsBurst t;
+                    t.index = b;
+                    t.startLine = pairs[i].m.burstStartLines[b];
+                    if (b < pairs[i].m.burstAzimuthTimes.size())
+                        t.azimuthTime = pairs[i].m.burstAzimuthTimes[b].toString(Qt::ISODate);
+                    ns.bursts.append(t);
+                }
+                meta.tops.swaths.append(ns);
+                sw = &meta.tops.swaths.last();
+            }
+            // ESD 逐 burst 修正: 首个成功 pair 填充 (aziPoly 常数项 b0)
+            for (int k = 0; k < okPairIdx.size(); ++k) {
+                if (okPairIdx[k] != i) continue;
+                for (const auto& br : pairBurstResults[k]) {
+                    if (br.burstIndex >= 0 && br.burstIndex < sw->bursts.size()
+                        && std::abs(sw->bursts[br.burstIndex].esdCorrection) < 1e-12) {
+                        sw->bursts[br.burstIndex].esdCorrection = br.aziPoly.coeffs[0];
+                    }
+                }
+                break;
+            }
+        }
+
+        // 处理历史 (结构化)
+        {
+            QsarStageRecord rec;
+            rec.name = QStringLiteral("registration");
+            rec.time = QDateTime::currentDateTime().toString(Qt::ISODate);
+            rec.softwareVersion = QsarIO::kSoftwareVersion;
+            rec.params = QVariantMap{
+                {QStringLiteral("level"), processingLevelName(mParams.level)},
+                {QStringLiteral("coarseMethod"), lastCoarseMethod},
+                {QStringLiteral("resamplingMethod"), mParams.resamplingMethod},
+                {QStringLiteral("coarseWindowSize"), mParams.coarseWindowSize},
+                {QStringLiteral("fineWindowSize"), mParams.fineWindowSize},
+                {QStringLiteral("polynomialDegree"), mParams.polynomialDegree},
+                {QStringLiteral("succeeded"), succeeded},
+                {QStringLiteral("total"), static_cast<int>(pairs.size())}
+            };
+            qsar.history.append(rec);
+        }
+        qsar.stages << QStringLiteral("registration");
+
         QString qsarDir;
         for (int i = 0; i < pairs.size(); ++i) {
             QsarBand b;
@@ -214,6 +338,38 @@ void RegistrationServiceImpl::execute() {
             qsarDir = QFileInfo(op).absolutePath();
         }
         if (!qsarDir.isEmpty()) {
+            // 详细质量报告 (逐 pair 残差/ESD 相位, qsar 只存摘要)
+            if (!pairQuality.isEmpty()) {
+                QJsonArray pairsArr;
+                for (int k = 0; k < okPairIdx.size(); ++k) {
+                    const int i = okPairIdx[k];
+                    const QualityReport& q = pairQuality[k];
+                    QJsonObject po;
+                    po["subSwath"] = pairs[i].m.subSwath;
+                    po["polarization"] = pairs[i].m.polarization;
+                    po["meanCorrelation"] = q.meanCorrelation;
+                    po["offsetRmse"] = q.offsetRmse;
+                    po["esdMaxResidual"] = q.esdMaxResidual;
+                    po["validRatio"] = (q.totalPoints > 0)
+                        ? static_cast<double>(q.validPoints) / q.totalPoints : 0.0;
+                    QJsonArray rmseArr;
+                    for (double v : q.perBurstRmse) rmseArr.append(v);
+                    po["perBurstRmse"] = rmseArr;
+                    QJsonArray esdArr;
+                    for (double v : q.esdPhaseDeltas) esdArr.append(v);
+                    po["esdPhaseDeltas"] = esdArr;
+                    pairsArr.append(po);
+                }
+                QJsonObject root;
+                root["productType"] = QStringLiteral("RegistrationQuality");
+                root["created"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+                root["pairs"] = pairsArr;
+                QFile f(qsarDir + "/registration_quality.json");
+                if (f.open(QIODevice::WriteOnly)) {
+                    f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+                    f.close();
+                }
+            }
             QsarIO::write(qsarDir + "/" + prefix + ".qsar", qsar);
             lastOut = qsarDir + "/" + prefix + ".qsar";
         }
