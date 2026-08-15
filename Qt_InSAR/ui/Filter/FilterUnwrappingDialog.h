@@ -41,14 +41,7 @@ private:
     QSpinBox* mMaxIterations;
     QDoubleSpinBox* mConvergeTol;
 
-    // Tab 3: 相位高程
-    QCheckBox* mConvertHeight;
-    QDoubleSpinBox* mWavelength;
-    QDoubleSpinBox* mIncAngle;
-    QDoubleSpinBox* mSlantRange;
-    QDoubleSpinBox* mBaselinePerp;
-
-    // Tab 4: 输出
+    // Tab 3: 输出
     QLineEdit* mOutputDir;
     QLineEdit* mOutputPrefix;
 };

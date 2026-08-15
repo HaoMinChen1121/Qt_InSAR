@@ -20,12 +20,7 @@ struct UnwrappingParams
     int       maxIterations = 1000;
     double    convergenceTolerance = 1e-4;
 
-    // 相位高程转换
-    bool      convertToHeight = false;
-    double    wavelength = 0.0;             // 雷达波长 (m), 由产品XML填充
-    double    incidenceAngle = 0.0;         // 入射角 (度), 由产品XML填充
-    double    slantRange = 0.0;             // 斜距 (m), 由产品XML填充
-    double    baselinePerp = 0.0;           // 垂直基线 (m), 由轨道向量计算
+    // 注: 相位→高程/形变转换参数已移交 DeformationParams (Phase 0 设计决定)
 };
 
 #endif // UNWRAPPINGPARAMS_H

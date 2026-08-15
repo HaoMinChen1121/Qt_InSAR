@@ -11,6 +11,7 @@
 #include "domain/OrbitInfo.h"
 #include "domain/params/RegistrationParams.h"
 #include "domain/params/InterferogramParams.h"
+#include "domain/params/FilterUnwrapParams.h"
 #include "domain/product/ProductManager.h"
 #include "dataaccess/ISarProduct.h"
 #include "dataaccess/annotation/SlcAnnotation.h"
@@ -65,12 +66,15 @@ private:
     void createServices();
     void wireConnections();
     void rebuildCanvasLayers();
+    // 滤波→解缠链: 逐极化推进 (filter finished → unwrap → 下一极化)
+    void runNextFilterUnwrap();
 
 private slots:
     void onSarProductOpenRequested(const QString& path);
     void onRegistrationRunRequested(const RegistrationParams& params);
     void onBaselineEstimateRequested();
     void onInterferogramRunRequested(const InterferogramParams& params);
+    void onFilterUnwrapRunRequested(const FilterUnwrapParams& params);
     void onMasterProductSelected(const QString& productPath);
     void onSlaveProductSelected(const QString& productPath);
 
@@ -102,6 +106,12 @@ private:
 
     // 待自动选择: -1=无, 0=辅, 1=主
     int mPendingAutoSelect = -1;
+
+    // 滤波完成后的链式解缠参数 (filter → unwrap 流程)
+    UnwrappingParams mPendingUnwrapParams;
+    // 滤波→解缠链的逐极化队列 (一次运行处理产品全部极化)
+    QStringList mPendingFilterPols;
+    FilterParams mPendingFilterBase;
 
     // 待完成的异步加载计数
     int mPendingLoadCount = 0;

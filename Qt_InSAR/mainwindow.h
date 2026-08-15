@@ -4,6 +4,7 @@
 #include "SARibbonMainWindow.h"
 #include "domain/params/RegistrationParams.h"
 #include "domain/params/InterferogramParams.h"
+#include "domain/params/FilterUnwrapParams.h"
 
 class SARibbonCategory;
 class SARibbonQuickAccessBar;
@@ -133,6 +134,18 @@ private:
     QSpinBox* mIfgAzSpin = nullptr;
     void applyIfgParamsToRibbon(const InterferogramParams& p);
 
+    // ── Ribbon 控件 (滤波与解缠页) ──
+    QComboBox*       mFilterMethodCombo = nullptr;
+    QDoubleSpinBox*  mFilterAlphaSpin = nullptr;
+    QSpinBox*        mFilterWinSpin = nullptr;
+    QComboBox*       mUnwrapMethodCombo = nullptr;
+    QDoubleSpinBox*  mCohSpin = nullptr;
+    QComboBox*       mFilterPolCombo = nullptr;   // 极化选择 (单次运行处理一个极化)
+    QLabel*          mFilterProductLabel = nullptr;
+    FilterUnwrapParams mFilterUnwrapParams;
+    FilterUnwrapParams collectFilterUnwrapParams() const;
+    void applyFilterUnwrapParamsToRibbon(const FilterUnwrapParams& p);
+
     QMenu* buildSlcLayerMenu(bool isMaster);
 
 signals:
@@ -141,6 +154,8 @@ signals:
     /// 用户触发基线快速估算
     void baselineEstimateRequested();
     void interferogramRunRequested(const InterferogramParams& params);
+    /// 用户触发滤波+解缠链 (Product 驱动: 携带干涉产品 id)
+    void filterUnwrapRunRequested(const FilterUnwrapParams& params);
 };
 
 #endif // MAINWINDOW_H

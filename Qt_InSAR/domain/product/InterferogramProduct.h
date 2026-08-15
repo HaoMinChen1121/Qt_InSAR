@@ -48,9 +48,9 @@ public:
     QString correctedPhase(const QString& polarization = QString()) const
     { const QsarBand* b = mergedBand(polarization); return b ? b->diffPhaseFile : QString(); }
 
-    QVector<QString> polarizations() const
+    QStringList polarizations() const
     {
-        QVector<QString> pols;
+        QStringList pols;
         for (const auto& b : mProduct.bands) {
             if (!b.polarization.isEmpty() && !pols.contains(b.polarization))
                 pols.append(b.polarization);

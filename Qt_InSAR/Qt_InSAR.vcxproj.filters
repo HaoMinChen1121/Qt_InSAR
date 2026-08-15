@@ -41,10 +41,12 @@
   <ItemGroup>
     <ClCompile Include="algorithms\BaselineEstimator.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\Correlation.cpp"><Filter>Algorithms</Filter></ClCompile>
+    <ClCompile Include="algorithms\GoldsteinFilter.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\OrbitInterpolator.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\PolynomialFit.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\SincInterpolator.cpp"><Filter>Algorithms</Filter></ClCompile>
     <ClInclude Include="algorithms\BaselineEstimator.h"><Filter>Algorithms</Filter></ClInclude>
+    <ClInclude Include="algorithms\GoldsteinFilter.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\ComplexSoA.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\Correlation.h"><Filter>Algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\DerampCore.h"><Filter>Algorithms</Filter></ClInclude>
@@ -69,6 +71,7 @@
   <ItemGroup>
     <ClInclude Include="domain\params\DeformationParams.h"><Filter>Domain\Params</Filter></ClInclude>
     <ClInclude Include="domain\params\InterferogramParams.h"><Filter>Domain\Params</Filter></ClInclude>
+    <ClInclude Include="domain\params\FilterUnwrapParams.h"><Filter>Domain\Params</Filter></ClInclude>
     <ClInclude Include="domain\params\RegistrationParams.h"><Filter>Domain\Params</Filter></ClInclude>
     <ClInclude Include="domain\params\TimeSeriesParams.h"><Filter>Domain\Params</Filter></ClInclude>
   </ItemGroup>

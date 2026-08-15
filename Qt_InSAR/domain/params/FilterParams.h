@@ -26,6 +26,10 @@ struct FilterParams
     bool      useCoherenceMask = false;     // 相干掩膜
     double    coherenceThreshold = 0.3;     // 相干阈值
     QString   maskFilePath;
+
+    // 输出 (空 = 干涉产品目录下 filter/ 子目录)
+    QString   outputDir;
+    QString   outputPrefix = "ifg_filtered";
 };
 
 #endif // FILTERPARAMS_H

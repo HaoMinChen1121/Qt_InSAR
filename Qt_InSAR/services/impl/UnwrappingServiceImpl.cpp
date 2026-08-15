@@ -8,9 +8,9 @@ UnwrappingParams UnwrappingServiceImpl::params() const { return mParams; }
 
 void UnwrappingServiceImpl::execute()
 {
-    // TODO: 相位解缠算法实现 (枝切法/最小二乘法)
+    // TODO: 相位解缠算法实现 (质量引导区域增长, Phase 2)
     emit progressChanged(50, tr("相位解缠中..."));
-    emit finished(true, QString());
+    emit finished(true, tr("(占位) Phase 2 实现后产出 unwrap/ 产品"));
 }
 
 void UnwrappingServiceImpl::cancel() { mRunning = false; }

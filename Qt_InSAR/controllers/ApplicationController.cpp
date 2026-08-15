@@ -119,6 +119,8 @@ void ApplicationController::wireConnections()
             this, &ApplicationController::onBaselineEstimateRequested);
     connect(mMainWindow, &MainWindow::interferogramRunRequested,
             this, &ApplicationController::onInterferogramRunRequested);
+    connect(mMainWindow, &MainWindow::filterUnwrapRunRequested,
+            this, &ApplicationController::onFilterUnwrapRunRequested);
 
     ProcessingMonitorPanel* monitor = mMainWindow->processingMonitorPanel();
     connect(mWorkerManager, &WorkerManager::taskProgressChanged,
@@ -160,6 +162,38 @@ void ApplicationController::wireConnections()
         });
     connect(mInterferogramSvc.get(), &IProcessingService::errorOccurred,
         monitor, &ProcessingMonitorPanel::onError);
+
+    // ── 滤波 → 解缠 链 (Product 驱动) ──
+    connect(mFilterSvc.get(), &IProcessingService::progressChanged,
+        monitor, &ProcessingMonitorPanel::onProgress);
+    connect(mFilterSvc.get(), &IProcessingService::errorOccurred,
+        monitor, &ProcessingMonitorPanel::onError);
+    connect(mFilterSvc.get(), &IProcessingService::finished, this,
+        [this, monitor](bool success, const QString& outputPath) {
+            if (success) {
+                monitor->appendLog(
+                    QStringLiteral("滤波完成: %1").arg(outputPath), "#4CAF50");
+                // 链式: 解缠 (Phase 1 为占位实现, Phase 2 接质量引导算法)
+                mUnwrappingSvc->setParams(mPendingUnwrapParams);
+                QtConcurrent::run([this]() { mUnwrappingSvc->execute(); });
+            } else {
+                monitor->appendLog(
+                    QStringLiteral("滤波失败, 跳过该极化解缠"), "#E74C3C");
+                runNextFilterUnwrap();
+            }
+            monitor->onFinished(success, outputPath);
+        });
+    connect(mUnwrappingSvc.get(), &IProcessingService::progressChanged,
+        monitor, &ProcessingMonitorPanel::onProgress);
+    connect(mUnwrappingSvc.get(), &IProcessingService::errorOccurred,
+        monitor, &ProcessingMonitorPanel::onError);
+    connect(mUnwrappingSvc.get(), &IProcessingService::finished, this,
+        [this, monitor](bool success, const QString& outputPath) {
+            if (success)
+                monitor->appendLog(QStringLiteral("解缠完成 (Phase 1 占位)"), "#4CAF50");
+            monitor->onFinished(success, outputPath);
+            runNextFilterUnwrap();   // 推进到下一极化
+        });
 
     LayerPanel* layerPanel = mMainWindow->layerPanel();
     QgsMapCanvas* canvas = mMainWindow->mapCanvasWidget()->mapCanvas();
@@ -482,6 +516,51 @@ void ApplicationController::onInterferogramRunRequested(const InterferogramParam
 {
     mInterferogramSvc->setParams(params);
     QtConcurrent::run([this]() { mInterferogramSvc->execute(); });
+}
+
+void ApplicationController::onFilterUnwrapRunRequested(const FilterUnwrapParams& params)
+{
+    if (!mProductManager.contains(params.inputProductId))
+        mProductManager.registerProduct(params.inputProductId);
+    if (!mProductManager.contains(params.inputProductId)) {
+        mMainWindow->processingMonitorPanel()->appendLog(
+            QStringLiteral("无法解析干涉产品: %1").arg(params.inputProductId), "#E53935");
+        return;
+    }
+    InterferogramProduct prod = mProductManager.interferogram(params.inputProductId);
+
+    // 极化解析 (Product 驱动): 用户指定单极化, 否则处理产品全部极化
+    QStringList pols;
+    if (params.filter.polarization.isEmpty()) {
+        pols = prod.polarizations();
+    } else {
+        if (prod.mergedBand(params.filter.polarization))
+            pols << params.filter.polarization;
+    }
+    if (pols.isEmpty()) {
+        mMainWindow->processingMonitorPanel()->appendLog(
+            QStringLiteral("产品无可处理的极化波段"), "#E53935");
+        return;
+    }
+
+    mPendingFilterBase = params.filter;
+    mPendingFilterBase.inputProductId = params.inputProductId;
+    mPendingFilterPols = pols;
+    mPendingUnwrapParams = params.unwrap;
+    runNextFilterUnwrap();
+}
+
+void ApplicationController::runNextFilterUnwrap()
+{
+    if (mPendingFilterPols.isEmpty()) {
+        mMainWindow->processingMonitorPanel()->appendLog(
+            QStringLiteral("滤波与解缠链完成 (全部极化)"), "#4CAF50");
+        return;
+    }
+    FilterParams fp = mPendingFilterBase;
+    fp.polarization = mPendingFilterPols.takeFirst();
+    mFilterSvc->setParams(fp);
+    QtConcurrent::run([this]() { mFilterSvc->execute(); });
 }
 
 void ApplicationController::onBaselineEstimateRequested()

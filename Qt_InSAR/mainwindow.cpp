@@ -621,49 +621,125 @@ void MainWindow::createCategoryInterferogram(SARibbonCategory* page)
 // ========================================================================
 void MainWindow::createCategoryFilterUnwrap(SARibbonCategory* page)
 {
+    // ── Panel 1: 输入产品 (Product 驱动: 选干涉产品 qsar) ──
+    SARibbonPanel* pnlInput = page->addPanel(QStringLiteral("输入产品"));
+    QAction* actPickIfg = createAction(QStringLiteral("干涉产品\n(点击选择)"),
+                                        ":/icon/icon/folder-stats.svg", "actPickIfg");
+    pnlInput->addLargeAction(actPickIfg);
+    connect(actPickIfg, &QAction::triggered, this, [this]() {
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("选择干涉图产品 (qsar)"),
+            QString(), QStringLiteral("QSAR 产品 (*.qsar)"));
+        if (path.isEmpty()) return;
+        mFilterUnwrapParams.inputProductId = path;
+        mFilterProductLabel->setText(
+            QStringLiteral("输入: %1").arg(QFileInfo(path).fileName()));
+        // 从产品自描述刷新极化列表 (Product 驱动, 不硬编码; 默认全部极化)
+        if (mAppController) {
+            InterferogramProduct prod =
+                mAppController->productManager()->interferogram(path);
+            const auto pols = prod.polarizations();
+            if (!pols.isEmpty()) {
+                mFilterPolCombo->clear();
+                mFilterPolCombo->addItem(QStringLiteral("全部极化"));
+                mFilterPolCombo->addItems(pols);
+                mFilterPolCombo->setCurrentIndex(0);
+            }
+        }
+    });
+    mFilterProductLabel = new QLabel(QStringLiteral("输入: 未选择"), this);
+    mFilterProductLabel->setWordWrap(true);
+    mFilterProductLabel->setMaximumHeight(36);
+    pnlInput->addSmallWidget(mFilterProductLabel);
+    mFilterPolCombo = new QComboBox(this);
+    mFilterPolCombo->addItems({QStringLiteral("全部极化"), QStringLiteral("VV"), QStringLiteral("VH")});
+    pnlInput->addSmallWidget(mFilterPolCombo);
+
+    // ── Panel 2: 滤波 (Baran 保留但灰掉 — Phase 5 后实现) ──
     SARibbonPanel* pnlFilt = page->addPanel(QStringLiteral("滤波"));
-    QComboBox* filtMethodCombo = new QComboBox(this);
-    filtMethodCombo->addItems({QStringLiteral("Goldstein"), QStringLiteral("Baran")});
-    pnlFilt->addSmallWidget(filtMethodCombo);
-    QDoubleSpinBox* alphaSpin = new QDoubleSpinBox(this);
-    alphaSpin->setRange(0.1, 1.0); alphaSpin->setSingleStep(0.1); alphaSpin->setValue(0.5);
-    alphaSpin->setPrefix(QStringLiteral("α: "));
-    pnlFilt->addSmallWidget(alphaSpin);
-    QSpinBox* winSpin = new QSpinBox(this);
-    winSpin->setRange(8, 256); winSpin->setValue(32);
-    winSpin->setPrefix(QStringLiteral("窗口: "));
-    pnlFilt->addSmallWidget(winSpin);
+    mFilterMethodCombo = new QComboBox(this);
+    mFilterMethodCombo->addItems({QStringLiteral("Goldstein"), QStringLiteral("Baran")});
+    mFilterMethodCombo->setCurrentIndex(0);
+    pnlFilt->addSmallWidget(mFilterMethodCombo);
+    mFilterAlphaSpin = new QDoubleSpinBox(this);
+    mFilterAlphaSpin->setRange(0.1, 1.0); mFilterAlphaSpin->setSingleStep(0.1);
+    mFilterAlphaSpin->setValue(mFilterUnwrapParams.filter.goldsteinAlpha);
+    mFilterAlphaSpin->setPrefix(QStringLiteral("α: "));
+    pnlFilt->addSmallWidget(mFilterAlphaSpin);
+    mFilterWinSpin = new QSpinBox(this);
+    mFilterWinSpin->setRange(8, 256); mFilterWinSpin->setValue(32);
+    mFilterWinSpin->setPrefix(QStringLiteral("窗口: "));
+    pnlFilt->addSmallWidget(mFilterWinSpin);
 
+    // ── Panel 3: 相位解缠 (Phase 2 接入算法) ──
     SARibbonPanel* pnlUnwrap = page->addPanel(QStringLiteral("相位解缠"));
-    QComboBox* unwrapMethodCombo = new QComboBox(this);
-    unwrapMethodCombo->addItems({QStringLiteral("枝切法"), QStringLiteral("最小二乘")});
-    pnlUnwrap->addSmallWidget(unwrapMethodCombo);
-    QDoubleSpinBox* cohSpin = new QDoubleSpinBox(this);
-    cohSpin->setRange(0, 1); cohSpin->setSingleStep(0.05); cohSpin->setValue(0.3);
-    cohSpin->setPrefix(QStringLiteral("相干: "));
-    pnlUnwrap->addSmallWidget(cohSpin);
+    mUnwrapMethodCombo = new QComboBox(this);
+    mUnwrapMethodCombo->addItems({QStringLiteral("枝切法"), QStringLiteral("最小二乘")});
+    pnlUnwrap->addSmallWidget(mUnwrapMethodCombo);
+    mCohSpin = new QDoubleSpinBox(this);
+    mCohSpin->setRange(0, 1); mCohSpin->setSingleStep(0.05);
+    mCohSpin->setValue(mFilterUnwrapParams.unwrap.coherenceThreshold);
+    mCohSpin->setPrefix(QStringLiteral("相干: "));
+    pnlUnwrap->addSmallWidget(mCohSpin);
 
-    QDoubleSpinBox* wlSpin = new QDoubleSpinBox(this);
-    wlSpin->setDecimals(4); wlSpin->setRange(0.001, 1.0); wlSpin->setValue(0.03125);
-    wlSpin->setPrefix(QStringLiteral("λ: "));
-    pnlUnwrap->addSmallWidget(wlSpin);
-    QDoubleSpinBox* incSpin = new QDoubleSpinBox(this);
-    incSpin->setRange(0, 90); incSpin->setValue(35.0);
-    incSpin->setPrefix(QStringLiteral("入射角: "));
-    pnlUnwrap->addSmallWidget(incSpin);
-
+    // ── Panel 4: 执行 ──
     SARibbonPanel* pnlExec = page->addPanel(QStringLiteral("执行"));
     QAction* actExecFW = createAction(QStringLiteral("运行滤波解缠"),
                                        ":/icon/icon/folder-cog.svg", "actExecFW");
     pnlExec->addLargeAction(actExecFW);
     connect(actExecFW, &QAction::triggered, this, [this]() {
+        FilterUnwrapParams p = collectFilterUnwrapParams();
+        if (p.inputProductId.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("提示"),
+                QStringLiteral("请先选择干涉图产品 (qsar)"));
+            return;
+        }
         mMonitorPanel->appendLog(QStringLiteral("滤波与解缠已启动..."), "#4A90D9");
+        emit filterUnwrapRunRequested(p);
     });
     QAction* actAdvFW = createAction(QStringLiteral("高级参数"), ":/icon/icon/layout.svg", "actAdvFW");
     pnlExec->addSmallAction(actAdvFW);
     connect(actAdvFW, &QAction::triggered, this, [this]() {
-        FilterUnwrappingDialog dlg(this); dlg.exec();
+        FilterUnwrappingDialog dlg(this);
+        dlg.setFilterParams(mFilterUnwrapParams.filter);
+        dlg.setUnwrappingParams(mFilterUnwrapParams.unwrap);
+        if (dlg.exec() == QDialog::Accepted) {
+            mFilterUnwrapParams.filter = dlg.filterParams();
+            mFilterUnwrapParams.unwrap = dlg.unwrappingParams();
+            applyFilterUnwrapParamsToRibbon(mFilterUnwrapParams);
+        }
     });
+}
+
+FilterUnwrapParams MainWindow::collectFilterUnwrapParams() const
+{
+    FilterUnwrapParams p = mFilterUnwrapParams;
+    if (mFilterPolCombo && !mFilterPolCombo->currentText().isEmpty()) {
+        // "全部极化" → 空串, 由控制器从产品自描述解析全部极化
+        p.filter.polarization = mFilterPolCombo->currentText().contains(QStringLiteral("全部"))
+            ? QString() : mFilterPolCombo->currentText();
+    }
+    p.filter.method = mFilterMethodCombo->currentText().contains("Baran")
+        ? QStringLiteral("Baran") : QStringLiteral("Goldstein");
+    p.filter.goldsteinAlpha = mFilterAlphaSpin->value();
+    p.filter.baranAlpha = mFilterAlphaSpin->value();
+    p.filter.goldsteinWindowSize = mFilterWinSpin->value();
+    p.filter.baranWindowSize = mFilterWinSpin->value();
+    p.unwrap.method = mUnwrapMethodCombo->currentText().contains(QStringLiteral("最小二乘"))
+        ? QStringLiteral("LeastSquares") : QStringLiteral("BranchCut");
+    p.unwrap.coherenceThreshold = mCohSpin->value();
+    return p;
+}
+
+void MainWindow::applyFilterUnwrapParamsToRibbon(const FilterUnwrapParams& p)
+{
+    mFilterMethodCombo->setCurrentText(
+        p.filter.method.contains("Baran") ? QStringLiteral("Baran") : QStringLiteral("Goldstein"));
+    mFilterAlphaSpin->setValue(p.filter.goldsteinAlpha);
+    mFilterWinSpin->setValue(p.filter.goldsteinWindowSize);
+    mUnwrapMethodCombo->setCurrentText(
+        p.unwrap.method.contains("LeastSquares") ? QStringLiteral("最小二乘法") : QStringLiteral("枝切法"));
+    mCohSpin->setValue(p.unwrap.coherenceThreshold);
 }
 
 // ========================================================================

@@ -114,6 +114,7 @@
     <ClCompile Include="ApplicationWidget.cpp" />
     <!-- Algorithms -->
     <ClCompile Include="algorithms\Correlation.cpp" />
+    <ClCompile Include="algorithms\GoldsteinFilter.cpp" />
     <ClCompile Include="algorithms\OrbitInterpolator.cpp" />
     <ClCompile Include="algorithms\PolynomialFit.cpp" />
     <ClCompile Include="algorithms\SincInterpolator.cpp" />
@@ -246,6 +247,7 @@
     <ClInclude Include="domain\SarSensorInfo.h" />
     <ClInclude Include="domain\params\DeformationParams.h" />
     <ClInclude Include="domain\params\InterferogramParams.h" />
+    <ClInclude Include="domain\params\FilterUnwrapParams.h" />
     <ClInclude Include="domain\params\RegistrationParams.h" />
     <ClInclude Include="domain\params\TimeSeriesParams.h" />
     <ClInclude Include="services\registration\PipelineContext.h" />
@@ -261,6 +263,7 @@
     <ClInclude Include="services\registration\steps\BurstMatcher.h" />
     <ClInclude Include="services\registration\steps\CoarseCorrelator.h" />
     <ClInclude Include="algorithms\BaselineEstimator.h" />
+    <ClInclude Include="algorithms\GoldsteinFilter.h" />
     <ClInclude Include="services\registration\steps\DataReader.h" />
     <ClInclude Include="services\registration\steps\TOPSARDeramp.h" />
     <ClInclude Include="services\registration\steps\EsdCorrector.h" />

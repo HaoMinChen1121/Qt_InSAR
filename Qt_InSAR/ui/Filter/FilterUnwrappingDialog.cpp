@@ -1,5 +1,6 @@
 #include "FilterUnwrappingDialog.h"
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QFormLayout>
 #include <QTabWidget>
 #include <QComboBox>
@@ -9,6 +10,8 @@
 #include <QLineEdit>
 #include <QDialogButtonBox>
 #include <QGroupBox>
+#include <QFileDialog>
+#include <QPushButton>
 
 FilterUnwrappingDialog::FilterUnwrappingDialog(QWidget* parent) : QDialog(parent)
 {
@@ -61,31 +64,24 @@ FilterUnwrappingDialog::FilterUnwrappingDialog(QWidget* parent) : QDialog(parent
     f2->addRow(tr("收敛阈值:"), mConvergeTol);
     tabs->addTab(tab2, tr("解缠"));
 
-    // ===== Tab 3: 相位高程 =====
-    QWidget* tab3 = new QWidget;
-    QFormLayout* f3 = new QFormLayout(tab3);
-    mConvertHeight = new QCheckBox(tr("将解缠相位转换为高程"));
-    f3->addWidget(mConvertHeight);
-    mWavelength = new QDoubleSpinBox; mWavelength->setDecimals(6);
-    mWavelength->setRange(0.001, 1.0); mWavelength->setValue(0.0);   // 由产品XML填充
-    f3->addRow(tr("雷达波长(m):"), mWavelength);
-    mIncAngle = new QDoubleSpinBox; mIncAngle->setRange(0, 90);
-    mIncAngle->setDecimals(2); mIncAngle->setValue(0.0);             // 由产品XML填充
-    f3->addRow(tr("入射角(°):"), mIncAngle);
-    mSlantRange = new QDoubleSpinBox; mSlantRange->setRange(1000, 10000000);
-    mSlantRange->setDecimals(0); mSlantRange->setValue(0);           // 由产品XML填充
-    f3->addRow(tr("斜距(m):"), mSlantRange);
-    mBaselinePerp = new QDoubleSpinBox; mBaselinePerp->setRange(1, 10000);
-    mBaselinePerp->setDecimals(1); mBaselinePerp->setValue(0);       // 由轨道向量计算
-    f3->addRow(tr("垂直基线(m):"), mBaselinePerp);
-    tabs->addTab(tab3, tr("相位高程"));
-
-    // ===== Tab 4: 输出 =====
+    // ===== Tab 3: 输出 =====
     QWidget* tab4 = new QWidget;
     QFormLayout* f4 = new QFormLayout(tab4);
-    mOutputDir = new QLineEdit;
-    f4->addRow(tr("输出目录:"), mOutputDir);
-    mOutputPrefix = new QLineEdit("filtered_unwrapped");
+    QWidget* dirRow = new QWidget(tab4);
+    QHBoxLayout* dirLay = new QHBoxLayout(dirRow);
+    dirLay->setContentsMargins(0, 0, 0, 0);
+    mOutputDir = new QLineEdit(dirRow);
+    mOutputDir->setPlaceholderText(tr("留空 = 干涉产品目录下 filter/ 子目录"));
+    dirLay->addWidget(mOutputDir, 1);
+    QPushButton* btnBrowse = new QPushButton(tr("浏览..."), dirRow);
+    dirLay->addWidget(btnBrowse);
+    connect(btnBrowse, &QPushButton::clicked, this, [this]() {
+        const QString dir = QFileDialog::getExistingDirectory(
+            this, tr("选择滤波输出目录"), mOutputDir->text());
+        if (!dir.isEmpty()) mOutputDir->setText(dir);
+    });
+    f4->addRow(tr("输出目录:"), dirRow);
+    mOutputPrefix = new QLineEdit("ifg_filtered");
     f4->addRow(tr("文件前缀:"), mOutputPrefix);
     tabs->addTab(tab4, tr("输出"));
 
@@ -104,6 +100,8 @@ void FilterUnwrappingDialog::setFilterParams(const FilterParams& p)
     mWindowSize->setValue(p.goldsteinWindowSize);
     mPatchSize->setValue(p.goldsteinPatchSize);
     mIterations->setValue(p.baranIterations);
+    mOutputDir->setText(p.outputDir);
+    mOutputPrefix->setText(p.outputPrefix);
 }
 FilterParams FilterUnwrappingDialog::filterParams() const
 {
@@ -113,6 +111,8 @@ FilterParams FilterUnwrappingDialog::filterParams() const
     p.goldsteinWindowSize = mWindowSize->value(); p.baranWindowSize = mWindowSize->value();
     p.goldsteinPatchSize = mPatchSize->value();
     p.baranIterations = mIterations->value();
+    p.outputDir = mOutputDir->text().trimmed();
+    p.outputPrefix = mOutputPrefix->text().trimmed();
     return p;
 }
 
@@ -126,11 +126,6 @@ void FilterUnwrappingDialog::setUnwrappingParams(const UnwrappingParams& p)
     mWeightedLS->setChecked(p.useWeightedLeastSquares);
     mMaxIterations->setValue(p.maxIterations);
     mConvergeTol->setValue(p.convergenceTolerance);
-    mConvertHeight->setChecked(p.convertToHeight);
-    mWavelength->setValue(p.wavelength);
-    mIncAngle->setValue(p.incidenceAngle);
-    mSlantRange->setValue(p.slantRange);
-    mBaselinePerp->setValue(p.baselinePerp);
 }
 UnwrappingParams FilterUnwrappingDialog::unwrappingParams() const
 {
@@ -143,10 +138,5 @@ UnwrappingParams FilterUnwrappingDialog::unwrappingParams() const
     p.useWeightedLeastSquares = mWeightedLS->isChecked();
     p.maxIterations = mMaxIterations->value();
     p.convergenceTolerance = mConvergeTol->value();
-    p.convertToHeight = mConvertHeight->isChecked();
-    p.wavelength = mWavelength->value();
-    p.incidenceAngle = mIncAngle->value();
-    p.slantRange = mSlantRange->value();
-    p.baselinePerp = mBaselinePerp->value();
     return p;
 }
