@@ -77,12 +77,18 @@ bool EsdCorrector::execute(PipelineContext& ctx) {
     int ovLines = ctx.params->esdOverlapLines > 0
         ? qMin(ctx.params->esdOverlapLines, L / 10) : L / 10;
     int halfW = 16;
-    int col0 = mW / 4, colW = mW / 2;
+    // 距离分箱: 全宽 8 箱 (ESD 相位逐箱测量 → 方位修正随距离变化)
+    // 2026-08-15: TOPS 方位残余随距离变化 (零多普勒几何), 单一常数修正
+    // 只修中间部分 → 部分距离处残余 ~0.1-0.5 行摧毁像素级相干;
+    // 逐箱测 δa(r) 后拟合 AzimuthPolynomial 的 r 项
+    const int nBins = 8;
+    const int binW = mW / nBins;
+    const int col0 = 0, colW = binW * nBins;
 
     ctx.burstResults.resize(N);
 
-    QVector<double> relCorr(N);
-    relCorr[0] = 0.0;
+    QVector<QVector<double>> relCorr(N, QVector<double>(nBins, 0.0));
+    QVector<QVector<double>> esdMag(N, QVector<double>(nBins, 0.0));  // 逐箱相干和幅度 (SNR 权重)
 
     for (int b = 1; b < N; ++b) {
         if (mCancelled) return false;
@@ -136,7 +142,7 @@ bool EsdCorrector::execute(PipelineContext& ctx) {
 
         if (mA.size() < colW*ovLines || sA.size() < colW*ovLines
             || mB.size() < colW*ovLines || sB.size() < colW*ovLines) {
-            relCorr[b] = 0; continue;
+            continue;
         }
 
         // 模型重采样: 辅窗口对齐到主网格后, ESD 相位只反映残余方位失配
@@ -146,34 +152,80 @@ bool EsdCorrector::execute(PipelineContext& ctx) {
         resampleEsdWindow(sB, colW, ovLines, col0, lineB - ovLines/2, sLineB - ovLines/2,
                           mW, mH, ctx.rangePoly, ctx.aziPoly, sBr);
 
-        std::complex<double> esdSum(0, 0);
-        for (int k = 0; k < colW * ovLines; ++k) {
-            auto ifgA = std::complex<double>(mA[k].real(), mA[k].imag())
-                       * std::complex<double>(sAr[k].real(), -sAr[k].imag());
-            auto ifgB = std::complex<double>(mB[k].real(), mB[k].imag())
-                       * std::complex<double>(sBr[k].real(), -sBr[k].imag());
-            esdSum += ifgA * std::conj(ifgB);
+        // 逐距离箱 ESD 相位
+        for (int bin = 0; bin < nBins; ++bin) {
+            std::complex<double> esdSum(0, 0);
+            for (int rr = 0; rr < ovLines; ++rr) {
+                const int rowOff = rr * colW;
+                for (int cc = bin * binW; cc < (bin + 1) * binW; ++cc) {
+                    const int k = rowOff + cc;
+                    auto ifgA = std::complex<double>(mA[k].real(), mA[k].imag())
+                               * std::complex<double>(sAr[k].real(), -sAr[k].imag());
+                    auto ifgB = std::complex<double>(mB[k].real(), mB[k].imag())
+                               * std::complex<double>(sBr[k].real(), -sBr[k].imag());
+                    esdSum += ifgA * std::conj(ifgB);
+                }
+            }
+            const double phase = std::arg(esdSum);
+            relCorr[b][bin] = phase / (2.0 * M_PI * deltaF / prf);
+            esdMag[b][bin] = std::abs(esdSum);
         }
-        double phase = std::arg(esdSum);
-        relCorr[b] = phase / (2.0 * M_PI * deltaF / prf);
     }
 
-    // 累积绝对修正, 更新每burst的aziPoly常数项
-    QVector<double> absCorr(N);
-    absCorr[0] = 0.0;
+    // 累积绝对修正 (逐箱独立链), 异常值过滤
+    QVector<QVector<double>> absCorr(N, QVector<double>(nBins, 0.0));
     for (int b = 1; b < N; ++b) {
-        absCorr[b] = absCorr[b-1] + relCorr[b];
-        if (std::abs(absCorr[b]) > 1.0) absCorr[b] = 0; // 异常值过滤
+        for (int bin = 0; bin < nBins; ++bin) {
+            absCorr[b][bin] = absCorr[b-1][bin] + relCorr[b][bin];
+            if (std::abs(absCorr[b][bin]) > 1.0) absCorr[b][bin] = 0;
+        }
     }
 
-    ctx.burstResults.resize(N);
+    // 每 burst: 对逐箱修正做 SNR 加权线性拟合 corr(rN) = α + β·rN
+    // → aziPoly 常数项 += α, r 项 += β (AzimuthPolynomial: Δa = b0 + b1·a + b2·rN)
     for (int b = 0; b < N; ++b) {
         ctx.burstResults[b].burstIndex = b;
         ctx.burstResults[b].rangePoly  = ctx.rangePoly;
         ctx.burstResults[b].aziPoly    = ctx.aziPoly;
-        ctx.burstResults[b].aziPoly.coeffs[0] += absCorr[b]; // 仅调常数项
+        if (b == 0) continue;
+
+        // 权重 = 该 burst 各箱 esdMag 的累积 (跨 seam 平均)
+        double sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0;
+        int nv = 0;
+        for (int bin = 0; bin < nBins; ++bin) {
+            if (std::abs(absCorr[b][bin]) < 1e-9) continue;  // 过滤后的无效箱
+            const double rN = (bin + 0.5) * binW / mW;
+            double wgt = esdMag[b][bin];
+            for (int bb = b + 1; bb < N; ++bb) wgt += esdMag[bb][bin];
+            if (wgt < 1e-9) wgt = 1.0;
+            sw += wgt; swx += wgt * rN; swy += wgt * absCorr[b][bin];
+            swxx += wgt * rN * rN; swxy += wgt * rN * absCorr[b][bin];
+            ++nv;
+        }
+        if (nv >= 4 && std::abs(sw * swxx - swx * swx) > 1e-12) {
+            const double beta = (sw * swxy - swx * swy) / (sw * swxx - swx * swx);
+            const double alpha = (swy - beta * swx) / sw;
+            ctx.burstResults[b].aziPoly.coeffs[0] += alpha;
+            ctx.burstResults[b].aziPoly.coeffs[2] += beta;
+            if (b == N / 2 || std::abs(beta) > 0.5)
+                qDebug() << "[Step8] burst" << b << "ESD fit: alpha="
+                         << QString::number(alpha, 'f', 4) << " beta="
+                         << QString::number(beta, 'f', 4) << "(r-term, px per normalized range)";
+        } else {
+            // 有效箱不足: 回退到加权均值 (常数项)
+            double sum = 0, wsum = 0;
+            for (int bin = 0; bin < nBins; ++bin)
+                if (std::abs(absCorr[b][bin]) >= 1e-9) {
+                    double wgt = esdMag[b][bin];
+                    if (wgt < 1e-9) wgt = 1.0;
+                    sum += absCorr[b][bin] * wgt; wsum += wgt;
+                }
+            if (wsum > 0)
+                ctx.burstResults[b].aziPoly.coeffs[0] += sum / wsum;
+        }
     }
     ctx.esdApplied = true;
-    qDebug() << "[Step8] ESD adjusted" << N << "burst azimuth constants";
+    qDebug() << "[Step8] ESD adjusted" << N << "burst azimuth corrections"
+             << "(range-binned," << nBins << "bins, constant+r-term)";
     return true;
 }

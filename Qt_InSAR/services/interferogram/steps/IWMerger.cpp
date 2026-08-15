@@ -472,6 +472,23 @@ bool estimateSeamAzimuthShift(const QString& phA, const QString& phB,
     }
     GDALClose(dA); GDALClose(dB);
 
+    // 去趋势: 减线性拟合 (天线方向图等低频趋势会在边界位移处产生假相关峰,
+    // 2026-08-15 实测 VH seam 相关单调升到 ±12 边界的教训)
+    auto detrend = [](std::vector<double>& a) {
+        const int n = static_cast<int>(a.size());
+        if (n < 8) return;
+        double sx = 0, sy = 0, sxx = 0, sxy = 0;
+        for (int r = 0; r < n; ++r) {
+            sx += r; sy += a[r]; sxx += static_cast<double>(r) * r;
+            sxy += static_cast<double>(r) * a[r];
+        }
+        const double b = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+        const double c = (sy - b * sx) / n;
+        for (int r = 0; r < n; ++r) a[r] -= (c + b * r);
+    };
+    detrend(ampA);
+    detrend(ampB);
+
     // Pearson 互相关: C[d] = Σ(aA−ā)(aB−ā') / (n·σA·σB)
     double mA = 0, mB = 0;
     for (double v : ampA) mA += v;
