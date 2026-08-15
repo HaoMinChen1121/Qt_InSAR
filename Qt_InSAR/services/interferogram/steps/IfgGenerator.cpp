@@ -1,5 +1,6 @@
 #include "IfgGenerator.h"
 #include "../PipelineContext.h"
+#include "algorithms/DerampCore.h"
 #include "dataaccess/impl/GdalSlcReader.h"
 #include "dataaccess/impl/SentinelDataReader.h"
 #include "dataaccess/ISarProduct.h"
@@ -12,6 +13,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <algorithm>
+#include <cmath>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -79,7 +81,7 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
 
         QVector<float> rowRe(outW);
         QVector<float> rowIm(outW);
-
+        QVector<std::complex<float>> burstIfg;   // 整 burst 干涉图 (斜坡估计后统一写)
         for (int b = 0; b < N; ++b) {
             if (mCancelled) return false;
 
@@ -98,6 +100,54 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
             sBurst = sReader.readBandWindow(0, 0, readRow0, realW, readH);
             int actualH = std::min(mBurst.size() / realW, sBurst.size() / realW);
 
+            // ── 主影像方位 deramp (与 DerampCore::applyDeramp_SoA 同约定) ──
+            // 原始 TOPS 相位 = exp(−jπ·kt·η²) (kt=annotation fmRate, 负),
+            // 旋转 exp(+jπ·kt·η²) 展平; η 以 burst 中心为原点.
+            // 辅影像在配准 SincResampler 写出时已按同约定 deramp 平坦 —
+            // 主影像不展平则干涉图残留 chirp → 相干摧毁 (实测教训)
+            // kt 用数据实测值: annotation azimuthFmRate 与数据真实 chirp
+            // 可差 ~750 Hz/s (2026-08-15 实测 −2195.78 vs −1450)
+            double prfDeramp = 0.0;
+            if (ctx.masterBurstInfo && ctx.masterBurstInfo->azimuthFrequency > 0)
+                prfDeramp = ctx.masterBurstInfo->azimuthFrequency;
+            else if (ctx.masterSensorInfo.prf > 0)
+                prfDeramp = ctx.masterSensorInfo.prf;
+            const int mL = (ctx.masterBurstInfo && ctx.masterBurstInfo->linesPerBurst > 0)
+                ? ctx.masterBurstInfo->linesPerBurst : L;
+            const int mBurstRow0 = (ctx.masterBurstInfo
+                && ctx.masterBurstInfo->burstStartLines.size() > b)
+                ? ctx.masterBurstInfo->burstStartLines[b] - 1 : burstRow0;
+            double ktDeramp = ctx.azimuthFmRate;
+            if (prfDeramp > 0 && actualH > 64) {
+                double conc = 0;
+                // centerRow 为窗口相对坐标 (r ∈ [0, actualH))
+                const double centerWin = (mBurstRow0 + mL / 2.0) - readRow0;
+                const double ktMeas = sar::measureAzimuthFmRateAos(
+                    mBurst.data(), realW, actualH, prfDeramp,
+                    centerWin, &conc);
+                if (conc > 0.2 && conc < 1.5) {
+                    ktDeramp = ktMeas;
+                    if (b == 0)
+                        qDebug() << "[Ifg] master measured kt=" << ktMeas
+                                 << "(conc=" << conc << ") vs annotation"
+                                 << ctx.azimuthFmRate;
+                }
+            }
+            if (std::abs(ktDeramp) > 1e-9 && prfDeramp > 0) {
+                for (int r = 0; r < actualH; ++r) {
+                    const double eta = (readRow0 + r - mBurstRow0 - mL / 2.0) / prfDeramp;
+                    const double dp = M_PI * ktDeramp * eta * eta;   // = +π·kt·η²
+                    const float dCos = static_cast<float>(std::cos(dp));
+                    const float dSin = static_cast<float>(std::sin(dp));
+                    std::complex<float>* row = mBurst.data() + static_cast<size_t>(r) * realW;
+                    for (int c = 0; c < realW; ++c) {
+                        const std::complex<float> v = row[c];
+                        row[c] = { v.real() * dCos - v.imag() * dSin,
+                                   v.real() * dSin + v.imag() * dCos };
+                    }
+                }
+            }
+
             QString blkPath = ctx.burstBlockBase + QStringLiteral("_b%1.tif").arg(b + 1);
             GDALDatasetH hBlk = GDALCreate(driver, blkPath.toUtf8().constData(),
                                            outW, burstOutH, 4, GDT_Float32, nullptr);
@@ -109,6 +159,8 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
 
             qDebug() << "[Ifg] burst" << (b+1) << "/" << N
                      << "blockRows=" << burstOutH;
+
+            burstIfg.resize(static_cast<size_t>(outW) * burstOutH);
 
             for (int j = 0; j < burstOutH; ++j) {
                 int srcRow = burstRow0 + j * azLooks;
@@ -132,9 +184,9 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                     if (nPix > 0) { mAvg /= nPix; sAvg /= nPix; }
 
                     std::complex<double> ifg = mAvg * std::conj(sAvg);
-                    rowRe[col] = static_cast<float>(ifg.real());
-                    rowIm[col] = static_cast<float>(ifg.imag());
-                    rowPhase[col] = std::atan2(ifg.imag(), ifg.real());
+                    burstIfg[static_cast<size_t>(j) * outW + col] =
+                        std::complex<float>(static_cast<float>(ifg.real()),
+                                            static_cast<float>(ifg.imag()));
 
                     std::complex<double> crossSum(0, 0);
                     double magM = 0, magS = 0;
@@ -153,15 +205,88 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                         }
                     }
                     double denom = std::sqrt(std::max(1e-15, magM * magS));
-                    rowCoh[col] = static_cast<float>(std::abs(crossSum) / denom);
+                    // 零填充区守卫: 单非零像素窗会得 coh=1 退化值 (配准输出
+                    // 的 burst 边界零行进入后渲染为白色伪影), 幅度过小 → coh=0
+                    rowCoh[col] = (magM < 1e-3 || magS < 1e-3)
+                        ? 0.0f
+                        : static_cast<float>(std::abs(crossSum) / denom);
                 }
+                GDALRasterIO(GDALGetRasterBand(hBlk, 3), GF_Write, 0, j, outW, 1,
+                    rowCoh.data(), outW, 1, GDT_Float32, 0, 0);
+            }
 
+            // ── 差分多普勒斜坡消除 (数据驱动) ──
+            // ifg 相位含 2π(f_DC_m − f_DC_s)·η 残余: 每景零多普勒导引的几何
+            // 差分 (实测 ~92Hz = 1.19 rad/全分辨率行) — deramp 只去二次 chirp,
+            // 线性多普勒项残留 → 多视盒内相位旋转 → 幅度周期调制 + 相干摧毁。
+            // 逐行圆平均相位推进 → unwrap → 线性拟合 → 旋转 exp(−jβ·row)
+            {
+                QVector<double> adv(burstOutH - 1);
+                for (int j = 0; j < burstOutH - 1; ++j) {
+                    std::complex<double> s(0, 0);
+                    const auto* r0p = burstIfg.data() + static_cast<size_t>(j) * outW;
+                    const auto* r1p = r0p + outW;
+                    for (int c = 0; c < outW; ++c) {
+                        s += std::complex<double>(
+                            static_cast<double>(r1p[c].real()) * r0p[c].real()
+                                + static_cast<double>(r1p[c].imag()) * r0p[c].imag(),
+                            static_cast<double>(r1p[c].imag()) * r0p[c].real()
+                                - static_cast<double>(r1p[c].real()) * r0p[c].imag());
+                    }
+                    adv[j] = std::atan2(s.imag(), s.real());
+                }
+                // unwrap
+                for (int j = 1; j < adv.size(); ++j) {
+                    while (adv[j] - adv[j - 1] > M_PI) adv[j] -= 2.0 * M_PI;
+                    while (adv[j] - adv[j - 1] < -M_PI) adv[j] += 2.0 * M_PI;
+                }
+                // 推进序列线性拟合 adv[j] ≈ a + b·j
+                // 相位校正 φ_j = Σ adv = a·j + b·j(j−1)/2 —
+                // 含二次项: annotation azimuthFmRate 是沿轨道变化的 11 组多项式,
+                // 单一常数 kt 的 deramp 残留 ~30-80 Hz/s 二次 chirp (实测推进率
+                // 线性漂移 +2.5→−6.8 rad/2行), 只去线性斜坡不够
+                double sx = 0, sy = 0, sxx = 0, sxy = 0;
+                const int nA = adv.size();
+                for (int j = 0; j < nA; ++j) {
+                    sx += j; sy += adv[j]; sxx += static_cast<double>(j) * j;
+                    sxy += static_cast<double>(j) * adv[j];
+                }
+                const double a = (sy * sxx - sx * sxy) / (nA * sxx - sx * sx);
+                const double bb = (nA * sxy - sx * sy) / (nA * sxx - sx * sx);
+                // 旋转每行 exp(−jφ_j) (burst 内 0-based 行)
+                for (int j = 0; j < burstOutH; ++j) {
+                    const double ph = -(a * j + bb * j * (j - 1) * 0.5);
+                    const float dCos = static_cast<float>(std::cos(ph));
+                    const float dSin = static_cast<float>(std::sin(ph));
+                    auto* row = burstIfg.data() + static_cast<size_t>(j) * outW;
+                    for (int c = 0; c < outW; ++c) {
+                        const std::complex<float> v = row[c];
+                        row[c] = { v.real() * dCos - v.imag() * dSin,
+                                   v.real() * dSin + v.imag() * dCos };
+                    }
+                }
+                qDebug() << "[Ifg] burst" << (b+1)
+                         << "phase ramp a=" << QString::number(a, 'f', 4)
+                         << "rad/row b=" << QString::number(bb, 'f', 4)
+                         << "rad/row^2 (a_Hz="
+                         << QString::number(a * prfDeramp / (2.0 * M_PI), 'f', 2)
+                         << " Hz, b_Hz/s="
+                         << QString::number(bb * prfDeramp * prfDeramp / (2.0 * M_PI * azLooks), 'f', 2)
+                         << ")";
+            }
+
+            // 写 band1/2/4 (旋转后)
+            for (int j = 0; j < burstOutH; ++j) {
+                const auto* row = burstIfg.data() + static_cast<size_t>(j) * outW;
+                for (int c = 0; c < outW; ++c) {
+                    rowRe[c] = row[c].real();
+                    rowIm[c] = row[c].imag();
+                    rowPhase[c] = std::atan2(row[c].imag(), row[c].real());
+                }
                 GDALRasterIO(GDALGetRasterBand(hBlk, 1), GF_Write, 0, j, outW, 1,
                     rowRe.data(), outW, 1, GDT_Float32, 0, 0);
                 GDALRasterIO(GDALGetRasterBand(hBlk, 2), GF_Write, 0, j, outW, 1,
                     rowIm.data(), outW, 1, GDT_Float32, 0, 0);
-                GDALRasterIO(GDALGetRasterBand(hBlk, 3), GF_Write, 0, j, outW, 1,
-                    rowCoh.data(), outW, 1, GDT_Float32, 0, 0);
                 GDALRasterIO(GDALGetRasterBand(hBlk, 4), GF_Write, 0, j, outW, 1,
                     rowPhase.data(), outW, 1, GDT_Float32, 0, 0);
             }

@@ -3,6 +3,103 @@
 #include "algorithms/OrbitInterpolator.h"
 #include <QDebug>
 #include <QStringList>
+#include <cmath>
+
+namespace {
+
+// ── 几何距离偏移: 主辅轨道各自在自己的 burst 方位时间插值, 求 B·û ──
+// 2026-08-15 实测根因: 12 天对真实距离偏移 ~+2.8px 超出距离分辨率,
+// 散斑相关≈0, 幅度相关峰值被场景周期性结构旁瓣劫持 (喀什农田 ~23m 周期
+// → ±10px 旁瓣) → 相关器测出 −6.7px (真值 +2.8px)。轨道几何给出 ±1px 级
+// 初值 + 相关器 ±2px 约束窗 = 唯一可靠解。
+// ⚠ 两产品轨道矢量的 UTC 时间相隔 12 天: 必须各用各的时间插值
+// (同一地面对 = 主 burst b 时间 / 辅 burst j 时间, 相差仅 ~0.003s);
+// 用同一日期时间插值会落到矢量范围外被钳制 → 基线数千 km → 初值数千 px
+// (2026-08-15 实测 IW3 初值 6901-12169 px 的教训)
+// 目标视线方向 û 用球面模型 (H=693km, Re=6378137):
+//   cosθ = (R²+2H·Re+H²)/(2R(H+Re));  û = sinθ·ĥ − cosθ·n̂
+//   rangeOff = −B·û/rangeSpacing (dR = R_s−R_m = −B·û)
+bool computeGeometricRangeOff(const QList<OrbitStateVector>& mOrb,
+                              const QList<OrbitStateVector>& sOrb,
+                              const QDateTime& tMasterUtc,
+                              const QDateTime& tSlaveUtc,
+                              double nearRange, double rangeSpacing,
+                              int masterWidth,
+                              double& rangeOff)
+{
+    rangeOff = 0.0;
+    if (mOrb.size() < 2 || sOrb.size() < 2 || rangeSpacing <= 0) return false;
+
+    // 按绝对 UTC 时间做 position+velocity Hermite 插值
+    // (relativeTime 帧各产品不对齐不能用; 线性插值在 10s 矢量间隔的弧弦差
+    //  ±89m, 主辅矢量网格相位差 ~0.56s → 基线残留 ±5px 锯齿 (2026-08-15
+    //  实测 [Step3] 初值锯齿教训); natural cubic 样条振荡 ±210m 也不用;
+    //  Hermite 误差 ~0.2m, 与 SNAP/GAMMA 同方案)
+    auto hermiteAtUtc = [](const QList<OrbitStateVector>& orb, const QDateTime& t,
+                           double& x, double& y, double& z,
+                           double& vx, double& vy, double& vz) {
+        const qint64 tMs = t.toMSecsSinceEpoch();
+        int i0 = 0;
+        for (int i = 0; i < orb.size() - 1; ++i) {
+            if (orb[i].utcTime.toMSecsSinceEpoch() <= tMs
+                && orb[i + 1].utcTime.toMSecsSinceEpoch() >= tMs) { i0 = i; break; }
+        }
+        const auto& s0 = orb[i0];
+        const auto& s1 = orb[qMin(i0 + 1, orb.size() - 1)];
+        const double dt = static_cast<double>(
+            s1.utcTime.toMSecsSinceEpoch() - s0.utcTime.toMSecsSinceEpoch()) / 1000.0;
+        double u = (std::abs(dt) > 1e-9)
+            ? (tMs - s0.utcTime.toMSecsSinceEpoch()) / 1000.0 / dt : 0.0;
+        u = qMax(0.0, qMin(1.0, u));
+        const double h00 = 2*u*u*u - 3*u*u + 1;
+        const double h10 = u*u*u - 2*u*u + u;
+        const double h01 = -2*u*u*u + 3*u*u;
+        const double h11 = u*u*u - u*u;
+        x = h00*s0.x + h10*dt*s0.vx + h01*s1.x + h11*dt*s1.vx;
+        y = h00*s0.y + h10*dt*s0.vy + h01*s1.y + h11*dt*s1.vy;
+        z = h00*s0.z + h10*dt*s0.vz + h01*s1.z + h11*dt*s1.vz;
+        vx = s0.vx + u*(s1.vx - s0.vx);   // 速度仅用于视线方向, 线性混合足够
+        vy = s0.vy + u*(s1.vy - s0.vy);
+        vz = s0.vz + u*(s1.vz - s0.vz);
+    };
+
+    double mx, my, mz, mvx, mvy, mvz;
+    double sx, sy, sz, svx, svy, svz;
+    hermiteAtUtc(mOrb, tMasterUtc, mx, my, mz, mvx, mvy, mvz);
+    hermiteAtUtc(sOrb, tSlaveUtc, sx, sy, sz, svx, svy, svz);
+
+    // 基线 (主辅在同一 UTC 时刻; 沿轨分量误差 ~0.1px, 忽略)
+    const double bx = sx - mx, by = sy - my, bz = sz - mz;
+
+    // 球面模型视线方向 (条带中距)
+    const double R = nearRange + (masterWidth / 2.0) * rangeSpacing;
+    constexpr double H = 693000.0, Re = 6378137.0;
+    const double cosTh = (R * R + 2.0 * H * Re + H * H) / (2.0 * R * (H + Re));
+    const double cosThC = qMax(-1.0, qMin(1.0, cosTh));
+    const double sinTh = std::sqrt(1.0 - cosThC * cosThC);
+
+    const double rmag = std::sqrt(mx * mx + my * my + mz * mz);
+    if (rmag < 1e-6) return false;
+    const double nx = -mx / rmag, ny = -my / rmag, nz = -mz / rmag;   // 天底方向 (向下)
+    // 右视交叉轨方向: ĥ = V × n̂ 归一 (升轨右视 = 东侧)
+    double hx = mvy * nz - mvz * ny;
+    double hy = mvz * nx - mvx * nz;
+    double hz = mvx * ny - mvy * nx;
+    const double hmag = std::sqrt(hx * hx + hy * hy + hz * hz);
+    if (hmag < 1e-9) return false;
+    hx /= hmag; hy /= hmag; hz /= hmag;
+
+    // û = sinθ·ĥ − cosθ·n̂ (θ=0 → 天底; θ=90° → 水平)
+    const double ux = sinTh * hx - cosThC * nx;
+    const double uy = sinTh * hy - cosThC * ny;
+    const double uz = sinTh * hz - cosThC * nz;
+
+    const double bDotU = bx * ux + by * uy + bz * uz;
+    rangeOff = -bDotU / rangeSpacing;
+    return true;
+}
+
+} // namespace
 
 bool OrbitInitializer::execute(PipelineContext& ctx) {
     const auto& p = *ctx.params;
@@ -14,16 +111,18 @@ bool OrbitInitializer::execute(PipelineContext& ctx) {
         ctx.initialOffsets.resize(N);
         const auto& mAnx = ctx.masterBand->burstAzimuthAnxTimes;
         const auto& sAnx = ctx.slaveBand->burstAzimuthAnxTimes;
+        const auto& mBurstTimes = ctx.masterBand->burstAzimuthTimes;
+        const auto& sBurstTimes = ctx.slaveBand->burstAzimuthTimes;
         const double prf = p.masterPrf > 0 ? p.masterPrf
             : ctx.data.masterAzimuthFrequency;
         for (int b = 0; b < N; ++b) {
             double rangeOff = 0, aziOff = 0;
+            int j = b;   // 辅 burst 索引 (burstPairs 匹配结果)
             // 方位偏移 = 主辅 burst ANX 时间差 × PRF (精确时序真值)
             // 轨道插值不可靠: 两产品轨道矢量 relativeTime 各自从自身首矢量起算,
             // 时间帧零点不对齐 → 实测产生 238 行伪偏移 (真值 ~1.4 行);
             // ANX 时间由 ESA 轨道确定, 与 BurstMatcher 同源, 无帧对齐问题
             if (prf > 0 && mAnx.size() > b && sAnx.size() > b) {
-                int j = b;
                 if (ctx.burstPairs.size() == N
                     && ctx.burstPairs[b].isValid
                     && ctx.burstPairs[b].slaveBurstIdx >= 0
@@ -37,6 +136,27 @@ bool OrbitInitializer::execute(PipelineContext& ctx) {
                     p.masterAzimuthSpacing, p.masterPrf,
                     centerRow, colMid,
                     rangeOff, aziOff);
+            }
+            // 距离偏移 = 轨道几何初值 (相关器仅做 ±2px 约束窗内精化;
+            // 见 computeGeometricRangeOff 注释 — 场景周期旁瓣教训)
+            // 主/辅轨道各自在自己的 burst 时间插值 (同地面对)
+            if (mBurstTimes.size() > b) {
+                QDateTime tSlave = (sBurstTimes.size() > j)
+                    ? sBurstTimes[j] : mBurstTimes[b];
+                double geo = 0;
+                if (computeGeometricRangeOff(p.masterOrbitVectors,
+                        p.slaveOrbitVectors, mBurstTimes[b], tSlave,
+                        p.masterNearRange, p.masterRangeSpacing,
+                        ctx.data.masterWidth, geo)) {
+                    // 合理性守卫: 同轨道对 |B| 量级 < 数百米 → |rangeOff| < ~200px;
+                    // 超出说明插值时间异常 (如落出矢量范围被钳制), 回退 0
+                    if (std::abs(geo) <= 200.0) {
+                        rangeOff = geo;
+                    } else {
+                        qWarning() << "[Step3] geometric rangeOff" << geo
+                                   << "px unreasonable (burst" << b << "), fallback to 0";
+                    }
+                }
             }
             ctx.initialOffsets[b].rangeOff = rangeOff;
             ctx.initialOffsets[b].aziOff = aziOff;

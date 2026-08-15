@@ -374,8 +374,20 @@ bool SincResampler::resampleTopsar(PipelineContext& ctx) {
             const int winH = fullBurst.size() / sW;
             rt.start();
             soaBurst.fromAos(fullBurst.constData(), fullBurst.size());
-            if (doDeramp)
-                sar::applyDeramp_SoA(soaBurst, sW, winH, winRow0, slaveBurstIdx, prf, kt);
+            if (doDeramp) {
+                // 数据驱动实测 chirp (annotation 值与数据真实值可差 ~750 Hz/s —
+                // 用错值 deramp 后插值核内相位旋转 → 输出相位=噪声不可修复)
+                double conc = 0;
+                // centerRow 为窗口相对坐标 (r ∈ [0, winH))
+                const double ktMeas = sar::measureAzimuthFmRateSoa(
+                    soaBurst.re, soaBurst.im, sW, winH, prf,
+                    winH / 2.0, &conc);
+                const double ktUse = (conc > 0.2 && conc < 1.5) ? ktMeas : kt;
+                if (conc > 0.2 && conc < 1.5)
+                    qDebug() << "[Step9] burst" << (b + 1)
+                             << "measured kt=" << ktMeas << "(conc=" << conc << ")";
+                sar::applyDeramp_SoA(soaBurst, sW, winH, winRow0, slaveBurstIdx, prf, ktUse);
+            }
             derampUs = rt.nsecsElapsed() / 1000;
             fullBurst.clear();
             burstView = soaBurst.view(0, sW * winH);

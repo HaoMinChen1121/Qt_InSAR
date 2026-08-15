@@ -94,6 +94,15 @@ bool PolynomialFitter::execute(PipelineContext& ctx) {
         qDebug() << QStringLiteral("[Step7] fit done: rangeRMSE=%1 aziRMSE=%2 (%3 pts, removed %4 outliers)")
             .arg(ctx.rangePoly.rmse, 0, 'f', 3).arg(ctx.aziPoly.rmse, 0, 'f', 3)
             .arg(kept.size()).arg(removed);
+        // 系数诊断 (归一化坐标 r=col/W, a=row/H):
+        //   range Δr = c0 + c1·r + c2·a + c3·r·a + c4·r² + c5·a² (px)
+        //   azi   Δa = d0 + d1·a + d2·r (px)
+        qDebug().noquote() << QStringLiteral("[Step7] coeffs: range=[%1 %2 %3 %4 %5 %6] azi=[%7 %8 %9]")
+            .arg(ctx.rangePoly.coeffs[0], 0, 'f', 3).arg(ctx.rangePoly.coeffs[1], 0, 'f', 3)
+            .arg(ctx.rangePoly.coeffs[2], 0, 'f', 3).arg(ctx.rangePoly.coeffs[3], 0, 'f', 3)
+            .arg(ctx.rangePoly.coeffs[4], 0, 'f', 3).arg(ctx.rangePoly.coeffs[5], 0, 'f', 3)
+            .arg(ctx.aziPoly.coeffs[0], 0, 'f', 3).arg(ctx.aziPoly.coeffs[1], 0, 'f', 3)
+            .arg(ctx.aziPoly.coeffs[2], 0, 'f', 3);
         if (kept.size() < 6) {
             ctx.errorMessage = QStringLiteral("Step7: too few points after outlier removal");
             return false;

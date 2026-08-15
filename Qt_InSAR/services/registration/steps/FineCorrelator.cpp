@@ -104,11 +104,16 @@ static QVector<OffsetPoint> processFineBatch(
             findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
             qint64 peakTime = t.nsecsElapsed() / 1000;
 
-            if (std::abs(subDx) > 5.0 || (!cfg.azimuthFromOrbit && std::abs(subDy) > 3.0)) {
+            if (cfg.azimuthFromOrbit) {
+                // TOPS: 超出±2px = 场景周期旁瓣 (距离偏移超出分辨率时散斑相关≈0,
+                // 全局峰被农田等周期结构旁瓣劫持) → 保留粗配准值 (几何初值±2px 精化)
+                if (std::abs(subDx) <= 2.0) pt.rangeOff += subDx;
+                pt.correlation = maxV;
+            } else if (std::abs(subDx) > 5.0 || std::abs(subDy) > 3.0) {
                 pt.correlation = -1.0;
             } else {
                 pt.rangeOff += subDx;
-                if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
+                pt.aziOff += subDy;
                 pt.correlation = maxV;
             }
             prof.add(readTime, fftTime, peakTime);
@@ -151,11 +156,15 @@ static QVector<OffsetPoint> processFineBatch(
             findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
             qint64 peakTime = t.nsecsElapsed() / 1000;
 
-            if (std::abs(subDx) > 5.0 || (!cfg.azimuthFromOrbit && std::abs(subDy) > 3.0)) {
+            if (cfg.azimuthFromOrbit) {
+                // TOPS: 超出±2px = 场景周期旁瓣 → 保留粗配准值 (几何初值±2px 精化)
+                if (std::abs(subDx) <= 2.0) pt.rangeOff += subDx;
+                pt.correlation = maxV;
+            } else if (std::abs(subDx) > 5.0 || std::abs(subDy) > 3.0) {
                 pt.correlation = -1.0;
             } else {
                 pt.rangeOff += subDx;
-                if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
+                pt.aziOff += subDy;
                 pt.correlation = maxV;
             }
             prof.add(readTime, fftTime, peakTime);

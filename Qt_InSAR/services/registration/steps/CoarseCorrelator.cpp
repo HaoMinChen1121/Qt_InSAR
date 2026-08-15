@@ -106,7 +106,8 @@ static QVector<OffsetPoint> processCoarseBatch(
                 nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
                              slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
                 qint64 fftTime = t.nsecsElapsed() / 1000;
-                pt.rangeOff += subDx;
+                if (!cfg.azimuthFromOrbit || std::abs(subDx) <= 2.0)
+                    pt.rangeOff += subDx;   // TOPS: 超出±2px=场景周期旁瓣, 保留几何初值
                 if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = 1.0;
                 prof.add(readTime, fftTime, 0);
@@ -128,7 +129,8 @@ static QVector<OffsetPoint> processCoarseBatch(
                 double subDx, subDy;
                 findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
                 qint64 peakTime = t.nsecsElapsed() / 1000;
-                pt.rangeOff += subDx;
+                if (!cfg.azimuthFromOrbit || std::abs(subDx) <= 2.0)
+                    pt.rangeOff += subDx;   // TOPS: 超出±2px=场景周期旁瓣, 保留几何初值
                 if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = maxV;
                 prof.add(readTime, fftTime, peakTime);
@@ -166,7 +168,8 @@ static QVector<OffsetPoint> processCoarseBatch(
                 nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
                              slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
                 qint64 fftTime = t.nsecsElapsed() / 1000;
-                pt.rangeOff += subDx;
+                if (!cfg.azimuthFromOrbit || std::abs(subDx) <= 2.0)
+                    pt.rangeOff += subDx;   // TOPS: 超出±2px=场景周期旁瓣, 保留几何初值
                 if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = 1.0;
                 prof.add(readTime, fftTime, 0);
@@ -188,7 +191,8 @@ static QVector<OffsetPoint> processCoarseBatch(
                 double subDx, subDy;
                 findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
                 qint64 peakTime = t.nsecsElapsed() / 1000;
-                pt.rangeOff += subDx;
+                if (!cfg.azimuthFromOrbit || std::abs(subDx) <= 2.0)
+                    pt.rangeOff += subDx;   // TOPS: 超出±2px=场景周期旁瓣, 保留几何初值
                 if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = maxV;
                 prof.add(readTime, fftTime, peakTime);
