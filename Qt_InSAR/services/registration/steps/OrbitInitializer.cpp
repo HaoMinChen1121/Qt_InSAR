@@ -3,9 +3,44 @@
 #include "algorithms/OrbitInterpolator.h"
 #include <QDebug>
 #include <QStringList>
+#include <algorithm>
 #include <cmath>
 
 namespace {
+
+// 按绝对 UTC 时间做 position+velocity Hermite 插值
+// (relativeTime 帧各产品不对齐不能用; 线性插值在 10s 矢量间隔的弧弦差
+//  ±89m, 主辅矢量网格相位差 ~0.56s → 基线残留 ±5px 锯齿 (2026-08-15
+//  实测 [Step3] 初值锯齿教训); natural cubic 样条振荡 ±210m 也不用;
+//  Hermite 误差 ~0.2m, 与 SNAP/GAMMA 同方案)
+void hermiteAtUtc(const QList<OrbitStateVector>& orb, const QDateTime& t,
+                  double& x, double& y, double& z,
+                  double& vx, double& vy, double& vz)
+{
+    const qint64 tMs = t.toMSecsSinceEpoch();
+    int i0 = 0;
+    for (int i = 0; i < orb.size() - 1; ++i) {
+        if (orb[i].utcTime.toMSecsSinceEpoch() <= tMs
+            && orb[i + 1].utcTime.toMSecsSinceEpoch() >= tMs) { i0 = i; break; }
+    }
+    const auto& s0 = orb[i0];
+    const auto& s1 = orb[qMin(i0 + 1, orb.size() - 1)];
+    const double dt = static_cast<double>(
+        s1.utcTime.toMSecsSinceEpoch() - s0.utcTime.toMSecsSinceEpoch()) / 1000.0;
+    double u = (std::abs(dt) > 1e-9)
+        ? (tMs - s0.utcTime.toMSecsSinceEpoch()) / 1000.0 / dt : 0.0;
+    u = qMax(0.0, qMin(1.0, u));
+    const double h00 = 2*u*u*u - 3*u*u + 1;
+    const double h10 = u*u*u - 2*u*u + u;
+    const double h01 = -2*u*u*u + 3*u*u;
+    const double h11 = u*u*u - u*u;
+    x = h00*s0.x + h10*dt*s0.vx + h01*s1.x + h11*dt*s1.vx;
+    y = h00*s0.y + h10*dt*s0.vy + h01*s1.y + h11*dt*s1.vy;
+    z = h00*s0.z + h10*dt*s0.vz + h01*s1.z + h11*dt*s1.vz;
+    vx = s0.vx + u*(s1.vx - s0.vx);   // 速度仅用于视线方向, 线性混合足够
+    vy = s0.vy + u*(s1.vy - s0.vy);
+    vz = s0.vz + u*(s1.vz - s0.vz);
+}
 
 // ── 几何距离偏移: 主辅轨道各自在自己的 burst 方位时间插值, 求 B·û ──
 // 2026-08-15 实测根因: 12 天对真实距离偏移 ~+2.8px 超出距离分辨率,
@@ -29,39 +64,6 @@ bool computeGeometricRangeOff(const QList<OrbitStateVector>& mOrb,
 {
     rangeOff = 0.0;
     if (mOrb.size() < 2 || sOrb.size() < 2 || rangeSpacing <= 0) return false;
-
-    // 按绝对 UTC 时间做 position+velocity Hermite 插值
-    // (relativeTime 帧各产品不对齐不能用; 线性插值在 10s 矢量间隔的弧弦差
-    //  ±89m, 主辅矢量网格相位差 ~0.56s → 基线残留 ±5px 锯齿 (2026-08-15
-    //  实测 [Step3] 初值锯齿教训); natural cubic 样条振荡 ±210m 也不用;
-    //  Hermite 误差 ~0.2m, 与 SNAP/GAMMA 同方案)
-    auto hermiteAtUtc = [](const QList<OrbitStateVector>& orb, const QDateTime& t,
-                           double& x, double& y, double& z,
-                           double& vx, double& vy, double& vz) {
-        const qint64 tMs = t.toMSecsSinceEpoch();
-        int i0 = 0;
-        for (int i = 0; i < orb.size() - 1; ++i) {
-            if (orb[i].utcTime.toMSecsSinceEpoch() <= tMs
-                && orb[i + 1].utcTime.toMSecsSinceEpoch() >= tMs) { i0 = i; break; }
-        }
-        const auto& s0 = orb[i0];
-        const auto& s1 = orb[qMin(i0 + 1, orb.size() - 1)];
-        const double dt = static_cast<double>(
-            s1.utcTime.toMSecsSinceEpoch() - s0.utcTime.toMSecsSinceEpoch()) / 1000.0;
-        double u = (std::abs(dt) > 1e-9)
-            ? (tMs - s0.utcTime.toMSecsSinceEpoch()) / 1000.0 / dt : 0.0;
-        u = qMax(0.0, qMin(1.0, u));
-        const double h00 = 2*u*u*u - 3*u*u + 1;
-        const double h10 = u*u*u - 2*u*u + u;
-        const double h01 = -2*u*u*u + 3*u*u;
-        const double h11 = u*u*u - u*u;
-        x = h00*s0.x + h10*dt*s0.vx + h01*s1.x + h11*dt*s1.vx;
-        y = h00*s0.y + h10*dt*s0.vy + h01*s1.y + h11*dt*s1.vy;
-        z = h00*s0.z + h10*dt*s0.vz + h01*s1.z + h11*dt*s1.vz;
-        vx = s0.vx + u*(s1.vx - s0.vx);   // 速度仅用于视线方向, 线性混合足够
-        vy = s0.vy + u*(s1.vy - s0.vy);
-        vz = s0.vz + u*(s1.vz - s0.vz);
-    };
 
     double mx, my, mz, mvx, mvy, mvz;
     double sx, sy, sz, svx, svy, svz;
@@ -129,10 +131,17 @@ bool OrbitInitializer::execute(PipelineContext& ctx) {
         for (int b = 0; b < N; ++b) {
             double rangeOff = 0, aziOff = 0;
             int j = b;   // 辅 burst 索引 (burstPairs 匹配结果)
-            // 方位偏移 = 主辅 burst ANX 时间差 × PRF (精确时序真值)
-            // 轨道插值不可靠: 两产品轨道矢量 relativeTime 各自从自身首矢量起算,
-            // 时间帧零点不对齐 → 实测产生 238 行伪偏移 (真值 ~1.4 行);
-            // ANX 时间由 ESA 轨道确定, 与 BurstMatcher 同源, 无帧对齐问题
+            // 方位偏移 = 主辅 burst ANX 时间差 × PRF (逐 burst 常数 — 真值!)
+            // 2026-08-16 第十九轮定案: ANX 差值与绝对 burst 时间差值逐 burst
+            // 完全一致 (差值 = 12 天 − 0.5645s 恒定, <0.001px 散布) → ANX 值
+            // 携带的逐 burst ±1px 整数变化 (实测 1.3532/0.3532/2.3532 三档)
+            // 是两个雷达 burst 网格的真实相位差, 不是噪声。真正的 bug 是
+            // 下游 PolynomialFitter 把逐 burst 常数拟合成平滑多项式 →
+            // 重采样方位错位 ~1px (post-coreg 0.23-1.10px, TOPS 要求
+            // <0.01px)。修复在 EsdCorrector: burstResults 逐 burst aziPoly
+            // = [initAzi_b, 0, 0] (见该文件)。零多普勒轨道法 (δt·prf ≈
+            // −274px) 只含沿轨偏移、缺 burst 起始对齐项 (+276px), 两者
+            // 相消才得 +1.35px — 不可单独使用。
             if (prf > 0 && mAnx.size() > b && sAnx.size() > b) {
                 if (ctx.burstPairs.size() == N
                     && ctx.burstPairs[b].isValid

@@ -80,6 +80,23 @@ struct QualityReport {
     double esdMaxResidual   = 0.0;   // ESD最大残差相位
     int    validPoints      = 0;
     int    totalPoints      = 0;
+    // ── 残差 mean/std (区分系统偏差与随机噪声; mean 大=配准错位) ──
+    double rangeOffsetMean  = 0.0;
+    double rangeOffsetStd   = 0.0;
+    double aziOffsetMean    = 0.0;
+    double aziOffsetStd     = 0.0;
+    double aziResidualRangeSlope = 0.0;  // 方位残差-vs-归一化距离 线性斜率 (px/rn)
+    double aziPolyRangeCoeff     = 0.0;  // 方位模型 r 项 (ESD β, px/rn)
+    bool   esdDone         = false;
+    bool   resamplingDone  = false;
+    // ── 配准后互相关验证 (主 vs 注册辅, 振幅域; 峰值位置=残余失配) ──
+    double postCoregResidualRange   = 0.0;   // 残余距离偏移 (px, 亚像素, 均值)
+    double postCoregResidualAzimuth = 0.0;   // 残余方位偏移 (px, 亚像素, 均值)
+    double postCoregPeakValue       = 0.0;   // 归一化相关峰值 (场景/时间基线相关, 仅记录)
+    int    postCoregWindows         = 0;
+    QVector<double> postCoregWindowRangeRes;
+    QVector<double> postCoregWindowAziRes;
+    QVector<double> postCoregWindowPeak;
     QVector<double> perBurstRmse;       // 2D 合并
     QVector<double> perBurstRangeRmse;  // 距离向 (诊断 burst 级结构)
     QVector<double> perBurstAziRmse;    // 方位向

@@ -456,7 +456,8 @@ void InterferogramServiceImpl::execute()
     // ═══ IW Merge: 同极化 IW1+IW2+IW3 拼接为宽幅产品 ═══
     // 质量聚合 (逐极化 → 产品级摘要 + quality/quality.json 详细报告)
     double aggMeanCoh = 0, aggValidRatio = 0;
-    int aggPolCount = 0;
+    double aggRawMeanCoh = 0;
+    int aggPolCount = 0, aggRawPolCount = 0;
     QJsonObject qualityRoot;
     qualityRoot["productType"] = QStringLiteral("Quality");
     qualityRoot["created"] = QDateTime::currentDateTime().toString(Qt::ISODate);
@@ -755,13 +756,18 @@ void InterferogramServiceImpl::execute()
                 }
             }
 
-            // ── Goldstein 滤波 + 新口径相干估计 (diff/flat → 滤波 → coh) ──
-            // coh 在去地形/滤波后的产品上估计 (与 ASF corr.tif 同口径),
-            // 覆盖 merge/S1_POL_coh.tif (原 raw 5×5 全分辨率口径)
+            // ── 相干双口径: raw (滤波前, 配准健康直接读数) → Goldstein → filtered ──
+            // filtered coh 在去地形/滤波后产品上估计 (与 ASF corr.tif 同口径),
+            // 覆盖 merge/S1_POL_coh.tif; raw coh 写 merge/S1_POL_coh_raw.tif
+            // (滤波会平滑噪声使 γ̂ 上偏 — raw 口径才是配准质量的诚实指标)
             if (mergedOk && mParams.enableFlatEarth) {
                 const QString diffFull = fctx.diffOutputBase + "_diff.tif";
                 fctx.filteredIfgPath = QFileInfo::exists(diffFull)
                     ? diffFull : fctx.flatSourcePath;
+                CoherenceEstimator rawCohStep;
+                rawCohStep.outputPathOverride = mergeBase + "_coh_raw.tif";
+                if (!rawCohStep.execute(fctx))
+                    qWarning() << "[Ifg] CoherenceEstimator (raw) failed:" << fctx.errorMessage;
                 GoldsteinFilterStep filtStep;
                 if (!filtStep.execute(fctx)) {
                     qWarning() << "[Ifg] Goldstein failed:" << fctx.errorMessage;
@@ -773,11 +779,18 @@ void InterferogramServiceImpl::execute()
             if (mergedOk && mParams.enableFlatEarth) {
                 double meanCoh = 0, validRatio = 0;
                 if (coherenceStats(mergeBase + "_coh.tif", &meanCoh, &validRatio)) {
-                    polQ["meanCoherence"] = meanCoh;
+                    polQ["meanCoherence"] = meanCoh;   // 滤波后 (ASF 同口径)
                     polQ["validRatio"] = validRatio;
                     aggMeanCoh += meanCoh;
                     aggValidRatio += validRatio;
                     ++aggPolCount;
+                }
+                double rawMeanCoh = 0, rawValidRatio = 0;
+                if (coherenceStats(mergeBase + "_coh_raw.tif", &rawMeanCoh, &rawValidRatio)) {
+                    polQ["rawMeanCoherence"] = rawMeanCoh;   // 滤波前 (诊断口径)
+                    polQ["rawValidRatio"] = rawValidRatio;
+                    aggRawMeanCoh += rawMeanCoh;
+                    ++aggRawPolCount;
                 }
                 polQualArr.append(polQ);
             }
@@ -858,6 +871,16 @@ void InterferogramServiceImpl::execute()
             qbMCoh.layerType = "coherence";
             qbMCoh.defaultVisible = true;
             qsar.bands.append(qbMCoh);
+            // raw 相干图层 (滤波前诊断口径, 隐藏 — 配准健康直接读数)
+            if (QFileInfo::exists(mergeBase + "_coh_raw.tif")) {
+                QsarBand qbRawCoh;
+                qbRawCoh.subSwath = "IW"; qbRawCoh.polarization = pol;
+                qbRawCoh.file = QStringLiteral("merge/S1_%1_coh_raw.tif").arg(pol);
+                qbRawCoh.cohFile = qbRawCoh.file;
+                qbRawCoh.layerType = "coherence";
+                qbRawCoh.defaultVisible = false;
+                qsar.bands.append(qbRawCoh);
+            }
             // flat/diff 中间体条目 (隐藏)
             if (!fctx.outputBand.flatPhaseFile.isEmpty()) {
                 QsarBand qbF;
@@ -906,6 +929,8 @@ void InterferogramServiceImpl::execute()
     if (aggPolCount > 0) {
         meta.quality.meanCoherence = aggMeanCoh / aggPolCount;
         meta.quality.validRatio = aggValidRatio / aggPolCount;
+        meta.quality.rawMeanCoherence = aggRawPolCount > 0
+            ? aggRawMeanCoh / aggRawPolCount : 0.0;
         meta.quality.unwrapReady = meta.quality.meanCoherence >= 0.3
             && meta.quality.validRatio >= 0.5;
         meta.quality.detailFile = QStringLiteral("quality/quality.json");
@@ -913,6 +938,7 @@ void InterferogramServiceImpl::execute()
         qualityRoot["polarizations"] = polQualArr;
         qualityRoot["summary"] = QJsonObject{
             {QStringLiteral("meanCoherence"), meta.quality.meanCoherence},
+            {QStringLiteral("rawMeanCoherence"), meta.quality.rawMeanCoherence},
             {QStringLiteral("validRatio"), meta.quality.validRatio},
             {QStringLiteral("unwrapReady"), meta.quality.unwrapReady}
         };

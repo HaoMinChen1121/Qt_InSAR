@@ -87,6 +87,23 @@ bool EsdCorrector::execute(PipelineContext& ctx) {
 
     ctx.burstResults.resize(N);
 
+    // ── 逐 burst 方位常数 (2026-08-16 第十九轮定案) ──
+    // ANX 初值携带两个雷达 burst 网格的真实整数相位差 (实测逐 burst
+    // 1.3532/0.3532/2.3532 三档, 档差恰 1px) — 全局多项式拟合会把它
+    // 平滑掉 → 重采样方位错位 ~1px (post-coreg 0.23-1.10px, TOPS 要求
+    // <0.01px) → 相干性摧毁。burstResults 的 aziPoly 逐 burst 用常数
+    // (ESD α/β 叠加其上); rangePoly 保持全局多项式 (range 偏移随距离/
+    // 方位平滑变化, 多项式建模正确)。
+    QVector<AzimuthPolynomial> perBurstAzi(N);
+    for (int b = 0; b < N; ++b) {
+        perBurstAzi[b] = ctx.aziPoly;
+        if (ctx.initialOffsets.size() > b) {
+            perBurstAzi[b].coeffs[0] = ctx.initialOffsets[b].aziOff;
+            perBurstAzi[b].coeffs[1] = 0.0;
+            perBurstAzi[b].coeffs[2] = 0.0;
+        }
+    }
+
     QVector<QVector<double>> relCorr(N, QVector<double>(nBins, 0.0));
     QVector<QVector<double>> esdMag(N, QVector<double>(nBins, 0.0));  // 逐箱相干和幅度 (SNR 权重)
 
@@ -146,11 +163,12 @@ bool EsdCorrector::execute(PipelineContext& ctx) {
         }
 
         // 模型重采样: 辅窗口对齐到主网格后, ESD 相位只反映残余方位失配
+        // (方位模型用各自 burst 的常数 — 第十九轮: 全局多项式会引入 ±1px)
         QVector<std::complex<float>> sAr, sBr;
         resampleEsdWindow(sA, colW, ovLines, col0, lineA - ovLines/2, sLineA - ovLines/2,
-                          mW, mH, ctx.rangePoly, ctx.aziPoly, sAr);
+                          mW, mH, ctx.rangePoly, perBurstAzi[b - 1], sAr);
         resampleEsdWindow(sB, colW, ovLines, col0, lineB - ovLines/2, sLineB - ovLines/2,
-                          mW, mH, ctx.rangePoly, ctx.aziPoly, sBr);
+                          mW, mH, ctx.rangePoly, perBurstAzi[b], sBr);
 
         // 逐距离箱 ESD 相位
         for (int bin = 0; bin < nBins; ++bin) {
@@ -182,13 +200,13 @@ bool EsdCorrector::execute(PipelineContext& ctx) {
     }
 
     // 每 burst: 对逐箱修正做 SNR 加权线性拟合 corr(rN) = α + β·rN
-    // → aziPoly 常数项 += α, r 项 += β (AzimuthPolynomial: Δa = b0 + b1·a + b2·rN)
-    // 注: 第十八轮 #1 (逐 burst 几何常数) 实测回退 — 多视窗浓度 0.775→0.30,
-    // 机制未明 (疑 initialOffsets 与拟合多项式在列方向的系统性差异), 恢复全局多项式。
+    // → 逐 burst 方位常数 += α, r 项 += β (第十九轮: aziPoly = [initAzi_b,0,0]+ESD;
+    //   rangePoly 保持全局多项式 — 第十八轮 #1 失败是因为把 range 也改成
+    //   逐 burst 常数 (range 偏移随距离/方位平滑变化, 常数建模错误))
     for (int b = 0; b < N; ++b) {
         ctx.burstResults[b].burstIndex = b;
         ctx.burstResults[b].rangePoly  = ctx.rangePoly;
-        ctx.burstResults[b].aziPoly    = ctx.aziPoly;
+        ctx.burstResults[b].aziPoly    = perBurstAzi[b];
         if (b == 0) continue;
 
         // 权重 = 该 burst 各箱 esdMag 的累积 (跨 seam 平均)

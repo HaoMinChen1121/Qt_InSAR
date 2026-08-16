@@ -431,6 +431,26 @@ void RegistrationServiceImpl::execute() {
                     po["esdMaxResidual"] = q.esdMaxResidual;
                     po["validRatio"] = (q.totalPoints > 0)
                         ? static_cast<double>(q.validPoints) / q.totalPoints : 0.0;
+                    // ── 验收指标 (残差 mean/std 区分偏差/噪声; 斜率查 range-dependent) ──
+                    po["rangeOffsetMean"] = q.rangeOffsetMean;
+                    po["rangeOffsetStd"] = q.rangeOffsetStd;
+                    po["aziOffsetMean"] = q.aziOffsetMean;
+                    po["aziOffsetStd"] = q.aziOffsetStd;
+                    po["aziResidualRangeSlope"] = q.aziResidualRangeSlope;
+                    po["aziPolyRangeCoeff"] = q.aziPolyRangeCoeff;
+                    po["esdDone"] = q.esdDone;
+                    po["resamplingDone"] = q.resamplingDone;
+                    po["postCoregResidualRange"] = q.postCoregResidualRange;
+                    po["postCoregResidualAzimuth"] = q.postCoregResidualAzimuth;
+                    po["postCoregPeakValue"] = q.postCoregPeakValue;
+                    po["postCoregWindows"] = q.postCoregWindows;
+                    QJsonArray pcRArr, pcAArr, pcPkArr;
+                    for (double v : q.postCoregWindowRangeRes) pcRArr.append(v);
+                    for (double v : q.postCoregWindowAziRes) pcAArr.append(v);
+                    for (double v : q.postCoregWindowPeak) pcPkArr.append(v);
+                    po["postCoregWindowRangeRes"] = pcRArr;
+                    po["postCoregWindowAziRes"] = pcAArr;
+                    po["postCoregWindowPeak"] = pcPkArr;
                     QJsonArray rmseArr;
                     for (double v : q.perBurstRmse) rmseArr.append(v);
                     po["perBurstRmse"] = rmseArr;

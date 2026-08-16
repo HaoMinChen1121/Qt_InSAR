@@ -11,9 +11,10 @@
 #include <complex>
 #include <vector>
 
-// Step 5: 相干性估计 (滤波后产品上, 5×5 多视网格滑窗)
+// Step 5: 相干性估计 (5×5 多视网格滑窗)
 //   γ = |Σ_w ifg| / Σ_w |ifg|  (含零填充像素的窗 → coh=0)
-//   输出覆盖 merge/S1_POL_coh.tif — 与 ASF corr.tif 同口径可比
+//   默认在滤波后产品上估计, 覆盖 merge/S1_POL_coh.tif — 与 ASF corr.tif 同口径;
+//   outputPathOverride 非空时写指定路径 (raw coh 诊断口径, 滤波前产品)
 bool CoherenceEstimator::execute(IfgPipelineContext& ctx)
 {
     const QString inPath = ctx.filteredIfgPath.isEmpty()
@@ -31,7 +32,8 @@ bool CoherenceEstimator::execute(IfgPipelineContext& ctx)
     }
     const int w = reader.width(), h = reader.height();
 
-    const QString cohPath = ctx.mergeOutputBase + "_coh.tif";
+    const QString cohPath = outputPathOverride.isEmpty()
+        ? ctx.mergeOutputBase + "_coh.tif" : outputPathOverride;
     GDALDriverH drv = GDALGetDriverByName("GTiff");
     double gt[6] = {0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
     GDALDatasetH hCoh = GDALCreate(drv, cohPath.toUtf8().constData(), w, h, 1,
@@ -114,8 +116,10 @@ bool CoherenceEstimator::execute(IfgPipelineContext& ctx)
     }
     GDALClose(hCoh);
 
-    ctx.outputBand.cohFile = QStringLiteral("merge/S1_%1_coh.tif")
-        .arg(ctx.outputBand.polarization);
-    qDebug() << "[CoherenceEst] SUCCESS (5x5 on filtered product) ->" << cohPath;
+    if (outputPathOverride.isEmpty()) {
+        ctx.outputBand.cohFile = QStringLiteral("merge/S1_%1_coh.tif")
+            .arg(ctx.outputBand.polarization);
+    }
+    qDebug() << "[CoherenceEst] SUCCESS (5x5) ->" << cohPath;
     return true;
 }

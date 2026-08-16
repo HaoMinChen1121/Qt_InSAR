@@ -118,7 +118,8 @@ struct QsarQualityMeta {
     double meanCorrelation = 0.0;   // 配准: 平均相关系数
     double offsetRmse      = 0.0;   // 配准: 偏移残差 RMSE
     double validRatio      = 0.0;
-    double meanCoherence   = 0.0;   // 干涉: 平均相干性
+    double meanCoherence   = 0.0;   // 干涉: 平均相干性 (滤波后, ASF 同口径)
+    double rawMeanCoherence = 0.0;  // 干涉: 平均相干性 (滤波前, 诊断口径)
     bool   unwrapReady     = false;
     QString detailFile;             // 相对路径
 };
