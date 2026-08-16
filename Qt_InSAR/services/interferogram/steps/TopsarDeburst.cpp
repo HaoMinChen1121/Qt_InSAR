@@ -20,7 +20,7 @@
 #endif
 
 // 相邻 burst 重叠行数 (master 方位时间差优先; 无时间按 ~4% 估算)
-static void computeBurstDiscard(int N, int linesPerBurst, double prf,
+void computeBurstDiscard(int N, int linesPerBurst, double prf,
     const QVector<QDateTime>& burstTimes,
     QVector<int>& discardTop, QVector<int>& discardBottom)
 {

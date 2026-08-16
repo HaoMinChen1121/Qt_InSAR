@@ -4,6 +4,7 @@
 #include "domain/params/InterferogramParams.h"
 #include "domain/QsarProduct.h"
 #include "domain/SarSensorInfo.h"
+#include "domain/OrbitInfo.h"
 
 struct IfgPipelineContext {
     const InterferogramParams* params = nullptr;
@@ -43,6 +44,17 @@ struct IfgPipelineContext {
     QString flatOutputBase;       // ".../flat/S1_VV"
     QString diffOutputBase;       // ".../diff/S1_VV"
     QString visualizationOutputBase;  // ".../visualization/S1_VV"
+
+    // ── 零多普勒定位 (TopoPhaseRemover) ──
+    // master 轨道状态矢量 (主产品为原始 SLC 时可用; .qsar 主影像无轨道 → 地形去除失败)
+    QList<OrbitStateVector> masterOrbit;
+    QDateTime mergeTimeRef;         // 合并产品行0的方位时间参考 (IW1 首 burst 方位时间)
+    double   masterPrf = 0.0;       // 方位采样频率 (Hz)
+    int      mergeRow0Offset = 0;   // 合并裁剪量 (输出行): merge 行 r ↔ IW1 deburst 行 r+offset
+    const QsarBand* masterBandInfo = nullptr;  // IW1 主波段 (burst 时间分段映射)
+
+    // ── Goldstein 滤波输出 (coh 估计输入) ──
+    QString filteredIfgPath;      // 滤波后复数干涉图 (diff 或 flat 滤波结果)
 
     // ── 输出 ──
     QsarBand outputBand;

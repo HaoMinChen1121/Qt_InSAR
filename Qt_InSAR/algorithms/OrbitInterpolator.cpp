@@ -18,8 +18,11 @@ struct CubicSpline {
             h[i] = t[i + 1] - t[i];
             if (h[i] > 0) {
                 a[i] = y[i];
-                alpha[i] = (3.0 / h[i]) * (y[i + 1] - y[i])
-                    - (3.0 / (i > 0 ? h[i - 1] : h[i])) * (y[i] - y[i - 1]);
+                // 自然样条: i==0 只有右差分项 (左端二阶导=0);
+                // 旧代码对 i==0 也读 y[i-1] (越界读 → 堆垃圾 → 样条污染)
+                alpha[i] = (3.0 / h[i]) * (y[i + 1] - y[i]);
+                if (i > 0)
+                    alpha[i] -= (3.0 / h[i - 1]) * (y[i] - y[i - 1]);
             }
         }
         QVector<double> l(n), mu(n), z(n);

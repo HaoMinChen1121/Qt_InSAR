@@ -159,10 +159,11 @@
     <ClCompile Include="services\interferogram\steps\TopsarDeburst.cpp" />
     <ClCompile Include="services\interferogram\steps\GeomTable.cpp" />
     <ClCompile Include="services\interferogram\steps\PhaseVisualizer.cpp" />
-    <ClCompile Include="services\interferogram\dem\DemMapper.cpp" />
     <ClCompile Include="services\interferogram\steps\IWMerger.cpp" />
     <ClCompile Include="services\interferogram\steps\FlatEarthRemover.cpp" />
     <ClCompile Include="services\interferogram\steps\TopoPhaseRemover.cpp" />
+    <ClCompile Include="services\interferogram\steps\GoldsteinFilterStep.cpp" />
+    <ClCompile Include="services\interferogram\steps\CoherenceEstimator.cpp" />
     <ClCompile Include="services\impl\FilterServiceImpl.cpp" />
     <ClCompile Include="services\impl\UnwrappingServiceImpl.cpp" />
     <ClCompile Include="services\impl\GeocodingServiceImpl.cpp" />
@@ -204,10 +205,11 @@
     <ClInclude Include="services\interferogram\steps\TopsarDeburst.h" />
     <ClInclude Include="services\interferogram\steps\GeomTable.h" />
     <ClInclude Include="services\interferogram\steps\PhaseVisualizer.h" />
-    <ClInclude Include="services\interferogram\dem\DemMapper.h" />
     <ClInclude Include="services\interferogram\steps\IWMerger.h" />
     <ClInclude Include="services\interferogram\steps\FlatEarthRemover.h" />
     <ClInclude Include="services\interferogram\steps\TopoPhaseRemover.h" />
+    <ClInclude Include="services\interferogram\steps\GoldsteinFilterStep.h" />
+    <ClInclude Include="services\interferogram\steps\CoherenceEstimator.h" />
     <QtMoc Include="services\impl\FilterServiceImpl.h" />
     <QtMoc Include="services\impl\UnwrappingServiceImpl.h" />
     <QtMoc Include="services\impl\GeocodingServiceImpl.h" />

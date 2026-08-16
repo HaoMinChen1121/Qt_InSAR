@@ -24,7 +24,6 @@ struct InterferogramParams
     bool      autoLoadToCanvas        = true;      // 完成后自动加载可见图层到画布
 
     // 差分干涉
-    bool      differential = false;
     QString   demPath;                    // DEM文件路径
 
     // 输出

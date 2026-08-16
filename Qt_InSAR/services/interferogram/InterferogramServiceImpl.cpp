@@ -4,6 +4,8 @@
 #include "steps/TopsarDeburst.h"
 #include "steps/FlatEarthRemover.h"
 #include "steps/TopoPhaseRemover.h"
+#include "steps/GoldsteinFilterStep.h"
+#include "steps/CoherenceEstimator.h"
 #include "steps/IWMerger.h"
 #include "steps/GeomTable.h"
 #include "steps/PhaseVisualizer.h"
@@ -264,9 +266,10 @@ void InterferogramServiceImpl::execute()
         rec.params = QVariantMap{
             {QStringLiteral("rangeLooks"), mParams.rangeLooks},
             {QStringLiteral("azimuthLooks"), mParams.azimuthLooks},
-            {QStringLiteral("differential"), mParams.differential},
+            {QStringLiteral("enableDifferential"), mParams.enableDifferential},
             {QStringLiteral("phaseAlign"), mParams.phaseAlign},
-            {QStringLiteral("enableFlatEarth"), mParams.enableFlatEarth}
+            {QStringLiteral("enableFlatEarth"), mParams.enableFlatEarth},
+            {QStringLiteral("enableVisualization"), mParams.enableVisualization}
         };
         qsar.history.append(rec);
     }
@@ -583,18 +586,15 @@ void InterferogramServiceImpl::execute()
             IWMerger::mergeComplex(ifgFiles, cohFiles, phaseFiles, metas,
                                    mergeBase + "_ifg.tif", mParams.phaseAlign);
 
-            // ── 质量统计 (逐极化 → quality.json) ──
+            // 合并方位裁剪量 (merge 行 r ↔ IW1 deburst 行 r + cropTop)
+            int cropTop = 0;
+            for (const auto& m : metas)
+                cropTop = std::max(cropTop, m.azimuthOffset);
+
+            // ── 质量统计 (逐极化 → quality.json; coh 数值在新相干产品生成后填充) ──
+            QJsonObject polQ;
+            polQ["polarization"] = pol;
             {
-                double meanCoh = 0, validRatio = 0;
-                QJsonObject polQ;
-                polQ["polarization"] = pol;
-                if (coherenceStats(mergeBase + "_coh.tif", &meanCoh, &validRatio)) {
-                    polQ["meanCoherence"] = meanCoh;
-                    polQ["validRatio"] = validRatio;
-                    aggMeanCoh += meanCoh;
-                    aggValidRatio += validRatio;
-                    ++aggPolCount;
-                }
                 QJsonArray iwSeams;
                 for (int s = 0; s < seamStats.size() && s + 1 < metas.size(); ++s) {
                     QJsonObject so;
@@ -622,7 +622,6 @@ void InterferogramServiceImpl::execute()
                     }
                 }
                 polQ["burstSeams"] = burstSeams;
-                polQualArr.append(polQ);
             }
 
             // ── Stage 2: 几何表 (逐列 R/θ) + 合并产品上去平地/差分 ──
@@ -715,6 +714,23 @@ void InterferogramServiceImpl::execute()
             fctx.visualizationOutputBase = outputDir + "/visualization/S1_" + pol;
             fctx.outputBand.subSwath = "IW";
             fctx.outputBand.polarization = pol;
+            // 零多普勒定位上下文 (TopoPhaseRemover 地形去除)
+            fctx.mergeTimeRef = tRef;
+            fctx.mergeRow0Offset = cropTop;
+            if (masterProduct)
+                fctx.masterOrbit = masterProduct->orbitStateVectors();
+            // 回退: 注册产品落盘的 master 轨道 (主影像为 .qsar 时 masterProduct 为空)
+            if (fctx.masterOrbit.isEmpty())
+                fctx.masterOrbit = slaveMeta.orbitMaster.stateVectors.toList();
+            for (int i = 0; i < pairs.size(); ++i) {
+                if (pairs[i].master.subSwath == QStringLiteral("IW1")
+                    && pairs[i].master.polarization == pol) {
+                    fctx.masterBandInfo = &pairs[i].master;
+                    fctx.masterPrf = pairs[i].master.azimuthFrequency > 0
+                        ? pairs[i].master.azimuthFrequency : mParams.prf;
+                    break;
+                }
+            }
 
             bool mergedOk = true;
             if (mParams.enableFlatEarth) {
@@ -730,10 +746,40 @@ void InterferogramServiceImpl::execute()
                 TopoPhaseRemover topoStep;
                 if (!topoStep.execute(fctx)) {
                     qWarning() << "[Ifg] TopoPhase (merged) failed:" << fctx.errorMessage;
+                    // 地形去除失败在进度栏可见 (DEM 不覆盖/轨道缺失是常见配置问题)
+                    emit progressChanged(90, QStringLiteral("%1: 地形去除失败 — %2")
+                        .arg(pol).arg(fctx.errorMessage));
                     mergedOk = false;
                 } else if (!qsar.stages.contains("diff")) {
                     qsar.stages << "diff";
                 }
+            }
+
+            // ── Goldstein 滤波 + 新口径相干估计 (diff/flat → 滤波 → coh) ──
+            // coh 在去地形/滤波后的产品上估计 (与 ASF corr.tif 同口径),
+            // 覆盖 merge/S1_POL_coh.tif (原 raw 5×5 全分辨率口径)
+            if (mergedOk && mParams.enableFlatEarth) {
+                const QString diffFull = fctx.diffOutputBase + "_diff.tif";
+                fctx.filteredIfgPath = QFileInfo::exists(diffFull)
+                    ? diffFull : fctx.flatSourcePath;
+                GoldsteinFilterStep filtStep;
+                if (!filtStep.execute(fctx)) {
+                    qWarning() << "[Ifg] Goldstein failed:" << fctx.errorMessage;
+                }
+                CoherenceEstimator cohStep;
+                if (!cohStep.execute(fctx))
+                    qWarning() << "[Ifg] CoherenceEstimator failed:" << fctx.errorMessage;
+            }
+            if (mergedOk && mParams.enableFlatEarth) {
+                double meanCoh = 0, validRatio = 0;
+                if (coherenceStats(mergeBase + "_coh.tif", &meanCoh, &validRatio)) {
+                    polQ["meanCoherence"] = meanCoh;
+                    polQ["validRatio"] = validRatio;
+                    aggMeanCoh += meanCoh;
+                    aggValidRatio += validRatio;
+                    ++aggPolCount;
+                }
+                polQualArr.append(polQ);
             }
 
             // Stage 3: HSV 彩色渲染
@@ -832,6 +878,16 @@ void InterferogramServiceImpl::execute()
                 qbD.layerType = "diff_phase";
                 qbD.defaultVisible = false;
                 qsar.bands.append(qbD);
+            }
+            // Goldstein 滤波后差分产品 (隐藏, 新口径 coh 估计的输入)
+            if (!fctx.filteredIfgPath.isEmpty()
+                && QFileInfo::exists(fctx.filteredIfgPath)) {
+                QsarBand qbFlt;
+                qbFlt.subSwath = "IW"; qbFlt.polarization = pol;
+                qbFlt.file = fctx.filteredIfgPath.mid(outputDir.size() + 1);
+                qbFlt.layerType = "diff_filt";
+                qbFlt.defaultVisible = false;
+                qsar.bands.append(qbFlt);
             }
             // 差分彩色图层 (隐藏)
             if (visOk && QFileInfo::exists(outputDir + "/visualization/S1_"
