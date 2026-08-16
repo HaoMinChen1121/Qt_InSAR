@@ -348,8 +348,40 @@ bool TopoPhaseRemover::execute(IfgPipelineContext& ctx)
              << QString::number(lonMin * 180 / M_PI, 'f', 3) << ".."
              << QString::number(lonMax * 180 / M_PI, 'f', 3);
 
+    // ── 调试转储 (INSAR_TOPO_DEBUG=1): 第一遍定位网格的稀疏采样点,
+    // 供 Python 逐点比对定位链路 (第十八轮 φ_topo 映射排查) ──
+    if (qEnvironmentVariableIntValue("INSAR_TOPO_DEBUG") == 1) {
+        QFile dbg(ctx.diffOutputBase + "_topodebug.txt");
+        if (dbg.open(QIODevice::WriteOnly)) {
+            QTextStream ts(&dbg);
+            ts << "# ir ic row col tSec sx sy sz latDeg lonDeg R\n";
+            for (int ir = 0; ir < nR; ir += qMax(1, nR / 20)) {
+                for (int ic = 0; ic < nC; ic += qMax(1, nC / 20)) {
+                    const int idx = ir * nC + ic;
+                    const int row = std::min(ir * stepR, h - 1);
+                    const int col = std::min(ic * stepC, w - 1);
+                    const double t = rtm.timeOfDeburstRow(ctx.mergeRow0Offset + row);
+                    ts << ir << " " << ic << " " << row << " " << col << " "
+                       << QString::number(t, 'f', 6) << " "
+                       << QString::number(gridSx[idx], 'f', 3) << " "
+                       << QString::number(gridSy[idx], 'f', 3) << " "
+                       << QString::number(gridSz[idx], 'f', 3) << " "
+                       << QString::number(gridLat[idx] * 180 / M_PI, 'f', 6) << " "
+                       << QString::number(gridLon[idx] * 180 / M_PI, 'f', 6) << " "
+                       << QString::number(gridR[idx], 'f', 3) << "\n";
+                }
+            }
+            ts << "# mergeRow0Offset=" << ctx.mergeRow0Offset << "\n";
+            dbg.close();
+            qDebug() << "[TopoPhase] debug dump written:" << ctx.diffOutputBase + "_topodebug.txt";
+        }
+    }
+
     // ── DEM 覆盖校验 + 区域读取 ──
-    if (!region.load(dem, latMin, latMax, lonMin, lonMax, 2)) {
+    // margin: 第二遍带高程重迭代的点位相对 h=0 点位移动 ~h/tan(θ) ≈ 2-3km
+    // (h≈1300-4800m, θ≈32-44°) — 旧值 2 像素(160m) 使边缘点出界采样得 0
+    // → 地形去除在足迹边缘失效 (第十八轮 φ_topo 逐点比对定位)
+    if (!region.load(dem, latMin, latMax, lonMin, lonMax, 48)) {
         reader.close();
         dem.close();
         return fail(QStringLiteral(

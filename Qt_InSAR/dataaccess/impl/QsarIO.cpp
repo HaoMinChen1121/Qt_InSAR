@@ -251,7 +251,7 @@ bool QsarIO::write(const QString& filePath, const QsarProduct& product)
             bo["burstStartLines"] = startLines;
             QJsonArray burstTimes;
             for (const auto& t : b.burstAzimuthTimes)
-                burstTimes.append(t.toString(Qt::ISODate));
+                burstTimes.append(t.toString(Qt::ISODateWithMs));
             bo["burstAzimuthTimes"] = burstTimes;
         }
         bands.append(bo);
@@ -359,7 +359,7 @@ QsarProduct QsarIO::read(const QString& filePath)
             for (const auto& v : bo["burstStartLines"].toArray())
                 b.burstStartLines.append(v.toInt());
             for (const auto& v : bo["burstAzimuthTimes"].toArray())
-                b.burstAzimuthTimes.append(QDateTime::fromString(v.toString(), Qt::ISODate));
+                b.burstAzimuthTimes.append(QDateTime::fromString(v.toString(), Qt::ISODateWithMs));
         }
         p.bands.append(b);
     }
@@ -495,7 +495,7 @@ QsarProduct QsarIO::read(const QString& filePath)
                 t.index = i;
                 t.startLine = b.burstStartLines[i];
                 if (i < b.burstAzimuthTimes.size())
-                    t.azimuthTime = b.burstAzimuthTimes[i].toString(Qt::ISODate);
+                    t.azimuthTime = b.burstAzimuthTimes[i].toString(Qt::ISODateWithMs);
                 s.bursts.append(t);
             }
             m.tops.swaths.append(s);

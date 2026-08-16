@@ -31,7 +31,9 @@ public:
     sar::ComplexSoAView burstSoaView(int idx);
 
     // TOPS deramp: 由 pipeline step 调用，不在 open() 时自动执行
-    void derampBurst(int burstIdx, double prf, double kt);    // 窗口/行/块读取
+    void derampBurst(int burstIdx, double prf, double kt);
+    // 高阶方位相位轮廓旋转 (第十八轮 #2, 4 系数多项式)
+    void derampBurstProfile(int burstIdx, const double a[4]);    // 窗口/行/块读取
     bool readWindow(int x0, int y0, int w, int h, std::complex<float>* dst);
 
     void* datasetHandle() const { return mVsiDataset; }

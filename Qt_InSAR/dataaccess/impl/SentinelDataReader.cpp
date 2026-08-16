@@ -420,6 +420,13 @@ void SentinelDataReader::derampBurst(int burstIdx, double prf, double kt)
                                   mNearRange, mRangeSpacing, mFmRate);
 }
 
+void SentinelDataReader::derampBurstProfile(int burstIdx, const double a[4])
+{
+    if (burstIdx < 0 || burstIdx >= static_cast<int>(mCaches.size())) return;
+    if (!mCaches[burstIdx].isLoaded()) return;
+    mCaches[burstIdx].applyDerampProfile(a);
+}
+
 bool SentinelDataReader::readWindow(int x0, int y0, int w, int h, std::complex<float>* dst)
 {
     if (!dst || w <= 0 || h <= 0) return false;

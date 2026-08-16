@@ -106,8 +106,10 @@ static QVector<OffsetPoint> processCoarseBatch(
                 nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
                              slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
                 qint64 fftTime = t.nsecsElapsed() / 1000;
-                if (!cfg.azimuthFromOrbit || std::abs(subDx) <= 2.0)
-                    pt.rangeOff += subDx;   // TOPS: 超出±2px=场景周期旁瓣, 保留几何初值
+                if (!cfg.azimuthFromOrbit)
+                    pt.rangeOff += subDx;   // TOPS: 距离偏移=几何初值 (主辅振幅 12 天去相关≈0.1,
+                                            // 相关面为噪声, 任何精化都是随机游走 — 第十八轮实测
+                                            // 锁到 −3px/0px vs 真值 +2.6px 的教训)
                 if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = 1.0;
                 prof.add(readTime, fftTime, 0);
@@ -129,8 +131,10 @@ static QVector<OffsetPoint> processCoarseBatch(
                 double subDx, subDy;
                 findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
                 qint64 peakTime = t.nsecsElapsed() / 1000;
-                if (!cfg.azimuthFromOrbit || std::abs(subDx) <= 2.0)
-                    pt.rangeOff += subDx;   // TOPS: 超出±2px=场景周期旁瓣, 保留几何初值
+                if (!cfg.azimuthFromOrbit)
+                    pt.rangeOff += subDx;   // TOPS: 距离偏移=几何初值 (主辅振幅 12 天去相关≈0.1,
+                                            // 相关面为噪声, 任何精化都是随机游走 — 第十八轮实测
+                                            // 锁到 −3px/0px vs 真值 +2.6px 的教训)
                 if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = maxV;
                 prof.add(readTime, fftTime, peakTime);
@@ -168,8 +172,10 @@ static QVector<OffsetPoint> processCoarseBatch(
                 nccCorrelate(mWin, sWin, cfg.winSize, cfg.winSize,
                              slaveWinSz, slaveWinSz, bestDx, bestDy, subDx, subDy);
                 qint64 fftTime = t.nsecsElapsed() / 1000;
-                if (!cfg.azimuthFromOrbit || std::abs(subDx) <= 2.0)
-                    pt.rangeOff += subDx;   // TOPS: 超出±2px=场景周期旁瓣, 保留几何初值
+                if (!cfg.azimuthFromOrbit)
+                    pt.rangeOff += subDx;   // TOPS: 距离偏移=几何初值 (主辅振幅 12 天去相关≈0.1,
+                                            // 相关面为噪声, 任何精化都是随机游走 — 第十八轮实测
+                                            // 锁到 −3px/0px vs 真值 +2.6px 的教训)
                 if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = 1.0;
                 prof.add(readTime, fftTime, 0);
@@ -191,8 +197,10 @@ static QVector<OffsetPoint> processCoarseBatch(
                 double subDx, subDy;
                 findPeakSubpixel(surf.data(), outRows, outCols, subDx, subDy);
                 qint64 peakTime = t.nsecsElapsed() / 1000;
-                if (!cfg.azimuthFromOrbit || std::abs(subDx) <= 2.0)
-                    pt.rangeOff += subDx;   // TOPS: 超出±2px=场景周期旁瓣, 保留几何初值
+                if (!cfg.azimuthFromOrbit)
+                    pt.rangeOff += subDx;   // TOPS: 距离偏移=几何初值 (主辅振幅 12 天去相关≈0.1,
+                                            // 相关面为噪声, 任何精化都是随机游走 — 第十八轮实测
+                                            // 锁到 −3px/0px vs 真值 +2.6px 的教训)
                 if (!cfg.azimuthFromOrbit) pt.aziOff += subDy;
                 pt.correlation = maxV;
                 prof.add(readTime, fftTime, peakTime);

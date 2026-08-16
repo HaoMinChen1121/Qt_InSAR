@@ -54,6 +54,29 @@ void BurstCacheSoA::applyDeramp(double prf, double kt, int burstRow0, int burstI
                          nearRange, rangeSpacing, ktAnnotation);
 }
 
+void BurstCacheSoA::applyDerampProfile(const double a[4])
+{
+    if (!mLoaded || mHeight < 1 || !mData.re || !mData.im) return;
+    const double xc = (mHeight - 1) * 0.5;
+    for (int r = 0; r < mHeight; ++r) {
+        const double x = r - xc;
+        double ph = 0, xp = x;
+        for (int k = 0; k < 4; ++k) {
+            ph += a[k] * xp / (k + 1.0);
+            xp *= x;
+        }
+        const float dCos = static_cast<float>(std::cos(-ph));
+        const float dSin = static_cast<float>(std::sin(-ph));
+        float* re = mData.re + static_cast<size_t>(r) * mWidth;
+        float* im = mData.im + static_cast<size_t>(r) * mWidth;
+        for (int c = 0; c < mWidth; ++c) {
+            const float vr = re[c], vi = im[c];
+            re[c] = vr * dCos - vi * dSin;
+            im[c] = vr * dSin + vi * dCos;
+        }
+    }
+}
+
 sar::ComplexSoAView BurstCacheSoA::soaView() const
 {
     return { mData.re, mData.im, mData.size };

@@ -71,28 +71,39 @@ bool computeGeometricRangeOff(const QList<OrbitStateVector>& mOrb,
     // 基线 (主辅在同一 UTC 时刻; 沿轨分量误差 ~0.1px, 忽略)
     const double bx = sx - mx, by = sy - my, bz = sz - mz;
 
-    // 球面模型视线方向 (条带中距)
+    // 精确零多普勒视线方向 (WGS84 椭球, h=0; 与 TopoPhaseRemover 同公式):
+    //   a = n̂ − (n̂·v̂)·v̂ 归一,  b = v̂×a,
+    //   ψ = −acos((s²+R²−Re²)/(2·R·s))  (右视根 — 2026-08-16 数值验证:
+    //     同对 12 天实测 +2.59px vs 零多普勒真值 +2.60px ✓)
+    //   û = a·cosψ + b·sinψ;   rangeOff = −B·û/spacing  (dR = R_s−R_m = −B·û)
+    // ⚠ 旧球面模型 (θ=acos((R²+2HRe+H²)/(2R(H+Re))), ĥ) 两处错误:
+    //   ① ĥ 曾用 V×n̂ — 升轨指向西侧(镜像侧), 初值符号反号 (-2.6px vs
+    //      真值 +2.6px) → 相关器在 ±2px 窗内锁到错误偏移 → 辅影像距离向
+    //      错位 ~5.6px → 干涉图相位=噪声 → coh 0.25 (第十八轮根因)
+    //   ② 球面 θ 近似误差 ~0.6px (同几何精确式 +1.96 vs +2.59px)
     const double R = nearRange + (masterWidth / 2.0) * rangeSpacing;
-    constexpr double H = 693000.0, Re = 6378137.0;
-    const double cosTh = (R * R + 2.0 * H * Re + H * H) / (2.0 * R * (H + Re));
-    const double cosThC = qMax(-1.0, qMin(1.0, cosTh));
-    const double sinTh = std::sqrt(1.0 - cosThC * cosThC);
-
     const double rmag = std::sqrt(mx * mx + my * my + mz * mz);
     if (rmag < 1e-6) return false;
     const double nx = -mx / rmag, ny = -my / rmag, nz = -mz / rmag;   // 天底方向 (向下)
-    // 右视交叉轨方向: ĥ = V × n̂ 归一 (升轨右视 = 东侧)
-    double hx = mvy * nz - mvz * ny;
-    double hy = mvz * nx - mvx * nz;
-    double hz = mvx * ny - mvy * nx;
-    const double hmag = std::sqrt(hx * hx + hy * hy + hz * hz);
-    if (hmag < 1e-9) return false;
-    hx /= hmag; hy /= hmag; hz /= hmag;
-
-    // û = sinθ·ĥ − cosθ·n̂ (θ=0 → 天底; θ=90° → 水平)
-    const double ux = sinTh * hx - cosThC * nx;
-    const double uy = sinTh * hy - cosThC * ny;
-    const double uz = sinTh * hz - cosThC * nz;
+    const double vm = std::sqrt(mvx * mvx + mvy * mvy + mvz * mvz);
+    if (vm < 1e-9) return false;
+    const double vx = mvx / vm, vy = mvy / vm, vz = mvz / vm;
+    const double ndv = nx * vx + ny * vy + nz * vz;
+    double ax = nx - ndv * vx, ay = ny - ndv * vy, az = nz - ndv * vz;
+    const double am = std::sqrt(ax * ax + ay * ay + az * az);
+    if (am < 1e-12) return false;
+    ax /= am; ay /= am; az /= am;
+    const double bvx = vy * az - vz * ay;   // b = v̂ × a
+    const double bvy = vz * ax - vx * az;
+    const double bvz = vx * ay - vy * ax;
+    constexpr double kRe = 6378137.0;
+    const double sMag = rmag;
+    const double cospsi = (sMag * sMag + R * R - kRe * kRe) / (2.0 * R * sMag);
+    const double psi = -std::acos(qMax(-1.0, qMin(1.0, cospsi)));
+    const double cp = std::cos(psi), sp = std::sin(psi);
+    const double ux = ax * cp + bvx * sp;
+    const double uy = ay * cp + bvy * sp;
+    const double uz = az * cp + bvz * sp;
 
     const double bDotU = bx * ux + by * uy + bz * uz;
     rangeOff = -bDotU / rangeSpacing;

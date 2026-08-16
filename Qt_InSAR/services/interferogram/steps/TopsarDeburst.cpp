@@ -251,12 +251,22 @@ bool TopsarDeburst::execute(IfgPipelineContext& ctx)
 
             const double d = jB;
             const Poly& Pb = corr[b];
-            if (resid > 25.0 * M_PI / 180.0) {
-                // 质量门控: 拟合残差过大 = 噪声主导, 应用会把噪声注入校正
+            // 质量门控 (第十八轮加固): ① 拟合残差过大 ② 系数超出物理范围 —
+            // 真实 burst 间相位校正 ≈0 (第四轮实测: master 斜坡全局连续 +
+            // slave deramp 对称连续), 噪声缝的拟合系数 (如 B=84.7°/row =
+            // 1.48 rad/行, 全 burst 累计 247 rad) 通过链式会摧毁下游所有
+            // burst 的相位 (第十八轮实测 seam 2->3 过闸后 IW 后段损坏)。
+            const bool plausible = std::abs(fit.a) < 60.0 * M_PI / 180.0
+                && std::abs(fit.b) < 15.0 * M_PI / 180.0
+                && std::abs(fit.c) < 2.0 * M_PI / 180.0;
+            if (resid > 25.0 * M_PI / 180.0 || !plausible) {
                 // → 跳过实测项, 仅延续上一 burst 的多项式 (保持校正自身连续)
                 qWarning().nospace() << "[Deburst] seam " << (b+1) << "->" << (b+2)
                     << " fit residStd=" << (resid * 180.0 / M_PI)
-                    << "deg > 25deg, 实测校正跳过 (噪声主导)";
+                    << "deg" << (resid > 25.0 * M_PI / 180.0
+                        ? " > 25deg" : "") << (plausible ? ""
+                        : " 或系数超物理范围(A<60deg,B<15deg/row,C<2deg/row^2)")
+                    << ", 实测校正跳过";
                 corr[b+1].a = Pb.a + Pb.b * d + Pb.c * d * d;
                 corr[b+1].b = Pb.b + 2.0 * Pb.c * d;
                 corr[b+1].c = Pb.c;

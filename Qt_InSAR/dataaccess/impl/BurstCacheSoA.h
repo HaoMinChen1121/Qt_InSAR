@@ -28,6 +28,10 @@ public:
                      double nearRange = 0.0, double rangeSpacing = 0.0,
                      double ktAnnotation = 0.0);
 
+    // 高阶方位相位轮廓旋转 (第十八轮 #2): Φ(r) = Σ a[k]·x^{k+1}/(k+1),
+    // x = r − height/2 (行单位) — 二次 deramp 后残余轮廓的去除
+    void applyDerampProfile(const double a[4]);
+
     // 零拷贝视图 (给 SincResampler SoA 路径)
     sar::ComplexSoAView soaView() const;
 

@@ -162,10 +162,11 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                 && ctx.masterBurstInfo->burstStartLines.size() > b)
                 ? ctx.masterBurstInfo->burstStartLines[b] - 1 : burstRow0;
             double ktDeramp = ctx.azimuthFmRate;
+            // centerRow 为窗口相对坐标 (r ∈ [0, actualH)); 主辅共用 (辅残余 chirp
+            // 与主影像同 burst 中心原点约定)
+            const double centerWin = (mBurstRow0 + mL / 2.0) - readRow0;
             if (prfDeramp > 0 && actualH > 64) {
                 double conc = 0;
-                // centerRow 为窗口相对坐标 (r ∈ [0, actualH))
-                const double centerWin = (mBurstRow0 + mL / 2.0) - readRow0;
                 const double ktMeas = sar::measureAzimuthFmRateAos(
                     mBurst.data(), realW, actualH, prfDeramp,
                     centerWin, &conc);
@@ -217,6 +218,35 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                 }
             }
 
+            // ── 辅影像残余 deramp (第十八轮: 与主影像同约定同窗口实测) ──
+            // 注册辅的 deramp kt (TOPSARDeramp 中 burst 实测) 与窗口实测可差
+            // ~15 Hz/s → 残余 chirp 在 burst 边缘 ±23 rad — 平滑到行间测量
+            // 不可见, 但足以摧毁与地形相位的逐像素相关 (实测 corr(ifg,
+            // phi_topo)=0.005; 差异场为 ±15 rad 平滑 chirp)。主辅各自按
+            // 本窗口实测 deramp 后两臂对齐到 ~1 Hz/s。
+            if (prfDeramp > 0 && actualH > 64) {
+                double concS = 0;
+                const double ktMeasS = sar::measureAzimuthFmRateAos(
+                    sBurst.data(), realW, actualH, prfDeramp, centerWin, &concS);
+                if (concS > 0.2 && concS < 1.5 && std::abs(ktMeasS) < 500.0) {
+                    for (int r = 0; r < actualH; ++r) {
+                        const double eta = (readRow0 + r - mBurstRow0 - mL / 2.0) / prfDeramp;
+                        const double dp = M_PI * eta * eta * ktMeasS;
+                        const float dCos = static_cast<float>(std::cos(dp));
+                        const float dSin = static_cast<float>(std::sin(dp));
+                        std::complex<float>* row = sBurst.data() + static_cast<size_t>(r) * realW;
+                        for (int c = 0; c < realW; ++c) {
+                            const std::complex<float> v = row[c];
+                            row[c] = { v.real() * dCos - v.imag() * dSin,
+                                       v.real() * dSin + v.imag() * dCos };
+                        }
+                    }
+                    if (b == 0)
+                        qDebug() << "[Ifg] slave residual deramp kt=" << ktMeasS
+                                 << "(conc=" << concS << ")";
+                }
+            }
+
             // ── 解析差分多普勒旋转 (多视前! 2026-08-16 关键顺序修正) ──
             // ifg 的线性方位相位 2π·Δf_DC(c)·η 在多视 8×8 窗内变化 ~3 rad
             // (Δf~30Hz, 窗 0.0164s) → 摧毁复平均 (窗浓度实测 0.249)。
@@ -264,6 +294,103 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                 } else if (b == 0) {
                     qWarning() << "[Ifg] analytic diff-Doppler skipped (DC data missing,"
                                << "master=" << hasMasterDc << "slave=" << hasSlaveDc << ")";
+                }
+            }
+
+            // ── 逐 burst 方位相位轮廓校正 (第十八轮, 实验性 — 默认关闭) ──
+            // ⚠ 实测: 与逐 burst 几何常数(#1)叠加后多视窗浓度 0.775→0.30,
+            // 单独作用对 coh 亦无增益 (0.301→0.269) — 拟合吸收地形方位趋势
+            // 与注入噪声的净效应为负。默认关, INSAR_IFG_PROFILE=1 开启诊断。
+            if (qEnvironmentVariableIntValue("INSAR_IFG_PROFILE") == 1
+                && prfDeramp > 0 && actualH > 64) {
+                const int nD = actualH - 1;
+                QVector<double> g(nD);
+                {
+                    double sumMag = 0;
+                    QVector<std::complex<double>> d(nD);
+                    for (int r = 0; r < nD; ++r) {
+                        const std::complex<float>* m0 = mBurst.data() + static_cast<size_t>(r) * realW;
+                        const std::complex<float>* m1 = m0 + realW;
+                        const std::complex<float>* s0 = sBurst.data() + static_cast<size_t>(r) * realW;
+                        const std::complex<float>* s1 = s0 + realW;
+                        std::complex<double> v(0, 0);
+                        for (int c = 0; c < realW; ++c) {
+                            const auto a = std::complex<double>(m1[c].real(), m1[c].imag())
+                                * std::complex<double>(m0[c].real(), -m0[c].imag())
+                                * std::complex<double>(s1[c].real(), -s1[c].imag())
+                                * std::complex<double>(s0[c].real(), s0[c].imag());
+                            v += a;
+                        }
+                        d[r] = v;
+                        sumMag += std::abs(v);
+                    }
+                    std::complex<double> sumD(0, 0);
+                    for (int r = 0; r < nD; ++r) sumD += d[r];
+                    const double conc = sumMag > 1e-12
+                        ? std::abs(sumD) / sumMag : 0.0;
+                    if (conc < 0.3) {
+                        if (b == 0)
+                            qDebug() << "[Ifg] azimuth profile correction skipped (conc="
+                                     << conc << ")";
+                    } else {
+                        for (int r = 0; r < nD; ++r) g[r] = std::atan2(d[r].imag(), d[r].real());
+                        for (int r = 1; r < nD; ++r) {
+                            while (g[r] - g[r - 1] > M_PI) g[r] -= 2 * M_PI;
+                            while (g[r] - g[r - 1] < -M_PI) g[r] += 2 * M_PI;
+                        }
+                        // 4 阶最小二乘 (x 中心化)
+                        const double xc = (nD - 1) * 0.5;
+                        double M[5][5] = {}, rhs[5] = {};
+                        for (int r = 0; r < nD; ++r) {
+                            const double x = r - xc;
+                            double pw[5] = {1.0, x, x * x, x * x * x, x * x * x * x};
+                            for (int i = 0; i < 5; ++i)
+                                for (int j = 0; j < 5; ++j)
+                                    M[i][j] += pw[i] * pw[j];
+                            for (int i = 0; i < 5; ++i)
+                                rhs[i] += pw[i] * g[r];
+                        }
+                        for (int col = 0; col < 5; ++col) {
+                            int piv = col;
+                            for (int row = col + 1; row < 5; ++row)
+                                if (std::abs(M[row][col]) > std::abs(M[piv][col])) piv = row;
+                            if (std::abs(M[piv][col]) < 1e-15) continue;
+                            if (piv != col)
+                                for (int k = 0; k < 5; ++k) { std::swap(M[piv][k], M[col][k]); }
+                            std::swap(rhs[piv], rhs[col]);
+                            for (int row = col + 1; row < 5; ++row) {
+                                const double f = M[row][col] / M[col][col];
+                                for (int k = col; k < 5; ++k) M[row][k] -= f * M[col][k];
+                                rhs[row] -= f * rhs[col];
+                            }
+                        }
+                        double a[5] = {0, 0, 0, 0, 0};
+                        for (int row = 4; row >= 0; --row) {
+                            double v = rhs[row];
+                            for (int k = row + 1; k < 5; ++k) v -= M[row][k] * a[k];
+                            a[row] = v / std::max(1e-15, M[row][row]);
+                        }
+                        // 主臂逐行旋转: Φ(r) = ∫ 拟合剖面 (r+0.5 中点约定)
+                        for (int r = 0; r < actualH; ++r) {
+                            const double x = r + 0.5 - xc;
+                            double ph = 0, xp = x;
+                            for (int k = 0; k < 5; ++k) {
+                                ph += a[k] * xp / (k + 1.0);
+                                xp *= x;
+                            }
+                            const float dCos = static_cast<float>(std::cos(-ph));
+                            const float dSin = static_cast<float>(std::sin(-ph));
+                            std::complex<float>* row = mBurst.data() + static_cast<size_t>(r) * realW;
+                            for (int c = 0; c < realW; ++c) {
+                                const std::complex<float> v = row[c];
+                                row[c] = { v.real() * dCos - v.imag() * dSin,
+                                           v.real() * dSin + v.imag() * dCos };
+                            }
+                        }
+                        if (b == 0)
+                            qDebug() << "[Ifg] azimuth profile correction applied (conc="
+                                     << conc << " order=4)";
+                    }
                 }
             }
 

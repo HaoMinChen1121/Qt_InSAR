@@ -183,6 +183,8 @@ bool EsdCorrector::execute(PipelineContext& ctx) {
 
     // 每 burst: 对逐箱修正做 SNR 加权线性拟合 corr(rN) = α + β·rN
     // → aziPoly 常数项 += α, r 项 += β (AzimuthPolynomial: Δa = b0 + b1·a + b2·rN)
+    // 注: 第十八轮 #1 (逐 burst 几何常数) 实测回退 — 多视窗浓度 0.775→0.30,
+    // 机制未明 (疑 initialOffsets 与拟合多项式在列方向的系统性差异), 恢复全局多项式。
     for (int b = 0; b < N; ++b) {
         ctx.burstResults[b].burstIndex = b;
         ctx.burstResults[b].rangePoly  = ctx.rangePoly;

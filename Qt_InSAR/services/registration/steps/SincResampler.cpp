@@ -156,36 +156,23 @@ static RowCoords computeRowCoords(int gRow, int mW, int mH, int sH,
     if (rc.sY0 < 0) { rc.sYH += rc.sY0; rc.sY0 = 0; }
     if (rc.sY0 + rc.sYH > sH) rc.sYH = sH - rc.sY0;
 
-    // 地形校正距离偏移 (2026-08-16): Δr_terrain = sign·h·|B⊥|/(R·sin²θ)/ρr
-    // 地形高度 h 使两景的距离偏移差 ~7 px @1500m — 平地多项式无法建模,
-    // 山区逐像素失配是全分辨率去相关的根因 (2D 亚像素相干面全平验证)
-    const bool hasTerrain = dem && demW > 0 && demH > 0 && demBperp > 0
-        && demFar > demNear && demSpacing > 0;
-    const int demRow0 = hasTerrain
-        ? qBound(0, (int)(aLoc * demH + 0.5), demH - 1) : 0;
+    // 地形校正距离偏移已禁用 (2026-08-16 第十八轮定案):
+    // 旧公式 Δr = sign·h·|B⊥|/(R·sin²θ)/ρr 对同轨道重复对是三重错误:
+    // ① 相关器实测偏移已包含地形 (双计) ② 同高度轨道对的零多普勒距离偏移
+    // 几乎与高度无关 (数值验证: h 0→4800m 变化仅 0.04px — 基线近水平,
+    // 入射角差≈0) ③ sin²θ 分母使量级 ~5 倍偏大。保留 DEM 管路供后续
+    // 升/降轨交叉对时按正确模型重做。
+    Q_UNUSED(dem); Q_UNUSED(demW); Q_UNUSED(demH);
+    Q_UNUSED(demNear); Q_UNUSED(demFar); Q_UNUSED(demSpacing);
+    Q_UNUSED(demBperp); Q_UNUSED(demSign);
 
     for (int c = 0; c < mW; ++c) {
         double rN = (double)c / mW;
         double colOff = rP.coeffs[0] + rP.coeffs[1]*rN + rP.coeffs[2]*aLoc
                       + rP.coeffs[3]*rN*aLoc + rP.coeffs[4]*rN*rN + rP.coeffs[5]*aLoc*aLoc;
-        double terrainPx = 0.0;
-        if (hasTerrain) {
-            const double R = demNear + c * demSpacing;
-            const double frac = (R - demNear) / (demFar - demNear);
-            const int demCol = qBound(0, (int)(frac * demW + 0.5), demW - 1);
-            const double h = (*dem)[static_cast<size_t>(demRow0) * demW + demCol];
-            if (h > -1000.0) {
-                constexpr double Hp = 693000.0, Re = 6378137.0;
-                const double cosT = (R * R + 2.0 * Hp * Re + Hp * Hp)
-                    / (2.0 * R * (Hp + Re));
-                const double sinT = std::sqrt(std::max(0.0, 1.0 - cosT * cosT));
-                terrainPx = demSign * h * demBperp
-                    / (R * sinT * sinT * demSpacing);
-            }
-        }
         // 与 resampleNonTopsar 及粗配准测量构造一致:
         // master(c) ≈ slave(c + rangeOff) → sx = c + colOff
-        rc.sx[c] = c + colOff + terrainPx;
+        rc.sx[c] = c + colOff;
         rc.sy[c] = (gRow + rowOffs[c]) - rc.sY0;
     }
     return rc;

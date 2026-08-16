@@ -105,9 +105,9 @@ static QVector<OffsetPoint> processFineBatch(
             qint64 peakTime = t.nsecsElapsed() / 1000;
 
             if (cfg.azimuthFromOrbit) {
-                // TOPS: 超出±2px = 场景周期旁瓣 (距离偏移超出分辨率时散斑相关≈0,
-                // 全局峰被农田等周期结构旁瓣劫持) → 保留粗配准值 (几何初值±2px 精化)
-                if (std::abs(subDx) <= 2.0) pt.rangeOff += subDx;
+                // TOPS: 距离偏移=几何初值, 不做相关精化 (主辅振幅 12 天去相关≈0.1,
+                // 相关面为噪声 — 第十八轮实测 ±2px 窗内锁到 −3px/0px vs 真值
+                // +2.6px; 几何零多普勒初值精度 ~0.1px 已足够)
                 pt.correlation = maxV;
             } else if (std::abs(subDx) > 5.0 || std::abs(subDy) > 3.0) {
                 pt.correlation = -1.0;
@@ -157,8 +157,7 @@ static QVector<OffsetPoint> processFineBatch(
             qint64 peakTime = t.nsecsElapsed() / 1000;
 
             if (cfg.azimuthFromOrbit) {
-                // TOPS: 超出±2px = 场景周期旁瓣 → 保留粗配准值 (几何初值±2px 精化)
-                if (std::abs(subDx) <= 2.0) pt.rangeOff += subDx;
+                // TOPS: 距离偏移=几何初值, 不做相关精化 (第十八轮定案, 见上)
                 pt.correlation = maxV;
             } else if (std::abs(subDx) > 5.0 || std::abs(subDy) > 3.0) {
                 pt.correlation = -1.0;
