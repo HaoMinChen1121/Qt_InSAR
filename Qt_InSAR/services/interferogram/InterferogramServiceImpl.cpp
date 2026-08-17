@@ -269,7 +269,14 @@ void InterferogramServiceImpl::execute()
             {QStringLiteral("enableDifferential"), mParams.enableDifferential},
             {QStringLiteral("phaseAlign"), mParams.phaseAlign},
             {QStringLiteral("enableFlatEarth"), mParams.enableFlatEarth},
-            {QStringLiteral("enableVisualization"), mParams.enableVisualization}
+            {QStringLiteral("enableVisualization"), mParams.enableVisualization},
+            // 诊断变体自描述 (2026-08-16 第二十轮: 定位实验可追溯)
+            {QStringLiteral("dcMode"),
+                qEnvironmentVariableIsSet("INSAR_DC_MODE")
+                    ? QString::fromLocal8Bit(qgetenv("INSAR_DC_MODE"))
+                    : QStringLiteral("default")},
+            {QStringLiteral("seamDebug"),
+                qEnvironmentVariableIntValue("INSAR_SEAM_DEBUG") == 1}
         };
         qsar.history.append(rec);
     }

@@ -87,6 +87,12 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
         // (残余 chirp/地形相位在 8×8 窗内变化会摧毁复平均 → 相位噪声底)
         std::complex<double> winSum(0, 0);
         double winMagSum = 0.0;
+        // kt 线性拟合精化状态 (2026-08-17: 浓度扫描有 +282 Hz/s 偏差,
+        // 实测真实 kt=-1742.86 vs 扫描 -1460.79 → 残余 ±2000 rad 摧毁
+        // 方位相位; 仅 burst 0 测量, 全 burst 复用 — 逐 burst 测量噪声
+        // ±2 Hz/s 会破坏 burst 间相位连续性)
+        double ktMasterCorr = 0.0, ktSlaveCorr = 0.0;
+        bool ktRefined = false, ktSlaveRefined = false;
         for (int b = 0; b < N; ++b) {
             if (mCancelled) return false;
 
@@ -178,6 +184,9 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                                  << ctx.azimuthFmRate;
                 }
             }
+            // 后续 burst 用 burst 0 的线性拟合修正值 (扫描测量偏差 +282 Hz/s)
+            if (ktRefined && std::abs(ktMasterCorr) > 1e-9)
+                ktDeramp -= ktMasterCorr;
             if (std::abs(ktDeramp) > 1e-9 && prfDeramp > 0) {
                 // 距离相关调频率 (两段模型, 2026-08-15 两轮修正):
                 //   kt_eff(R) = A/R + B (A=轨道项, B=转向项距离无关);
@@ -216,6 +225,56 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                         }
                     }
                 }
+                // ── 主臂 kt 线性拟合精化 (2026-08-17, 仅 burst 0 测量) ──
+                if (!ktRefined) {
+                    const int n0 = actualH / 5, n1 = actualH * 4 / 5;
+                    double sx = 0, sy = 0, sxx = 0, sxy = 0, prev = 0;
+                    bool havePrev = false;
+                    for (int r = n0; r < n1; ++r) {
+                        const double eta = (readRow0 + r - mBurstRow0 - mL / 2.0) / prfDeramp;
+                        const std::complex<float>* m0 = mBurst.data() + static_cast<size_t>(r) * realW;
+                        const std::complex<float>* m1 = m0 + realW;
+                        std::complex<double> v(0, 0);
+                        for (int c = 0; c < realW; ++c) {
+                            v += std::complex<double>(m1[c].real(), m1[c].imag())
+                               * std::complex<double>(m0[c].real(), -m0[c].imag());
+                        }
+                        double ph = std::atan2(v.imag(), v.real());
+                        if (havePrev) {
+                            while (ph - prev > M_PI) ph -= 2 * M_PI;
+                            while (ph - prev < -M_PI) ph += 2 * M_PI;
+                        }
+                        prev = ph; havePrev = true;
+                        sx += eta; sy += ph; sxx += eta * eta; sxy += eta * ph;
+                    }
+                    const int n = n1 - n0;
+                    const double denom = n * sxx - sx * sx;
+                    if (std::abs(denom) > 1e-12) {
+                        const double dkt = (n * sxy - sx * sy) / denom
+                                         * prfDeramp / (2.0 * M_PI);
+                        if (std::abs(dkt) < 800.0) {
+                            ktMasterCorr = dkt;
+                            // 校正旋转 exp(−jπ·dkt·η²) (残余 +dkt 应减)
+                            for (int r = 0; r < actualH; ++r) {
+                                const double eta = (readRow0 + r - mBurstRow0 - mL / 2.0) / prfDeramp;
+                                const double dp = -M_PI * eta * eta * dkt;
+                                const float dCos = static_cast<float>(std::cos(dp));
+                                const float dSin = static_cast<float>(std::sin(dp));
+                                std::complex<float>* row = mBurst.data() + static_cast<size_t>(r) * realW;
+                                for (int c = 0; c < realW; ++c) {
+                                    const std::complex<float> v = row[c];
+                                    row[c] = { v.real() * dCos - v.imag() * dSin,
+                                               v.real() * dSin + v.imag() * dCos };
+                                }
+                            }
+                            qDebug() << "[Ifg] master kt refined: dkt="
+                                     << QString::number(dkt, 'f', 2)
+                                     << "Hz/s (scan kt=" << ktDeramp
+                                     << " -> corrected=" << (ktDeramp - dkt) << ")";
+                        }
+                    }
+                    ktRefined = true;
+                }
             }
 
             // ── 辅影像残余 deramp (第十八轮: 与主影像同约定同窗口实测) ──
@@ -226,8 +285,10 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
             // 本窗口实测 deramp 后两臂对齐到 ~1 Hz/s。
             if (prfDeramp > 0 && actualH > 64) {
                 double concS = 0;
-                const double ktMeasS = sar::measureAzimuthFmRateAos(
+                double ktMeasS = sar::measureAzimuthFmRateAos(
                     sBurst.data(), realW, actualH, prfDeramp, centerWin, &concS);
+                if (ktRefined && std::abs(ktSlaveCorr) > 1e-9)
+                    ktMeasS -= ktSlaveCorr;   // 后续 burst 用 burst 0 的修正值
                 if (concS > 0.2 && concS < 1.5 && std::abs(ktMeasS) < 500.0) {
                     for (int r = 0; r < actualH; ++r) {
                         const double eta = (readRow0 + r - mBurstRow0 - mL / 2.0) / prfDeramp;
@@ -245,6 +306,53 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                         qDebug() << "[Ifg] slave residual deramp kt=" << ktMeasS
                                  << "(conc=" << concS << ")";
                 }
+                // ── 辅臂 kt 线性拟合精化 (仅 burst 0 测量, 全 burst 复用) ──
+                if (!ktSlaveRefined) {
+                    const int n0 = actualH / 5, n1 = actualH * 4 / 5;
+                    double sx = 0, sy = 0, sxx = 0, sxy = 0, prev = 0;
+                    bool havePrev = false;
+                    for (int r = n0; r < n1; ++r) {
+                        const double eta = (readRow0 + r - mBurstRow0 - mL / 2.0) / prfDeramp;
+                        const std::complex<float>* m0 = sBurst.data() + static_cast<size_t>(r) * realW;
+                        const std::complex<float>* m1 = m0 + realW;
+                        std::complex<double> v(0, 0);
+                        for (int c = 0; c < realW; ++c) {
+                            v += std::complex<double>(m1[c].real(), m1[c].imag())
+                               * std::complex<double>(m0[c].real(), -m0[c].imag());
+                        }
+                        double ph = std::atan2(v.imag(), v.real());
+                        if (havePrev) {
+                            while (ph - prev > M_PI) ph -= 2 * M_PI;
+                            while (ph - prev < -M_PI) ph += 2 * M_PI;
+                        }
+                        prev = ph; havePrev = true;
+                        sx += eta; sy += ph; sxx += eta * eta; sxy += eta * ph;
+                    }
+                    const int n = n1 - n0;
+                    const double denom = n * sxx - sx * sx;
+                    if (std::abs(denom) > 1e-12) {
+                        const double dkt = (n * sxy - sx * sy) / denom
+                                         * prfDeramp / (2.0 * M_PI);
+                        if (std::abs(dkt) < 500.0) {
+                            ktSlaveCorr = dkt;
+                            for (int r = 0; r < actualH; ++r) {
+                                const double eta = (readRow0 + r - mBurstRow0 - mL / 2.0) / prfDeramp;
+                                const double dp = -M_PI * eta * eta * dkt;
+                                const float dCos = static_cast<float>(std::cos(dp));
+                                const float dSin = static_cast<float>(std::sin(dp));
+                                std::complex<float>* row = sBurst.data() + static_cast<size_t>(r) * realW;
+                                for (int c = 0; c < realW; ++c) {
+                                    const std::complex<float> v = row[c];
+                                    row[c] = { v.real() * dCos - v.imag() * dSin,
+                                               v.real() * dSin + v.imag() * dCos };
+                                }
+                            }
+                            qDebug() << "[Ifg] slave kt refined: dkt="
+                                     << QString::number(dkt, 'f', 2) << "Hz/s";
+                        }
+                    }
+                    ktSlaveRefined = true;
+                }
             }
 
             // ── 解析差分多普勒旋转 (多视前! 2026-08-16 关键顺序修正) ──
@@ -252,8 +360,14 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
             // (Δf~30Hz, 窗 0.0164s) → 摧毁复平均 (窗浓度实测 0.249)。
             // 旋转必须在多视平均之前作用于全分辨率数据 —
             // 多视后再旋转已无法恢复被平均摧毁的相位。
+            // 第二十轮定位实验变体 (INSAR_DC_MODE, 默认=现状):
+            //   实测逐 burst 残余方位斜坡 1-8 Hz 与已应用 df 负相关 (-0.475)
+            //   → 旋转疑似过量/反向注入。off=完全关闭, flip=符号反转。
             {
                 constexpr double kC0 = 299792458.0;
+                const QByteArray dcMode = qgetenv("INSAR_DC_MODE");
+                const bool dcOff  = (dcMode == "off");
+                const bool dcFlip = (dcMode == "flip");
                 const bool hasMasterDc = b < ctx.masterDcPoly.size()
                     && !ctx.masterDcPoly[b].isEmpty();
                 const bool hasSlaveDc = b < ctx.slaveDcPoly.size()
@@ -265,9 +379,10 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                     for (int k = p.size() - 1; k >= 0; --k) v = v * dt + p[k];
                     return v;
                 };
-                if (hasMasterDc && hasSlaveDc && hasGeom && prfDeramp > 0) {
+                if (!dcOff && hasMasterDc && hasSlaveDc && hasGeom && prfDeramp > 0) {
                     const double t0m = b < ctx.masterDcT0.size() ? ctx.masterDcT0[b] : 0.0;
                     const double t0s = b < ctx.slaveDcT0.size() ? ctx.slaveDcT0[b] : 0.0;
+                    const double signFlip = dcFlip ? 1.0 : -1.0;
                     constexpr int kColBlock = 16;
                     for (int r = 0; r < actualH; ++r) {
                         const double eta = (readRow0 + r - mBurstRow0 - mL / 2.0) / prfDeramp;
@@ -279,7 +394,7 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                             const double tau = 2.0 * R / kC0;
                             const double df = evalPoly(ctx.masterDcPoly[b], tau - t0m)
                                             - evalPoly(ctx.slaveDcPoly[b], tau - t0s);
-                            const double ph = -2.0 * M_PI * df * eta;
+                            const double ph = signFlip * 2.0 * M_PI * df * eta;
                             const float dCos = static_cast<float>(std::cos(ph));
                             const float dSin = static_cast<float>(std::sin(ph));
                             for (int c = c0; c < c0 + n; ++c) {
@@ -290,11 +405,93 @@ bool IfgGenerator::execute(IfgPipelineContext& ctx)
                         }
                     }
                     if (b == 0)
-                        qDebug() << "[Ifg] analytic diff-Doppler rotation applied pre-multilook";
+                        qDebug() << "[Ifg] analytic diff-Doppler rotation applied pre-multilook"
+                                 << "(INSAR_DC_MODE="
+                                 << (dcFlip ? "flip" : "default") << ")";
                 } else if (b == 0) {
-                    qWarning() << "[Ifg] analytic diff-Doppler skipped (DC data missing,"
-                               << "master=" << hasMasterDc << "slave=" << hasSlaveDc << ")";
+                    if (dcOff)
+                        qDebug() << "[Ifg] analytic diff-Doppler rotation DISABLED"
+                                 << "(INSAR_DC_MODE=off)";
+                    else
+                        qWarning() << "[Ifg] analytic diff-Doppler skipped (DC data missing,"
+                                   << "master=" << hasMasterDc << "slave=" << hasSlaveDc << ")";
                 }
+            }
+
+            // ── 主臂高阶方位轮廓校正 (INSAR_MASTER_PROFILE=1, 2026-08-17) ──
+            // 根因: deramp 只去二次项, TOPS 局部 kt 变化的高阶项残留 — 实测主臂
+            // 自梯度 g 轮廓 = 均值斜坡 + burst 边缘 ±3-4 rad/行 局部 kt 瞬态
+            // (积分 ±460 rad!) 且逐 burst 不同 → 缝同地面相位噪声 σ1-2.6 rad +
+            // α_b 逐 burst 变化 (第二十轮定位)。
+            // v1 (INSAR_IFG_PROFILE) 拟合干涉图梯度被辅影像噪声污染 → 注入 >
+            // 移除 (两轮实测负收益)。v2 多项式拟合主臂自梯度: 4 阶无法表达
+            // 边缘瞬态 + 法方程条件数问题 → 振铃 ±100 rad 垃圾 (实测负收益)。
+            // v3: 直接累积轮廓 (列求和自梯度 SNR 极高), 减均值 (线性斜坡属
+            // 差分多普勒, 由解析旋转负责) 后逐行旋转精确移除。
+            if (qEnvironmentVariableIntValue("INSAR_MASTER_PROFILE") == 1
+                && prfDeramp > 0 && actualH > 64) {
+                const int nD = actualH - 1;
+                QVector<double> g(nD);
+                {
+                    std::complex<double> sumD(0, 0);
+                    double sumMag = 0;
+                    for (int r = 0; r < nD; ++r) {
+                        const std::complex<float>* m0 = mBurst.data() + static_cast<size_t>(r) * realW;
+                        const std::complex<float>* m1 = m0 + realW;
+                        std::complex<double> v(0, 0);
+                        for (int c = 0; c < realW; ++c) {
+                            v += std::complex<double>(m1[c].real(), m1[c].imag())
+                               * std::complex<double>(m0[c].real(), -m0[c].imag());
+                        }
+                        g[r] = std::atan2(v.imag(), v.real());
+                        sumD += v;
+                        sumMag += std::abs(v);
+                    }
+                    // 自梯度 SNR 门控 (主臂自相干应≈1; 低值=窗口异常)
+                    const double selfConc = sumMag > 1e-12
+                        ? std::abs(sumD) / sumMag : 0.0;
+                    if (b == 0)
+                        qDebug() << "[Ifg] master self-gradient conc=" << selfConc;
+                }
+                for (int r = 1; r < nD; ++r) {
+                    while (g[r] - g[r-1] > M_PI)  g[r] -= 2 * M_PI;
+                    while (g[r] - g[r-1] < -M_PI) g[r] += 2 * M_PI;
+                }
+                // ── v3: 直接累积轮廓 (2026-08-17 实测定案) ──
+                // g 轮廓实测 = 均值斜坡 + burst 边缘 ±3-4 rad/行 局部 kt
+                // 瞬态 (积分 ±460 rad!) — 4 阶多项式无法表达边缘瞬态,
+                // v2 拟合振铃 → 应用 ±100 rad 垃圾 (α_b std 1.72 的根因,
+                // 另含法方程条件数问题)。列求和自梯度 SNR 极高 → 直接
+                // 累积 (减均值: 线性斜坡留给 DC 旋转) 精确移除真实轮廓。
+                QVector<double> prof(actualH, 0.0);
+                {
+                    double meanG = 0;
+                    for (int r = 0; r < nD; ++r) meanG += g[r];
+                    meanG /= nD;
+                    double acc = 0;
+                    for (int r = 1; r < actualH; ++r) {
+                        acc += g[qMin(r - 1, nD - 1)] - meanG;
+                        prof[r] = acc;
+                    }
+                    double meanP = 0;
+                    for (int r = 0; r < actualH; ++r) meanP += prof[r];
+                    meanP /= actualH;
+                    for (int r = 0; r < actualH; ++r) prof[r] -= meanP;
+                }
+                for (int r = 0; r < actualH; ++r) {
+                    const double ph = prof[r];
+                    const float dCos = static_cast<float>(std::cos(ph));
+                    const float dSin = static_cast<float>(-std::sin(ph));   // exp(-j·ph)
+                    std::complex<float>* row = mBurst.data() + static_cast<size_t>(r) * realW;
+                    for (int c = 0; c < realW; ++c) {
+                        const std::complex<float> v = row[c];
+                        row[c] = { v.real() * dCos - v.imag() * dSin,
+                                   v.real() * dSin + v.imag() * dCos };
+                    }
+                }
+                if (b == 0)
+                    qDebug() << "[Ifg] master profile v3 applied (direct cumulative,"
+                             << "amplitude=" << prof[qMax(0, actualH / 2)] << "rad at center)";
             }
 
             // ── 逐 burst 方位相位轮廓校正 (第十八轮, 实验性 — 默认关闭) ──

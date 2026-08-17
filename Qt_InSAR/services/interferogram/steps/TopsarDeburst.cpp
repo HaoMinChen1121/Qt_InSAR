@@ -12,6 +12,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QTextStream>
 #include <algorithm>
 #include <cmath>
 
@@ -238,9 +239,39 @@ bool TopsarDeburst::execute(IfgPipelineContext& ctx)
                 qWarning() << "[Deburst] seam" << (b+1) << "有效重叠样本不足";
                 continue;
             }
+            // ── 缝相位差转储 (INSAR_SEAM_DEBUG=1): 同地面行相位差序列 ──
+            // 直方图诊断 (2026-08-16 第二十轮): 判定双峰(π 分离)或均匀分布,
+            // 定位干涉臂 π 翻转来源 (差分多普勒旋转/残余 deramp/merge 对齐)
+            QVector<double> ysWrapped;
+            if (qEnvironmentVariableIntValue("INSAR_SEAM_DEBUG") == 1)
+                ysWrapped = ys;
             for (int i = 1; i < ys.size(); ++i) {
                 while (ys[i] - ys[i-1] > M_PI)  ys[i] -= 2 * M_PI;
                 while (ys[i] - ys[i-1] < -M_PI) ys[i] += 2 * M_PI;
+            }
+            if (!ysWrapped.isEmpty()) {
+                QFile f(ctx.deburstOutputBase
+                        + QStringLiteral("_seam%1_dphi.txt").arg(b + 1));
+                if (f.open(QIODevice::WriteOnly)) {
+                    QTextStream ts(&f);
+                    ts << "# seam " << (b + 1) << "->" << (b + 2)
+                       << " nO=" << nO << " jB=" << jB << "\n";
+                    ts << "# k ysWrappedRad ysUnwrappedRad w\n";
+                    double sumRe = 0, sumIm = 0, sumW = 0;
+                    for (int i = 0; i < ys.size(); ++i) {
+                        ts << xs[i] << " " << ysWrapped[i] << " "
+                           << ys[i] << " " << ws[i] << "\n";
+                        sumRe += ws[i] * std::cos(ysWrapped[i]);
+                        sumIm += ws[i] * std::sin(ysWrapped[i]);
+                        sumW += ws[i];
+                    }
+                    const double conc = sumW > 0
+                        ? std::sqrt(sumRe * sumRe + sumIm * sumIm) / sumW : 0.0;
+                    ts << "# concentration=" << conc << "\n";
+                    f.close();
+                    qDebug() << "[Deburst] seam dump written:" << f.fileName()
+                             << "concentration=" << conc;
+                }
             }
             Poly fit;
             double resid = 0;
